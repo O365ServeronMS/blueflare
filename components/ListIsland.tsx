@@ -144,9 +144,6 @@ export function ListIsland({ type, returnTo }: { type: string; returnTo: string 
             {supportsCountryFilter && quickCountries.map((item) => (
               <a key={item.slug} href={listHref(1, { ...activeFilters, country: item.slug })} aria-current={country === item.slug ? "true" : undefined} className={`whitespace-nowrap rounded-[4.5px] border px-3 py-1.5 text-caption font-bold tracking-caption transition-colors ${country === item.slug ? "border-signal-blue bg-signal-blue text-snow" : "border-white/10 bg-smoke text-ash-mist hover:text-snow"}`}>{item.label}</a>
             ))}
-            {supportsCategoryFilter && quickCategories.map((item) => (
-              <a key={item.slug} href={listHref(1, { ...activeFilters, category: item.slug })} aria-current={category === item.slug ? "true" : undefined} className={`whitespace-nowrap rounded-[4.5px] border px-3 py-1.5 text-caption font-bold tracking-caption transition-colors ${category === item.slug ? "border-signal-blue bg-signal-blue text-snow" : "border-white/10 bg-smoke text-ash-mist hover:text-snow"}`}>{item.label}</a>
-            ))}
           </div>
         </section>
       )}

@@ -20,6 +20,7 @@ export function IframePlayerFacade({ onError, src, poster, title }: IframePlayer
         title={title}
         allow="autoplay; fullscreen; picture-in-picture"
         referrerPolicy="no-referrer-when-downgrade"
+        sandbox="allow-scripts allow-same-origin allow-presentation allow-forms"
         allowFullScreen
         onError={onError}
         className="h-full w-full border-0 bg-black"

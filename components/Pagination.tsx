@@ -10,68 +10,41 @@ interface Props {
 export function Pagination({ currentPage, totalPages, buildUrl, className = "" }: Props) {
   if (!totalPages || totalPages <= 1) return null;
 
-  const getPaginationItems = () => {
-    const items: (number | "ellipsis")[] = [];
-    const pageSet = new Set<number>();
-    pageSet.add(1);
-    pageSet.add(totalPages);
+  const pageSet = new Set<number>([1, totalPages]);
+  for (let page = currentPage - 2; page <= currentPage + 2; page += 1) pageSet.add(page);
+  const pages = Array.from(pageSet).filter((page) => page >= 1 && page <= totalPages).sort((a, b) => a - b);
+  const items: Array<number | "ellipsis"> = [];
 
-    for (let i = currentPage - 2; i <= currentPage + 2; i++) {
-      pageSet.add(i);
+  pages.forEach((page, index) => {
+    if (index > 0) {
+      const gap = page - pages[index - 1];
+      if (gap === 2) items.push(page - 1);
+      else if (gap > 2) items.push("ellipsis");
     }
-
-    const sortedPages = Array.from(pageSet)
-      .filter(p => p >= 1 && p <= totalPages)
-      .sort((a, b) => a - b);
-
-    for (let i = 0; i < sortedPages.length; i++) {
-      if (i > 0) {
-        const gap = sortedPages[i] - sortedPages[i - 1];
-        if (gap === 2) {
-          items.push(sortedPages[i - 1] + 1);
-        } else if (gap > 2) {
-          items.push("ellipsis");
-        }
-      }
-      items.push(sortedPages[i]);
-    }
-
-    return items;
-  };
-
-  const items = getPaginationItems();
+    items.push(page);
+  });
 
   return (
-    <nav className={`flex items-center justify-center pt-12 pb-8 ${className}`} aria-label="Phân trang">
-      <div className="mx-0 flex items-center gap-0 sm:mx-4 sm:gap-1">
-        {items.map((item, index) => {
-          if (item === "ellipsis") {
-            return (
-              <div key={`ellipsis-${index}`} className="flex h-[32px] w-3 items-center justify-center text-iron-veil sm:h-10 sm:w-10" aria-hidden="true">
-                <MoreHorizontal className="h-4 w-4" />
-              </div>
-            );
-          }
-          
-          const distance = Math.abs(item - currentPage);
-          const isCurrent = distance === 0;
-          const isAdjacent = distance === 1;
-          const sizeClass = isCurrent
-            ? "h-[48px] min-w-[36px] px-1.5 text-[18px] sm:h-[60px] sm:min-w-[60px] sm:px-3 sm:text-[21px]"
-            : isAdjacent
-              ? "h-[38px] min-w-[29px] px-1 text-[14px] sm:h-[48px] sm:min-w-[48px] sm:px-2 sm:text-[17px]"
-              : "h-[32px] min-w-[24px] px-0.5 text-[12px] sm:h-10 sm:min-w-[40px] sm:px-2 sm:text-[14px]";
-          return (
-            <a 
-              key={item}
-              href={buildUrl(item)} 
-              aria-current={isCurrent ? "page" : undefined} 
-              className={`grid place-items-center rounded-lg font-semibold tracking-[0.04em] transition sm:tracking-[0.083em] ${sizeClass} ${isCurrent ? "bg-signal-blue text-snow ring-1 ring-inset ring-glacier-beam" : isAdjacent ? "bg-transparent text-snow hover:bg-white/5" : "bg-transparent text-ash-mist hover:bg-white/5 hover:text-snow"}`}
-            >
-              {item}
-            </a>
-          );
-        })}
+    <nav className={`flex items-center justify-center pb-6 pt-12 ${className}`} aria-label="Phân trang">
+      <div className="flex items-center gap-1">
+        {items.map((item, index) => item === "ellipsis" ? (
+          <span key={`ellipsis-${index}`} className="grid h-11 w-7 place-items-center text-ash" aria-hidden="true">
+            <MoreHorizontal className="h-4 w-4" />
+          </span>
+        ) : item === currentPage ? (
+          <span key={item} aria-current="page" aria-label={`Trang ${item}`} className="grid h-11 min-w-11 place-items-center rounded-sm bg-netflix-red px-2 text-[13px] font-bold text-white">
+            {item}
+          </span>
+        ) : (
+          <a
+            key={item}
+            href={buildUrl(item)}
+            aria-label={`Trang ${item}`}
+            className="grid h-11 min-w-11 place-items-center rounded-sm px-2 text-[13px] font-medium text-silver transition hover:bg-graphite hover:text-white"
+          >
+            {item}
+          </a>
+        ))}
       </div>
     </nav>
   );

@@ -1,0 +1,29 @@
+# Next.js frontend rendered by the VPS container at 127.0.0.1:3100.
+# Cloudflare remains a normal proxy/CDN; no Worker or static-asset rewrite is used.
+phim.bluesia.net {
+	encode zstd gzip
+
+	log {
+		output file /var/log/caddy/phim.bluesia.net.access.log {
+			roll_size 20MiB
+			roll_keep 10
+			roll_keep_for 720h
+		}
+		format json
+	}
+
+	header {
+		-Server
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+	}
+
+	# Keep the internal invalidation endpoint off the public hostname.
+	@internal_revalidate path /api/internal/revalidate
+	handle @internal_revalidate {
+		respond 404
+	}
+
+	reverse_proxy 127.0.0.1:3100
+}

@@ -1,0 +1,18 @@
+{
+  "action": "set_cache_settings",
+  "action_parameters": {
+    "cache": true,
+    "edge_ttl": {
+      "mode": "override_origin",
+      "default": 31536000
+    },
+    "browser_ttl": {
+      "mode": "override_origin",
+      "default": 31536000
+    }
+  },
+  "expression": "(http.host eq \"phim.bluesia.net\" and starts_with(http.request.uri.path, \"/_next/static/\"))",
+  "description": "Blueflare Next immutable static assets",
+  "enabled": true,
+  "ref": "blueflare_frontend_next_static"
+}

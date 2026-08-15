@@ -1,4 +1,7 @@
-import { ChevronRight } from "lucide-react";
+"use client";
+
+import { useRef } from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { MovieCard as MovieCardType } from "@/lib/types";
 import { MovieCard } from "@/components/MovieCard";
 
@@ -8,7 +11,7 @@ export function SectionRow({
   items,
   returnTo = "",
   spotlight = false,
-  itemLimit = 8
+  itemLimit = 16
 }: {
   title: string;
   href: string;
@@ -17,29 +20,40 @@ export function SectionRow({
   spotlight?: boolean;
   itemLimit?: number;
 }) {
+  const trackRef = useRef<HTMLDivElement>(null);
   if (!items.length) return null;
+
+  function scroll(direction: -1 | 1) {
+    const track = trackRef.current;
+    if (!track) return;
+    track.scrollBy({ left: direction * track.clientWidth * 0.82, behavior: "smooth" });
+  }
+
   return (
-    <section className={spotlight ? "relative z-20 -mt-8 px-4" : "mt-8 px-4"}>
-      <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-heading-sm font-bold leading-heading-sm tracking-tight text-snow">{title}</h2>
-        <a href={href} className="inline-flex items-center gap-1 text-body font-medium text-ash-mist transition-colors hover:text-signal-blue">
-          Xem tất cả <ChevronRight className="h-4 w-4" />
+    <section className={spotlight ? "relative z-20 -mt-16 pb-3 md:-mt-20" : "relative mt-7 pb-3 md:mt-10"} aria-labelledby={`rail-${title.replace(/\s+/g, "-").toLowerCase()}`}>
+      <div className="bf-content-width bf-page-gutter mb-3 flex items-end justify-between gap-4">
+        <a href={href} className="group inline-flex min-w-0 items-center gap-2">
+          <h2 id={`rail-${title.replace(/\s+/g, "-").toLowerCase()}`} className="line-clamp-1 text-[17px] font-bold leading-tight text-chalk-white md:text-[20px]">
+            {title}
+          </h2>
+          <span className="hidden text-[12px] font-medium text-silver transition group-hover:text-chalk-white sm:inline">Khám phá</span>
+          <ChevronRight className="h-4 w-4 shrink-0 text-silver transition-transform group-hover:translate-x-0.5 group-hover:text-chalk-white" />
         </a>
+        <div className="hidden items-center gap-1 md:flex">
+          <button type="button" aria-label={`Cuộn ${title} sang trái`} onClick={() => scroll(-1)} className="grid h-8 w-8 place-items-center rounded-sm bg-black/80 text-silver transition hover:bg-graphite hover:text-chalk-white">
+            <ChevronLeft className="h-5 w-5" />
+          </button>
+          <button type="button" aria-label={`Cuộn ${title} sang phải`} onClick={() => scroll(1)} className="grid h-8 w-8 place-items-center rounded-sm bg-black/80 text-silver transition hover:bg-graphite hover:text-chalk-white">
+            <ChevronRight className="h-5 w-5" />
+          </button>
+        </div>
       </div>
-      <div className={spotlight ? "no-scrollbar -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-2" : "grid grid-cols-3 gap-3 sm:grid-cols-4"}>
-        {items.slice(0, itemLimit).map((movie, index) =>
-          spotlight ? (
-            <div key={movie.slug} className="w-[132px] shrink-0 snap-start sm:w-[150px]">
-              <MovieCard movie={movie} compact returnTo={returnTo} />
-            </div>
-          ) : index >= 6 ? (
-            <div key={movie.slug} className="hidden sm:block">
-              <MovieCard movie={movie} compact returnTo={returnTo} />
-            </div>
-          ) : (
-            <MovieCard key={movie.slug} movie={movie} compact returnTo={returnTo} />
-          )
-        )}
+      <div ref={trackRef} className="bf-rail-track flex snap-x snap-mandatory gap-1.5 overflow-x-auto px-[var(--bf-page-gutter)] pb-4 pt-1 sm:gap-2" tabIndex={0}>
+        {items.slice(0, itemLimit).map((movie) => (
+          <div key={movie.slug} className="w-[44vw] min-w-[164px] max-w-[320px] shrink-0 snap-start sm:w-[31vw] lg:w-[18vw]">
+            <MovieCard movie={movie} compact returnTo={returnTo} variant="landscape" />
+          </div>
+        ))}
       </div>
     </section>
   );

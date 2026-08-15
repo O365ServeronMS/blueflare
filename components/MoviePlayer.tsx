@@ -101,7 +101,7 @@ export function MoviePlayer({
         type="button"
         aria-controls="movie-player"
         aria-expanded={isOpen}
-        className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-signal-blue px-6 py-3 text-[14px] font-bold uppercase tracking-[0.083em] text-snow transition-colors hover:bg-signal-blue/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-glacier-beam"
+        className="inline-flex min-h-12 items-center justify-center gap-2 rounded bg-netflix-red px-6 py-3 text-[14px] font-bold text-white transition-colors hover:bg-[#f6121d]"
         onClick={openPlayer}
       >
         <Play className="h-5 w-5 fill-current" aria-hidden="true" />
@@ -109,17 +109,17 @@ export function MoviePlayer({
       </button>
 
       {isOpen ? (
-        <div ref={playerRef} id="movie-player" className="scroll-mt-4 overflow-hidden rounded-lg border border-white/10 bg-obsidian">
+        <div ref={playerRef} id="movie-player" className="scroll-mt-4 overflow-hidden rounded bg-deep-space">
           <WatchRecorder movie={movie} />
-          <div className="flex items-center justify-between gap-3 border-b border-white/10 bg-smoke px-4 py-3">
+          <div className="watch-header flex items-center justify-between gap-3 border-b border-white/10 bg-black px-4 py-3">
             <div className="min-w-0">
-              <p className="text-caption font-semibold uppercase tracking-caption text-glacier-beam">Đang chọn</p>
-              <p className="truncate text-body font-bold text-snow">{episodeLabel}</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-netflix-red">Đang chọn</p>
+              <p className="truncate text-[14px] font-bold text-white">{episodeLabel}</p>
             </div>
             <button
               type="button"
               aria-label="Đóng player"
-              className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-white/15 text-snow transition-colors hover:border-white/40 hover:bg-white/5"
+              className="grid h-10 w-10 shrink-0 place-items-center rounded text-silver transition-colors hover:bg-graphite hover:text-white"
               onClick={() => setIsOpen(false)}
             >
               <X className="h-5 w-5" aria-hidden="true" />
@@ -131,9 +131,9 @@ export function MoviePlayer({
             ) : (playbackSource?.mode === "native-hls" || playbackSource?.mode === "hls-js") && playbackSource.hlsUrl ? (
               <HlsVideo mode={playbackSource.mode} onPlaybackFailure={handleHlsError} src={playbackSource.hlsUrl} poster={poster} />
             ) : playbackSource === null ? (
-              <div className="grid h-full place-items-center p-6 text-center text-body text-ash-mist">Đang chuẩn bị player…</div>
+              <div className="grid h-full place-items-center p-6 text-center text-[14px] text-silver">Đang chuẩn bị player…</div>
             ) : (
-              <div className="grid h-full place-items-center p-6 text-center text-body text-ash-mist">No playable source.</div>
+              <div className="grid h-full place-items-center p-6 text-center text-[14px] text-silver">No playable source.</div>
             )}
           </div>
         </div>

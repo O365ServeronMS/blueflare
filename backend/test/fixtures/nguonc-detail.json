@@ -1,0 +1,51 @@
+{
+  "status": "success",
+  "movie": {
+    "id": "7effc8914773ffc145f87c2da63fade2",
+    "name": "Trọng Khí",
+    "slug": "trong-khi",
+    "original_name": "Forging Justice/Zhong Qi",
+    "thumb_url": "https://phim.nguonc.com/public/images/Post/2/trong-khi.jpg",
+    "poster_url": "https://phim.nguonc.com/public/images/Post/2/trong-khi-1.jpg",
+    "modified": "2026-08-14T11:59:22.000000Z",
+    "description": "Câu chuyện về hành trình trưởng thành trong ngành tư pháp.",
+    "total_episodes": 33,
+    "current_episode": "Tập 12",
+    "time": "45 Phút/Tập",
+    "quality": "HD",
+    "language": "Vietsub",
+    "director": "Shen Yan",
+    "casts": "Hoàng Cảnh Du, Jiang Qiming, Karlina Zhang",
+    "year": "2026",
+    "category": {
+      "1": {
+        "group": { "name": "Định dạng" },
+        "list": [{ "name": "Phim bộ" }, { "name": "Đang chiếu" }]
+      },
+      "2": {
+        "group": { "name": "Thể loại" },
+        "list": [{ "name": "Chính Kịch" }]
+      },
+      "3": {
+        "group": { "name": "Năm" },
+        "list": [{ "name": "2026" }]
+      },
+      "4": {
+        "group": { "name": "Quốc gia" },
+        "list": [{ "name": "Trung Quốc" }]
+      }
+    },
+    "episodes": [
+      {
+        "server_name": "Vietsub #1",
+        "items": [
+          {
+            "name": "1",
+            "slug": "tap-1",
+            "embed": "https://embed12.streamc.xyz/embed.php?hash=fixture"
+          }
+        ]
+      }
+    ]
+  }
+}

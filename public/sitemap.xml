@@ -1,18 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
-    <loc>https://film.bluesia.net/</loc>
+    <loc>https://phim.bluesia.net/</loc>
   </url>
   <url>
-    <loc>https://film.bluesia.net/list/phim-le</loc>
+    <loc>https://phim.bluesia.net/list/phim-le</loc>
   </url>
   <url>
-    <loc>https://film.bluesia.net/list/phim-bo</loc>
+    <loc>https://phim.bluesia.net/list/phim-bo</loc>
   </url>
   <url>
-    <loc>https://film.bluesia.net/list/tv-shows</loc>
+    <loc>https://phim.bluesia.net/list/tv-shows</loc>
   </url>
   <url>
-    <loc>https://film.bluesia.net/list/hoat-hinh</loc>
+    <loc>https://phim.bluesia.net/list/hoat-hinh</loc>
   </url>
 </urlset>

@@ -11,8 +11,8 @@ export function StoredMovieGrid({ type }: { type: "favorites" | "history" }) {
   }
 
   return (
-    <div className="grid grid-cols-3 gap-3 px-4 pt-4 sm:grid-cols-4">
-      {items.map((movie) => <MovieCard key={movie.slug} movie={movie} compact />)}
+    <div className="bf-page-gutter grid grid-cols-2 gap-x-3 gap-y-7 pt-8 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7">
+      {items.map((movie) => <MovieCard key={movie.slug} movie={movie} />)}
     </div>
   );
 }

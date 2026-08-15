@@ -1,6 +1,6 @@
 # Pagination Algorithm (Netflix-style compact window)
 
-The pagination logic in this project (`components/Pagination.astro`) follows a strict Netflix-style compact window algorithm.
+The pagination logic in this project (`components/Pagination.tsx`) follows a strict Netflix-style compact window algorithm.
 **DO NOT** modify this algorithm to use endless scrolling, simple 10-page windows, or basic prev/next buttons.
 
 ## Required display rule
@@ -12,7 +12,7 @@ The pagination logic in this project (`components/Pagination.astro`) follows a s
 - The current page must be visibly active.
 - Ellipsis must be non-clickable.
 - The pagination state must preserve all existing query parameters, updating only the `page` parameter without resetting search keywords, filters, or source navigation state.
-- Keep pagination logic encapsulated in the `Pagination.astro` component utility.
+- Keep pagination logic encapsulated in the React `Pagination.tsx` component utility.
 
 ## Examples
 - `currentPage = 15, totalPages = 777` -> `1 ... 13 14 15 16 17 ... 777`
@@ -20,4 +20,4 @@ The pagination logic in this project (`components/Pagination.astro`) follows a s
 - `currentPage = 776, totalPages = 777` -> `1 ... 774 775 776 777`
 - `currentPage = 5, totalPages = 777` -> `1 2 3 4 5 6 7 ... 777` (Gap of 2 inserts page 2 instead of ellipsis)
 
-If modifying `components/Pagination.astro`, you must run validation against these examples to ensure the strict Netflix-style compact window is preserved.
+If modifying `components/Pagination.tsx`, you must run validation against these examples to ensure the strict Netflix-style compact window is preserved.

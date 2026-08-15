@@ -4,7 +4,7 @@ export const NAV_SOURCE_KEYS = ["home", "phim-le", "phim-bo", "tv-shows", "hoat-
 
 export type NavSourceKey = typeof NAV_SOURCE_KEYS[number];
 
-const SITE_ORIGIN = "https://film.bluesia.net";
+const SITE_ORIGIN = "https://phim.bluesia.net";
 const SOURCE_KEY_SET = new Set<string>(NAV_SOURCE_KEYS);
 
 function pathMatches(pathname: string, prefix: string) {
@@ -14,6 +14,28 @@ function pathMatches(pathname: string, prefix: string) {
 export function normalizeNavPath(pathname: string) {
   if (pathname.length > 1 && pathname.endsWith("/")) return pathname.slice(0, -1);
   return pathname || "/";
+}
+
+export function normalizePage(value?: string | number | null) {
+  const parsed = typeof value === "number" ? value : Number(String(value || "1").trim());
+  if (!Number.isFinite(parsed) || parsed < 1) return 1;
+  return Math.floor(parsed);
+}
+
+export function pageFromSearchParams(searchParams?: URLSearchParams | string | null) {
+  if (!searchParams) return 1;
+  const params = typeof searchParams === "string"
+    ? new URLSearchParams(searchParams.replace(/^\?/, ""))
+    : searchParams;
+  return normalizePage(params.get("page"));
+}
+
+export function hrefWithPage(pathname: string, search: string, page: number) {
+  const url = new URL(`${normalizeNavPath(pathname)}${search ? (search.startsWith("?") ? search : `?${search}`) : ""}`, SITE_ORIGIN);
+  const normalizedPage = normalizePage(page);
+  if (normalizedPage === 1) url.searchParams.delete("page");
+  else url.searchParams.set("page", String(normalizedPage));
+  return `${url.pathname}${url.search}`;
 }
 
 export function validNavSourceKey(value?: string | null) {
@@ -67,13 +89,13 @@ export function getSafeReturnTo(searchParams?: URLSearchParams | string | null) 
 export function fallbackReturnToForSource(source?: string | null) {
   switch (validNavSourceKey(source)) {
     case "phim-le":
-      return "/phim-le";
+      return "/list/phim-le";
     case "phim-bo":
-      return "/phim-bo";
+      return "/list/phim-bo";
     case "tv-shows":
-      return "/tv-show";
+      return "/list/tv-shows";
     case "hoat-hinh":
-      return "/hoat-hinh";
+      return "/list/hoat-hinh";
     case "home":
       return "/";
     default:
@@ -106,31 +128,6 @@ export function getMovieBackHref(
   }
 ) {
   return getSafeReturnTo(searchParams) || getFallbackListHref(context);
-}
-
-export function buildMovieHrefFromWatch(pathname: string, searchParams?: URLSearchParams | string | null) {
-  const watchPath = safeInternalPath(pathname);
-  if (!watchPath) return "";
-  const slug = new URL(watchPath, SITE_ORIGIN).pathname.match(/^\/watch\/([^/?#]+)/)?.[1] || "";
-  if (!slug) return "";
-
-  const params = new URLSearchParams();
-  const returnTo = getSafeReturnTo(searchParams);
-  if (returnTo) params.set("returnTo", returnTo);
-
-  const search = params.toString();
-  return `/movie/${slug}${search ? `?${search}` : ""}`;
-}
-
-export function getWatchBackHref(
-  pathname: string,
-  searchParams?: URLSearchParams | string | null,
-  context?: {
-    source?: string | null;
-    fallbackPath?: string | null;
-  }
-) {
-  return buildMovieHrefFromWatch(pathname, searchParams) || getMovieBackHref(searchParams, context);
 }
 
 export function getBackHref(
@@ -173,7 +170,7 @@ export function navSourceFromPath(pathname: string) {
 
 function isChildRoute(pathname: string) {
   const path = normalizeNavPath(pathname);
-  return path.startsWith("/movie/") || path.startsWith("/watch/");
+  return path.startsWith("/movie/");
 }
 
 function normalizedLabels(movie?: Partial<MovieDetail> | null) {

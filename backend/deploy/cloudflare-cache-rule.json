@@ -1,0 +1,16 @@
+{
+  "action": "set_cache_settings",
+  "action_parameters": {
+    "cache": true,
+    "edge_ttl": {
+      "mode": "respect_origin"
+    },
+    "browser_ttl": {
+      "mode": "respect_origin"
+    }
+  },
+  "expression": "(http.host eq \"img.bluesia.net\" and starts_with(http.request.uri.path, \"/api/\") and http.request.uri.path ne \"/api/health\")",
+  "description": "Blueflare catalog API: cache public responses, respect origin TTL",
+  "enabled": true,
+  "ref": "blueflare_catalog_api_cache"
+}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useSyncExternalStore } from "react";
-import { Check, Clock3, Heart, Plus } from "lucide-react";
+import { Check, Clock3, Heart } from "lucide-react";
 import type { MovieCard } from "@/lib/types";
 
 const FAV_KEY = "film.bluesia.net:favorites";
@@ -84,13 +84,13 @@ export function MovieActions({ movie }: { movie: MovieCard }) {
   };
 
   return (
-    <div className="grid grid-cols-2 gap-3">
-      <button onClick={toggleFavorite} className="flex min-h-12 items-center justify-center gap-2 rounded-lg border border-white/15 bg-smoke px-4 py-3 text-body font-bold text-snow transition-colors hover:border-white/30 hover:bg-white/5">
-        {isFavorite ? <Check className="h-5 w-5 text-signal-blue" /> : <Heart className="h-5 w-5" />}
-        {isFavorite ? "Đã lưu" : "Yêu thích"}
+    <div className="flex flex-wrap gap-2">
+      <button onClick={toggleFavorite} className="inline-flex min-h-11 items-center justify-center gap-2 rounded bg-charcoal/80 px-4 py-2.5 text-[13px] font-bold text-white transition hover:bg-charcoal">
+        {isFavorite ? <Check className="h-4 w-4" /> : <Heart className="h-4 w-4" />}
+        {isFavorite ? "Đã lưu" : "Danh sách của tôi"}
       </button>
-      <button onClick={() => addHistory(movie)} className="flex min-h-12 items-center justify-center gap-2 rounded-lg border border-white/15 bg-smoke px-4 py-3 text-body font-bold text-snow transition-colors hover:border-white/30 hover:bg-white/5">
-        <Clock3 className="h-5 w-5" />
+      <button onClick={() => addHistory(movie)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded bg-charcoal/80 px-4 py-2.5 text-[13px] font-bold text-white transition hover:bg-charcoal">
+        <Clock3 className="h-4 w-4" />
         Lưu lịch sử
       </button>
     </div>
@@ -99,12 +99,13 @@ export function MovieActions({ movie }: { movie: MovieCard }) {
 
 export function EmptyState({ title, description }: { title: string; description: string }) {
   return (
-    <div className="mx-4 mt-8 rounded-3xl border border-dashed border-white/15 bg-white/5 p-8 text-center">
-      <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-full bg-gold/15 text-gold">
-        <Plus className="h-7 w-7" />
+    <section className="bf-page-gutter flex min-h-[55vh] items-center py-20">
+      <div className="max-w-lg">
+        <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-netflix-red">Thư viện cá nhân</p>
+        <h2 className="mt-3 text-[32px] font-black tracking-tight text-white sm:text-[42px]">{title}</h2>
+        <p className="mt-4 text-[14px] leading-6 text-silver">{description}</p>
+        <a href="/" className="mt-6 inline-flex min-h-11 items-center rounded bg-white px-5 py-2.5 text-[13px] font-bold text-black">Khám phá phim</a>
       </div>
-      <h2 className="text-xl font-black">{title}</h2>
-      <p className="mt-2 text-sm text-zinc-400">{description}</p>
-    </div>
+    </section>
   );
 }

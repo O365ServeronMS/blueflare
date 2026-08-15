@@ -21,19 +21,25 @@
       "@/*": [
         "./*"
       ]
-    }
+    },
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ]
   },
   "include": [
-    "astro.config.mjs",
-    "src/**/*.astro",
+    "src/app/**/*.tsx",
+    "src/app/**/*.ts",
+    ".next/types/**/*.ts",
+    "next-env.d.ts",
     "**/*.ts",
-    "**/*.tsx"
+    "**/*.tsx",
+    ".next/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",
-    "app",
     ".next",
-    ".astro",
     "dist"
   ]
 }

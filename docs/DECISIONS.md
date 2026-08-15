@@ -24,11 +24,10 @@
 
 ## 2026-06-18 Unified Movie Detail And Playback Page
 
-- **Decision**: The primary flow is List/Home -> `/movie/[slug]`. Movie metadata, episode selection, and playback live on the same page; new UI links must not navigate users to `/watch/[slug]`.
+- **Decision**: The only movie flow is List/Home -> `/movie/[slug]`. Movie metadata, episode selection, and playback live on the same page.
 - **Playback gate**: The `Xem phim` action reveals the selected player without autoplay. Embed playback keeps a second explicit Play interaction before the iframe is created. Direct HLS playback renders controls without an autoplay attribute.
 - **Source priority**: Desktop and Android prefer the iframe/embed source. iOS prefers direct native HLS. When embed is unavailable or HLS is explicitly requested, MSE-capable non-iOS browsers use the light hls.js build loaded through a dynamic import; iOS still attempts native HLS before any library path.
 - **Episodes**: Episode links update `/movie/[slug]` with `server`, `ep`, and `play=1`, preserve `returnTo`, and replace same-page episode history so browser Back returns to the source list instead of older episode selections.
-- **Legacy compatibility**: Existing `/watch/[slug]` URLs redirect to the equivalent `/movie/[slug]` player state. The redirect preserves playback selection and safe list context.
 - **Runtime boundary**: Video remains browser-to-upstream. Do not proxy, cache, download, or re-chunk iframe/HLS media through Cloudflare.
 
 ## 2026-06-16 Shared Image Cache Invariant
@@ -178,10 +177,10 @@
 
 ## Bottom Nav Source Tab Must Persist Across Child Pages
 
-- Navigation policy: category context for `/movie` and `/watch` pages should be carried by `returnTo=<encoded path+search>`, not hash fragments. Hash fragments are unavailable during Astro/server/static render. Bottom nav active state should use pathname plus `returnTo` and optional movie category fallback. Do not change Cloudflare/cache/video logic for nav active-state fixes.
+- Navigation policy: category context for `/movie` pages should be carried by `returnTo=<encoded path+search>`, not hash fragments. Hash fragments are unavailable during Astro/server/static render. Bottom nav active state should use pathname plus `returnTo` and optional movie category fallback. Do not change Cloudflare/cache/video logic for nav active-state fixes.
 - The legacy `from` and hash fallback exists only for old cached links after client load. New generated child links must use `returnTo`.
 
-- Unified movie pages are child pages of the source tab/category; legacy `/watch` redirects preserve that same context.
+- Unified movie pages are child pages of the source tab/category.
 - Opening a movie from a bottom-nav tab must keep that tab active while detail, player, and episode states are shown.
 - Active tab must not be derived only from the current pathname because `/movie/...` is a child route.
 - Do not default direct movie pages to `Trang chủ` when source context is unknown; unknown direct child URLs should have no forced source tab.

@@ -1,11 +1,11 @@
 /**
  * Catalog API client (browser-safe).
  *
- * All catalog data, TMDB metadata, and pre-signed images are served by the VPS
- * `catalog-api` at `img.bluesia.net/api/*`. This module fetches those payloads
- * client-side and maps them to the app's `MovieCard`/`MovieDetail` shapes.
+ * All catalog data and pre-signed images are served by the VPS Blueflare Docker
+ * API at `img.bluesia.net/api/*`. This module fetches those payloads client-side
+ * and maps them to the app's `MovieCard`/`MovieDetail` shapes.
  *
- * The frontend does NO image signing and NO direct OPhim/TMDB metadata calls:
+ * The frontend does NO image signing and NO direct provider metadata calls:
  * `thumb_url` (pre-signed `/i/m/…` portrait) and `poster_url` (pre-signed
  * `/i/d/…` landscape) arrive ready to render. The shared image cache is keyed
  * only by `sha256(upstreamUrl)+variant`, so phim.bluesia.net and film.bluesia.net
@@ -13,11 +13,10 @@
  */
 import type { EpisodeServer, HomePayload, ListPayload, MovieCard, MovieDetail } from "@/lib/types";
 import { normalizedEpisodeName, normalizedEpisodeSlug } from "@/lib/episodes";
+import { normalizePage } from "@/lib/navigation";
 import { buildVsembedServer } from "@/lib/vsembed";
 
 export const CATALOG_BASE = "https://img.bluesia.net";
-const OPHIM_BASE = "https://ophim1.com";
-
 type RawItem = Record<string, any>;
 
 const cache = new Map<string, { data: unknown; time: number }>();
@@ -55,7 +54,7 @@ function detailLabels(value: unknown) {
     .map((label) => ({ id: label.id || label._id || undefined, name: label.name, slug: label.slug }));
 }
 
-/** Map a catalog-api item (OPhim field shape, pre-signed images) to a MovieCard. */
+/** Map a canonical catalog-api item with pre-signed images to a MovieCard. */
 export function normalizeCard(raw: RawItem): MovieCard {
   const tmdbRating = num(raw?.vote_average) ?? num(raw?.tmdb?.vote_average);
   const imdbRating = num(raw?.imdb?.vote_average) ?? num(raw?.imdb?.rating);
@@ -112,26 +111,26 @@ function listPayload(payload: any, fallbackTitle: string, page: number): ListPay
 }
 
 export async function getList(type: string, page = 1): Promise<ListPayload> {
-  const safePage = Math.max(1, Number(page) || 1);
+  const safePage = normalizePage(page);
   const payload = await fetchJson(`${CATALOG_BASE}/api/list?type=${encodeURIComponent(type)}&page=${safePage}`);
   return listPayload(payload, "Danh sách phim", safePage);
 }
 
 export async function getGenre(slug: string, page = 1): Promise<ListPayload> {
-  const safePage = Math.max(1, Number(page) || 1);
+  const safePage = normalizePage(page);
   const payload = await fetchJson(`${CATALOG_BASE}/api/genre?slug=${encodeURIComponent(slug)}&page=${safePage}`);
   return listPayload(payload, slug, safePage);
 }
 
 export async function getCountry(slug: string, page = 1): Promise<ListPayload> {
-  const safePage = Math.max(1, Number(page) || 1);
+  const safePage = normalizePage(page);
   const payload = await fetchJson(`${CATALOG_BASE}/api/country?slug=${encodeURIComponent(slug)}&page=${safePage}`);
   return listPayload(payload, slug, safePage);
 }
 
 export async function searchMovies(keyword: string, page = 1): Promise<ListPayload> {
   const q = keyword.trim();
-  const safePage = Math.max(1, Number(page) || 1);
+  const safePage = normalizePage(page);
   if (!q) return { title: "Tìm kiếm", items: [], page: safePage };
   const payload = await fetchJson(
     `${CATALOG_BASE}/api/search?keyword=${encodeURIComponent(q)}&page=${safePage}`,
@@ -168,7 +167,7 @@ export async function getMovie(slug: string): Promise<MovieDetail> {
 
   const episodes: EpisodeServer[] = (Array.isArray(episodesRaw) ? episodesRaw : [])
     .map((server: any) => ({
-      serverName: "OPhim",
+      serverName: server?.server_name || server?.serverName || "Server",
       serverData: (server?.server_data || server?.serverData || []).map((ep: any, index: number) => ({
         name: normalizedEpisodeName(ep, index),
         slug: normalizedEpisodeSlug(ep, index),
@@ -197,10 +196,10 @@ export async function getMovie(slug: string): Promise<MovieDetail> {
 }
 
 /**
- * "Bạn cũng có thể thích" — TMDB recommendations for a title, resolved and
- * cached on the VPS `catalog-api` (shared with phim.bluesia.net). TMDB ids are
- * not unique across movie/tv, so `type` selects the `/movie` or `/tv` endpoint.
- * Returns pre-signed `MovieCard`s; fire-and-forget on the detail page.
+ * "Bạn cũng có thể thích" — canonical-catalog recommendations for a title,
+ * resolved and cached by the Blueflare backend. TMDB ids are not unique across
+ * movie/tv, so `type` selects the matching media family. Returns pre-signed
+ * `MovieCard`s; fire-and-forget on the detail page.
  */
 export async function getRecommendation(tmdbId: number | string, type = "movie"): Promise<MovieCard[]> {
   const id = String(tmdbId ?? "").trim();
@@ -221,9 +220,9 @@ function taxonomyItems(payload: any): Taxonomy[] {
 }
 
 export async function getCategories(): Promise<Taxonomy[]> {
-  return taxonomyItems(await fetchJson(`${OPHIM_BASE}/v1/api/the-loai`));
+  return taxonomyItems(await fetchJson(`${CATALOG_BASE}/api/categories`));
 }
 
 export async function getCountries(): Promise<Taxonomy[]> {
-  return taxonomyItems(await fetchJson(`${OPHIM_BASE}/v1/api/quoc-gia`));
+  return taxonomyItems(await fetchJson(`${CATALOG_BASE}/api/countries`));
 }

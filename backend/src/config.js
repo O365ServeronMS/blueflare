@@ -1,0 +1,53 @@
+function integer(name, fallback, minimum = 0) {
+  const value = Number(process.env[name]);
+  return Number.isInteger(value) && value >= minimum ? value : fallback;
+}
+
+function csv(name, fallback = '') {
+  return String(process.env[name] || fallback)
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function boolean(name, fallback = false) {
+  const value = process.env[name];
+  if (value === undefined) return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
+}
+
+const nodeEnv = process.env.NODE_ENV || 'development';
+const imageSigningSecret = process.env.IMAGE_SIGNING_SECRET || (
+  nodeEnv === 'production' ? '' : 'blueflare-local-development-signing-secret'
+);
+
+if (nodeEnv === 'production' && imageSigningSecret.length < 32) {
+  throw new Error('IMAGE_SIGNING_SECRET must contain at least 32 characters in production');
+}
+
+export const config = Object.freeze({
+  nodeEnv,
+  port: integer('PORT', 3200, 1),
+  publicBaseUrl: String(process.env.PUBLIC_BASE_URL || 'https://img.bluesia.net').replace(/\/$/, ''),
+  databaseUrl: process.env.DATABASE_URL || 'postgres://blueflare:blueflare@postgres:5432/blueflare',
+  redisUrl: process.env.REDIS_URL || 'redis://valkey:6379',
+  imageSigningSecret,
+  imageCacheDir: process.env.IMAGE_CACHE_DIR || '/data/images',
+  imageAllowedHosts: csv('IMAGE_ALLOWED_HOSTS', 'phim.nguonc.com,phimimg.com,phimapi.com'),
+  nguoncBaseUrl: String(process.env.NGUONC_BASE_URL || 'https://phim.nguonc.com').replace(/\/$/, ''),
+  kkphimBaseUrl: String(process.env.KKPHIM_BASE_URL || 'https://phimapi.com').replace(/\/$/, ''),
+  syncPagesPerRun: integer('SYNC_PAGES_PER_RUN', 3, 1),
+  syncConcurrency: integer('SYNC_CONCURRENCY', 4, 1),
+  syncIntervalMs: integer('SYNC_INTERVAL_MS', 15 * 60 * 1000, 1000),
+  backfillEnabled: boolean('BACKFILL_ENABLED', true),
+  backfillStartPage: integer('BACKFILL_START_PAGE', 0, 0),
+  backfillPagesPerRun: integer('BACKFILL_PAGES_PER_RUN', 1, 1),
+  requestTimeoutMs: integer('REQUEST_TIMEOUT_MS', 15000, 1000),
+  responseCacheTtlSeconds: integer('RESPONSE_CACHE_TTL_SECONDS', 300, 1),
+  responseCacheStaleSeconds: integer('RESPONSE_CACHE_STALE_SECONDS', 86400, 1),
+  cdnTtlSeconds: integer('CDN_TTL_SECONDS', 300, 1),
+  allowedOrigins: csv(
+    'ALLOWED_ORIGINS',
+    'https://film.bluesia.net,https://phim.bluesia.net'
+  )
+});

@@ -1,109 +1,50 @@
-# File Map
+# Blueflare File Map
 
-> **Partially historical.** After the zero-Worker static migration, the Worker, SSR
-> API routes (`src/pages/api/*`), `src/middleware.ts`, and the `lib/` server modules
-> (`ophim`, `cache`, `image-cache`, `snapshot`, `trending`, `runtime-env`, …) were
-> deleted. Catalog data now flows through `lib/catalog.ts` → `img.bluesia.net/api/*`,
-> and `/movie/<slug>` is the client shell `src/pages/detail.astro` +
-> `components/MovieDetailIsland.tsx` (served via the `public/_redirects` 200
-> rewrite `/movie/* -> /detail/`). See `CLAUDE.md` for the current map.
+This map describes the current Next.js frontend and repository-owned Docker
+origin. Historical static/Worker notes are retained only in explicitly marked
+archive documents.
 
-## Root And Config
+## Root and configuration
 
-- `package.json`: scripts, dependencies, browser targets. Build command is `npm run build`.
-- `astro.config.mjs`: Astro server output, Cloudflare adapter, React integration, Vite aliases/cache dir.
-- `wrangler.jsonc`: Cloudflare Worker/assets entry, compatibility flags, route, cron, metadata KV, Worker Version Metadata, and the external image-cache base URL. `assets.binding = "ASSETS"` is required for static CSS/JS assets.
-- `tsconfig.json`: strict TypeScript, JSX, path alias, generated-folder excludes.
-- `postcss.config.mjs`: Tailwind/PostCSS setup.
-- `docs/CLOUDFLARE_CACHE.md`: operational cache documentation and binding expectations.
-- `docs/video-buffering-policy.md`: HLS playback buffering policy; documents client-side buffer/retry optimization and the rule against Worker-side video proxying or chunking.
-- `docs/navigation-active-state.md`: bottom-nav active-state policy for pathname, `returnTo` query context, movie metadata fallback, and legacy hash fallback.
+- `package.json`: Next.js/React commands and runtime dependencies.
+- `next.config.ts`: standalone output, render-cache mode, and response headers.
+- `Dockerfile.frontend`: Node 24 production image for the standalone server.
+- `tsconfig.json`, `postcss.config.mjs`: TypeScript and Tailwind/PostCSS setup.
+- `CLAUDE.md`: authoritative architecture and implementation guide.
 
-## Routes
+## Frontend routes
 
-- `src/pages/index.astro`: home page; `getHome()`, hero preload, `TopBar`, `HeroSlider`, `SectionRow`.
-- `src/pages/list/[type].astro`: category/list pages; filters, pagination, `MovieCard` grid.
-- `src/pages/search.astro`: search page; `SearchSuggest`, `searchMovies()`, `MovieCard` grid.
-- `src/pages/movie/[slug].astro`: unified detail/playback page; metadata, poster, rating, player source selection, non-autoplay `Xem phim` reveal, episode links, and source-list back navigation.
-- `src/pages/watch/[slug].astro`: legacy compatibility redirect to the equivalent `/movie/[slug]` player state.
-- `src/pages/favorites.astro`: local favorites page.
-- `src/pages/history.astro`: local history page.
-- `src/pages/settings.astro`: settings/info page.
+- `src/app/page.tsx`: server-rendered home and hero/section data.
+- `src/app/list/[type]/page.tsx`: paginated list route with country/category filters.
+- `src/app/search/page.tsx`: no-store search route with pagination.
+- `src/app/movie/[slug]/page.tsx`: server-rendered detail/player shell and episode state.
+- `src/app/favorites/page.tsx`, `history/page.tsx`: browser-local libraries.
+- `src/app/settings/page.tsx`, `not-found.tsx`, `error.tsx`: information/recovery screens.
+- `src/app/healthz/route.ts`: container health probe.
+- `src/app/api/internal/revalidate/route.ts`: secret-protected targeted render-cache invalidation.
 
-## API Routes
+## Frontend components and libraries
 
-- `src/pages/api/admin/refresh.ts`: protected manual OPhim refresh endpoint and KV rate/write-budget logic.
-- `src/pages/api/cache/status.ts`: cache status/prune endpoint wrapper.
-- `src/pages/api/ophim/home.ts`: home metadata API.
-- `src/pages/api/ophim/list/[type].ts`: list metadata API.
-- `src/pages/api/ophim/movie/[slug].ts`: movie metadata API.
-- `src/pages/api/ophim/search.ts`: search metadata API.
-- `src/pages/api/ophim/categories.ts`: category taxonomy API.
-- `src/pages/api/ophim/countries.ts`: country taxonomy API.
+- `components/`: GlobalNav, HeroSlider, SectionRow, MovieCard, Pagination,
+  MoviePlayer, HlsVideo, IframePlayerFacade, local actions/grids, and shared UI.
+- `lib/catalog.ts`: browser-safe catalog client.
+- `lib/catalog-server.ts`: cached server API helpers and cache tags.
+- `lib/navigation.ts`: `returnTo` and category-context policy.
+- `lib/playback.ts`: centralized device/source priority and URL validation.
+- `lib/episodes.ts`, `lib/vsembed.ts`, `lib/types.ts`, `lib/utils.ts`: shared helpers and models.
 
-## Worker, Middleware, Layout
+## Docker backend and deployment
 
-- `src/worker.ts`: Cloudflare Worker exports; passes Astro fetch through and adds scheduled OPhim refresh.
-- `src/middleware.ts`: HTML cache policies, Cache API read/write, refresh bypass, no-store rules.
-- `src/layouts/BaseLayout.astro`: head metadata, app shell, poster fallback script, return context propagation for `/movie` and `/watch` links, same-origin `data-nav-back` browser-history handler, dev nav debug script, bottom nav island.
-- `src/env.d.ts`: Cloudflare binding/runtime type declarations.
-- `src/styles/globals.css`: global CSS/Tailwind styles.
+- `backend/compose.yml`: frontend, API, worker, PostgreSQL 17, and Valkey 8.
+- `backend/src/`: provider sync, canonical merge, ViewModels, cache, and signed images.
+- `backend/deploy/phim.bluesia.net.caddy`: public reverse proxy to frontend port 3100.
+- `backend/deploy/img.bluesia.net.caddy`: public reverse proxy to API port 3200.
+- `backend/deploy/cloudflare-frontend-static-rule.json`: optional normal Cloudflare cache rule for immutable `/_next/static/` assets.
 
-## Components
+## Fast search hints
 
-- `components/MovieCard.tsx`: poster card UI and normal `/movie/[slug]` anchor links used by home/list/search/favorites/history.
-- `components/SectionRow.tsx`: home row/grid wrapper around `MovieCard`.
-- `components/HeroSlider.tsx`: Smart Spotlight carousel and local preference ranking.
-- `components/TopBar.tsx`: sticky search and quick links.
-- `components/BottomNav.tsx`: fixed mobile bottom navigation, active tab resolver, category/source context derivation from pathname and `returnTo`, optional movie fallback, and legacy hash fallback, with `popstate`/`hashchange`/`pageshow` route restoration sync.
-- `components/SearchSuggest.tsx`: search box and suggestions.
-- `components/LocalMovieActions.tsx`: favorites/history localStorage store and detail-page buttons.
-- `components/StoredMovieGrid.tsx`: favorites/history `MovieCard` grid.
-- `components/HlsVideo.tsx`: HTML5 video player for OPhim direct HLS/m3u8 streams; dynamically imports hls.js for MSE-capable browsers, falls back to native Safari/iOS HLS, and owns the top-right quality selector plus local subtitle upload button.
-- `components/IframePlayerFacade.tsx`: click-to-load iframe embed player facade used by Vidsrc embed URLs.
-- `components/MoviePlayer.tsx`: unified player reveal and selected-episode header; mounts iframe/HLS playback only after `Xem phim` is activated.
-- `components/WatchRecorder.tsx`: local history recording after the unified player is opened.
-
-## Libraries
-
-- `lib/ophim.ts`: OPhim client, metadata normalization, list/home/search/detail fetches, TTL policy, refresh jobs.
-- `lib/cache.ts`: metadata KV helpers, TTLs, stable hashes, write budgets, and cache stats.
-- `lib/types.ts`: shared movie, episode, source payload, taxonomy, and API types.
-- `lib/utils.ts`: class merging, text cleanup, rating display helpers, proxied image URL/srcset helpers.
-- `lib/spotlight.ts`: Smart Spotlight scoring/merging logic.
-- `lib/episodes.ts`: episode name/slug/watch-key helpers.
-- `lib/runtime-env.ts`: runtime env and cache-bypass flag storage for Worker/Astro request scope.
-- `lib/vsembed.ts`: Vidsrc/VSEmbed fallback URL and episode server construction; provider server name is `Vidsrc`.
-
-## Playback Source Separation
-
-- OPhim player path: `lib/ophim.ts` normalizes OPhim episode `link_m3u8`/`linkM3u8` into `Episode.linkM3u8`; `src/pages/movie/[slug].astro` renders `components/HlsVideo.tsx` for direct m3u8 when embed playback is not selected.
-- Vidsrc source/provider selection: `lib/ophim.ts` calls `buildVsembedServer(movie)` and appends the returned `serverName: "Vidsrc"` server to `movie.episodes`; `src/pages/movie/[slug].astro` selects it through the `server` query index.
-- Vidsrc API/embed URL construction: `lib/vsembed.ts` defaults to `https://vsembed.ru` or `VSEMBED_EMBED_BASE_URL`; movie embeds use `/embed/movie?tmdb=...&autoplay=0` or `/embed/movie?imdb=...&autoplay=0`; TV embeds use `/embed/tv?tmdb=...&season=1&episode=...&autoplay=0&autonext=1` or the same with `imdb=...`.
-- Vidsrc route integration: `src/pages/movie/[slug].astro` reads `episode.linkEmbed`, applies allowed host mirror/mobile rewrites for `vsembed.ru`, `vsembed.su`, `vidsrc-embed.ru`, `vidsrc-embed.su`, `vidsrcme.su`, and `vsrc.su`, then renders the embed branch.
-- Vidsrc rendering: `components/IframePlayerFacade.tsx` renders the selected embed URL in an `<iframe>` after the user clicks the facade; Vidsrc is not routed through `components/HlsVideo.tsx`.
-
-## Public Assets And SEO
-
-- `public/robots.txt`: robots rules and sitemap links.
-- `public/sitemap.xml`: sitemap.
-- `public/sitemap-index.xml`: sitemap index.
-- `public/_headers`: cache headers for robots/sitemap files.
-- `public/manifest.webmanifest`: PWA manifest.
-- `public/icon*.png`, `public/icon.svg`, `public/favicon.*`, `public/apple-touch-icon.png`: icons.
-
-## Search Hints
-
-- Movie cards / poster UI: `rg -n "MovieCard|poster|episodeCurrent|quality|Heart|Star" components src lib`.
-- Rating badges: `rg -n "rating|IMDb|TMDB|getDisplayRating|getDisplayRatings|Star" components lib src`.
-- Navigation: `rg -n "BottomNav|TopBar|nav|CONTEXT_KEY|data-nav-back|pageshow|popstate|hashchange|pathname|SearchSuggest" components src`.
-- Category back/active-tab regressions: check `components/BottomNav.tsx`, `src/layouts/BaseLayout.astro`, `components/MovieCard.tsx`, `src/pages/list/[type].astro`, `src/pages/movie/[slug].astro`, and `src/pages/watch/[slug].astro` before scanning elsewhere.
-- Unified detail/player flow: `rg -n "MoviePlayer|Xem phim|data-nav-back|/watch/|/movie/|history.back|popstate|pageshow" src components`.
-- Episode selection history: `rg -n "data-movie-episode-link|location.replace|episodeWatchKey|findEpisodeByWatchKey|serverIndex|epKey" src/pages/movie src lib`.
-- Source tab propagation: `rg -n "returnTo|validNavSource|currentReturnTo|data-movie-episode-link|activeKeyFromPath|contextKeyForPath" src/layouts components src/pages`.
-- Video player / HLS: `rg -n "HlsVideo|hls.js|m3u8|IframePlayerFacade|vsembed|Vidsrc|subtitle|quality" components src lib`.
-- Video buffering policy: `docs/video-buffering-policy.md` and the Player section in `docs/DECISIONS.md`.
-- Cloudflare Worker/Pages logic: `rg -n "worker|scheduled|createExports|cloudflare|wrangler|adapter|caches.default" src lib astro.config.mjs wrangler.jsonc`.
-- KV/Cache API logic: `rg -n "KV|MOVIE_METADATA|WORKER_VERSION|cache|TTL|HTML_CACHE_VERSION|writeBudget" src lib docs/CLOUDFLARE_CACHE.md wrangler.jsonc`.
-- SEO / robots / sitemap: `rg -n "canonical|og:|twitter|robots|sitemap|manifest|_headers" src public`.
-- OPhim metadata shape: `rg -n "normalizeCard|SourceMovie|SourceRating|tmdb|imdb|episode" lib src`.
+- UI/media: `rg -n "HeroSlider|SectionRow|MovieCard|GlobalNav" components src`
+- Catalog contract: `rg -n "getHome|getMovie|normalizeCard|CATALOG_BASE" lib components src`
+- Routing/pagination: `rg -n "returnTo|hrefWithPage|Pagination" src components lib`
+- Playback: `rg -n "resolvePlaybackSource|hls.light|IframePlayerFacade|location.replace" lib components`
+- Cache/images: `rg -n "cacheTag|revalidateTag|getOrBuild|signedImageUrl" src lib backend/src`

@@ -1,0 +1,21 @@
+{
+  "status": true,
+  "msg": "done",
+  "items": [
+    {
+      "tmdb": { "id": "273119", "type": "tv", "season": 1 },
+      "imdb": { "id": null },
+      "_id": "6a18fc11849863f9434d9d45a44ae9b9",
+      "name": "Nhân Ngư",
+      "slug": "nhan-ngu-2026",
+      "origin_name": "Ren Yu",
+      "type": "series",
+      "poster_url": "https://phimimg.com/uploads/movies/20260808/nhan-ngu-2026-poster.webp",
+      "thumb_url": "https://phimimg.com/uploads/movies/20260808/nhan-ngu-2026-thumb.webp",
+      "episode_current": "Tập 17",
+      "quality": "FHD",
+      "lang": "Vietsub",
+      "year": 2026
+    }
+  ]
+}

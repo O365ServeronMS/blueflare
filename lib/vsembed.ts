@@ -3,9 +3,7 @@ import type { Episode, EpisodeServer, MovieDetail } from "@/lib/types";
 const DEFAULT_EMBED_BASE_URL = "https://vsembed.ru";
 
 function embedBaseUrl() {
-  const configured = typeof import.meta !== "undefined" && import.meta.env
-    ? import.meta.env.PUBLIC_VSEMBED_EMBED_BASE_URL
-    : undefined;
+  const configured = process.env.NEXT_PUBLIC_VSEMBED_EMBED_BASE_URL;
   return String(configured || DEFAULT_EMBED_BASE_URL).replace(/\/$/, "");
 }
 

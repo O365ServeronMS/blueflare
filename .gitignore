@@ -1,14 +1,5 @@
 node_modules/
-.astro/
-.astro-build-verify*/
-.vite-cache/
-.vite-cache-build/
-.vite-cache-build-codex/
-.vite-cache-codex-build/
-.vite-cache-verify/
-.wrangler-config/
-.wrangler-cache/
-.wrangler/
+.next/
 out/
 dist/
 build/

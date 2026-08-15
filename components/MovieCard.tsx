@@ -1,4 +1,4 @@
-import { Heart } from "lucide-react";
+import { Play } from "lucide-react";
 import type { MovieCard as MovieCardType } from "@/lib/types";
 import { hrefWithReturnTo } from "@/lib/navigation";
 import { getDisplayRating } from "@/lib/utils";
@@ -18,10 +18,8 @@ function validHttpImage(value?: string) {
 function movieStatus(movie: MovieCardType) {
   const episode = String(movie.episodeCurrent || "").trim();
   if (/trailer/i.test(episode)) return "TRAILER";
-
   const episodeMatch = episode.match(/t(?:ập|ap)\s*([0-9]+(?:\.[0-9]+)?)/i);
   if (episodeMatch) return `TẬP ${episodeMatch[1]}`;
-
   return /(?:^|\b)(?:f?hd)(?:\b|$)/i.test(String(movie.quality || "")) ? "HD" : "";
 }
 
@@ -31,7 +29,8 @@ export function MovieCard({
   headingLevel = 3,
   priority = false,
   navSourceKey = "",
-  returnTo = ""
+  returnTo = "",
+  variant = "poster"
 }: {
   movie: MovieCardType;
   compact?: boolean;
@@ -39,81 +38,85 @@ export function MovieCard({
   priority?: boolean;
   navSourceKey?: string;
   returnTo?: string;
+  variant?: "poster" | "landscape";
 }) {
-  const primaryUrl = validHttpImage(movie.thumb) || validHttpImage(movie.poster);
-  const fallbackUrl = validHttpImage(movie.poster) || validHttpImage(movie.thumb);
-  
-  let fallbackImage = "";
-  if (movie.posterSigned?.d && movie.posterSigned.d !== movie.thumbSigned?.d) {
-    fallbackImage = movie.posterSigned.d;
-  } else if (fallbackUrl && fallbackUrl !== primaryUrl) {
-    fallbackImage = fallbackUrl;
-  }
-
-  let imageSrc = LOCAL_IMAGE_PLACEHOLDER;
-  if (movie.thumbSigned?.m && movie.thumbSigned?.d) {
-    imageSrc = movie.thumbSigned.d;
-  } else if (primaryUrl) {
-    imageSrc = primaryUrl;
-  }
-  const imageClassName = "h-full w-full object-cover transition duration-500 group-hover:scale-105";
-  const Title = headingLevel === 2 ? "h2" : "h3";
+  const portrait = validHttpImage(movie.thumb);
+  const landscape = validHttpImage(movie.poster);
+  const primaryUrl = variant === "landscape" ? landscape || portrait : portrait || landscape;
+  const fallbackUrl = variant === "landscape" ? portrait : landscape;
+  const imageSrc = primaryUrl || LOCAL_IMAGE_PLACEHOLDER;
   const displayRating = getDisplayRating(movie);
   const status = movieStatus(movie);
   const detailHref = hrefWithReturnTo(`/movie/${movie.slug}`, returnTo, navSourceKey);
+  const Title = headingLevel === 2 ? "h2" : "h3";
+
+  if (variant === "landscape") {
+    return (
+      <a href={detailHref} className="bf-media-card group block min-w-0 rounded" aria-label={`Xem chi tiết ${movie.name}`}>
+        <article className="relative aspect-video overflow-hidden rounded bg-graphite">
+          <img
+            src={imageSrc}
+            alt={movie.name}
+            width={640}
+            height={360}
+            loading={priority ? "eager" : "lazy"}
+            fetchPriority={priority ? "high" : undefined}
+            decoding="async"
+            data-movie-poster
+            data-fallback-src={fallbackUrl || undefined}
+            data-original-src={primaryUrl || undefined}
+            data-placeholder-src={LOCAL_IMAGE_PLACEHOLDER}
+            className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
+          />
+          <span className="bf-card-vignette absolute inset-0 opacity-80 transition-opacity group-hover:opacity-100" aria-hidden="true" />
+          <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 p-3">
+            <div className="min-w-0">
+              <Title className="line-clamp-1 text-[14px] font-bold leading-tight text-chalk-white sm:text-[15px]">{movie.name}</Title>
+              <p className="mt-1 flex items-center gap-2 text-[11px] text-silver">
+                {movie.year ? <span>{movie.year}</span> : null}
+                {status ? <span>{status}</span> : null}
+                {displayRating ? <span>{displayRating.score.toFixed(1)}</span> : null}
+              </p>
+            </div>
+            <span className="hidden h-9 w-9 shrink-0 place-items-center rounded-full bg-chalk-white text-deep-space transition group-hover:grid group-focus-visible:grid">
+              <Play className="ml-0.5 h-4 w-4 fill-current" aria-hidden="true" />
+            </span>
+          </div>
+        </article>
+      </a>
+    );
+  }
 
   return (
-    <a href={detailHref} className="group block min-w-0">
-      <article className="overflow-hidden rounded-lg bg-smoke transition duration-300">
-        <div className="relative aspect-[2/3] overflow-hidden bg-obsidian">
-          <picture>
-            {movie.thumbSigned?.m && movie.thumbSigned?.d ? (
-              <>
-                <source media="(max-width: 767px)" srcSet={movie.thumbSigned.m} />
-                <source media="(min-width: 768px)" srcSet={movie.thumbSigned.d} />
-              </>
-            ) : null}
-            <img
-              src={imageSrc}
-              alt={movie.name}
-              width={400}
-              height={600}
-              loading={priority ? "eager" : "lazy"}
-              fetchPriority={priority ? "high" : undefined}
-              decoding="async"
-              data-movie-poster
-              data-fallback-src={fallbackImage || undefined}
-              data-original-src={primaryUrl || undefined}
-              data-placeholder-src={LOCAL_IMAGE_PLACEHOLDER}
-              className={imageClassName}
-            />
-          </picture>
-          <div className="absolute inset-x-0 top-0 flex items-start justify-between p-2">
-            {displayRating ? (
-              <span className="inline-flex min-h-5 items-center rounded-[4.5px] bg-[#f5c518] px-1.5 py-0.5 text-[9px] font-black uppercase leading-none tracking-[0.04em] text-black">
-                {displayRating.text}
-              </span>
-            ) : (
-              <span aria-hidden="true" />
-            )}
-            <span className="grid h-7 w-7 place-items-center rounded-full bg-obsidian/75 text-snow">
-              <Heart className="h-3.5 w-3.5" />
-            </span>
-          </div>
-          {status && (
-            <span className="absolute bottom-2 left-2 inline-flex min-h-6 items-center rounded-[4.5px] bg-signal-blue px-2 py-1 text-[11px] font-bold uppercase leading-none tracking-[0.083em] text-snow">
-              {status}
-            </span>
-          )}
+    <a href={detailHref} className="bf-media-card group block min-w-0">
+      <article>
+        <div className="relative aspect-[2/3] overflow-hidden rounded bg-graphite">
+          <img
+            src={imageSrc}
+            alt={movie.name}
+            width={400}
+            height={600}
+            loading={priority ? "eager" : "lazy"}
+            fetchPriority={priority ? "high" : undefined}
+            decoding="async"
+            data-movie-poster
+            data-fallback-src={fallbackUrl || undefined}
+            data-original-src={primaryUrl || undefined}
+            data-placeholder-src={LOCAL_IMAGE_PLACEHOLDER}
+            className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.025]"
+          />
+          <span className="absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/15" aria-hidden="true" />
+          {status ? (
+            <span className="absolute bottom-2 left-2 rounded-sm bg-black/85 px-2 py-1 text-[10px] font-bold tracking-[0.05em] text-chalk-white">{status}</span>
+          ) : null}
+          {displayRating ? (
+            <span className="absolute right-2 top-2 rounded-sm bg-black/80 px-2 py-1 text-[10px] font-bold text-chalk-white">{displayRating.score.toFixed(1)}</span>
+          ) : null}
         </div>
-        <div className="p-3">
-          <Title className={compact ? "line-clamp-2 text-body font-bold leading-body text-snow" : "line-clamp-2 text-body-lg font-bold leading-body-lg text-snow"}>{movie.name}</Title>
-          <div className="mt-2 flex flex-wrap gap-1.5 text-caption font-semibold uppercase tracking-caption text-iron-veil">
-            {movie.year && <span className="rounded-[4.5px] bg-snow/5 px-2 py-1">{movie.year}</span>}
-            {movie.country && <span className="rounded-[4.5px] bg-snow/5 px-2 py-1">{movie.country}</span>}
-          </div>
-          {!compact && movie.category && <p className="mt-2 line-clamp-1 text-caption font-semibold uppercase tracking-caption text-iron-veil">{movie.category}</p>}
-        </div>
+        <Title className={compact ? "mt-2 line-clamp-1 text-[13px] font-medium text-chalk-white" : "mt-2.5 line-clamp-1 text-[14px] font-medium text-chalk-white sm:text-[15px]"}>{movie.name}</Title>
+        {!compact ? (
+          <p className="mt-1 line-clamp-1 text-[12px] text-silver">{[movie.year, movie.country].filter(Boolean).join(" · ")}</p>
+        ) : null}
       </article>
     </a>
   );

@@ -1,0 +1,51 @@
+{
+  "status": true,
+  "movie": {
+    "tmdb": {
+      "id": "273119",
+      "type": "tv",
+      "season": 1,
+      "vote_average": 8.1,
+      "vote_count": 10
+    },
+    "imdb": {
+      "id": "tt31886947",
+      "vote_average": 7.8,
+      "vote_count": 20
+    },
+    "_id": "6a18fc11849863f9434d9d45a44ae9b9",
+    "name": "Nhân Ngư",
+    "slug": "nhan-ngu-2026",
+    "origin_name": "Ren Yu",
+    "content": "<p>Một vụ án thiếu nữ mất tích.</p>",
+    "type": "series",
+    "status": "ongoing",
+    "thumb_url": "https://phimimg.com/uploads/movies/20260808/nhan-ngu-2026-thumb.webp",
+    "poster_url": "https://phimimg.com/uploads/movies/20260808/nhan-ngu-2026-poster.webp",
+    "time": "43 phút/tập",
+    "episode_current": "Tập 17",
+    "episode_total": 22,
+    "quality": "FHD",
+    "lang": "Vietsub",
+    "year": 2026,
+    "actor": ["Huangyang Tiantian", "Dong Yong"],
+    "director": ["Đang cập nhật"],
+    "category": [{ "name": "Chính Kịch", "slug": "chinh-kich" }],
+    "country": [{ "name": "Trung Quốc", "slug": "trung-quoc" }],
+    "modified": { "time": "2026-08-14T17:48:19.000Z" }
+  },
+  "episodes": [
+    {
+      "server_name": "Vietsub",
+      "server_data": [
+        {
+          "name": "Tập 01",
+          "slug": "tap-01",
+          "filename": "Nhân Ngư - Tập 01",
+          "link_embed": "https://player.phimapi.com/player/?url=https://example.test/index.m3u8",
+          "link_m3u8": "https://example.test/index.m3u8"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,508 @@
+import { pool } from './db.js';
+import {
+  isControlledFuzzyMatch,
+  normalizeTitle,
+  slugify
+} from './identity.js';
+
+function present(value) {
+  if (value === null || value === undefined) return false;
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  return true;
+}
+
+function choose(current, incoming, preferIncoming) {
+  if (preferIncoming && present(incoming)) return incoming;
+  if (present(current)) return current;
+  return incoming ?? null;
+}
+
+function latest(left, right) {
+  const a = left ? Date.parse(left) : 0;
+  const b = right ? Date.parse(right) : 0;
+  return a >= b ? left : right;
+}
+
+export function mergedMovie(current, incoming) {
+  const preferIncoming = incoming.provider === 'nguonc' ||
+    current.primary_provider !== 'nguonc';
+  return {
+    title: choose(current.title, incoming.title, preferIncoming),
+    originalTitle: choose(current.original_title, incoming.originalTitle, preferIncoming),
+    normalizedTitle: choose(
+      current.normalized_title,
+      incoming.normalizedTitle,
+      preferIncoming
+    ),
+    normalizedOriginalTitle: choose(
+      current.normalized_original_title,
+      incoming.normalizedOriginalTitle,
+      preferIncoming
+    ),
+    mediaType: choose(current.media_type, incoming.mediaType, preferIncoming),
+    displayType: choose(current.display_type, incoming.displayType, preferIncoming),
+    year: choose(current.year, incoming.year, preferIncoming),
+    tmdbId: choose(current.tmdb_id, incoming.tmdbId, false),
+    imdbId: choose(current.imdb_id, incoming.imdbId, false),
+    overview: choose(current.overview, incoming.overview, preferIncoming),
+    thumbSourceUrl: choose(
+      current.thumb_source_url,
+      incoming.thumbSourceUrl,
+      preferIncoming
+    ),
+    posterSourceUrl: choose(
+      current.poster_source_url,
+      incoming.posterSourceUrl,
+      preferIncoming
+    ),
+    quality: choose(current.quality, incoming.quality, preferIncoming),
+    language: choose(current.language, incoming.language, preferIncoming),
+    status: choose(current.status, incoming.status, preferIncoming),
+    episodeCurrent: choose(
+      current.episode_current,
+      incoming.episodeCurrent,
+      preferIncoming
+    ),
+    episodeTotal: choose(
+      current.episode_total,
+      incoming.episodeTotal,
+      preferIncoming
+    ),
+    duration: choose(current.duration, incoming.duration, preferIncoming),
+    actors: choose(current.actors, incoming.actors, preferIncoming) || [],
+    directors: choose(current.directors, incoming.directors, preferIncoming) || [],
+    genres: choose(current.genres, incoming.genres, preferIncoming) || [],
+    countries: choose(current.countries, incoming.countries, preferIncoming) || [],
+    ratings: {
+      ...(current.ratings || {}),
+      ...(incoming.ratings || {})
+    },
+    primaryProvider: incoming.provider === 'nguonc'
+      ? 'nguonc'
+      : current.primary_provider,
+    providerUpdatedAt: latest(
+      current.provider_updated_at,
+      incoming.providerUpdatedAt
+    )
+  };
+}
+
+async function uniqueSlug(client, preferred, year) {
+  const base = slugify(preferred);
+  const candidates = [base];
+  if (year) candidates.push(base + '-' + year);
+  for (let index = 2; index < 100; index += 1) {
+    candidates.push(base + '-' + index);
+  }
+  for (const candidate of candidates) {
+    const result = await client.query(
+      'SELECT 1 FROM movies WHERE canonical_slug = $1',
+      [candidate]
+    );
+    if (!result.rowCount) return candidate;
+  }
+  return base + '-' + Date.now();
+}
+
+async function findIdentity(client, incoming) {
+  if (incoming.tmdbId) {
+    const result = await client.query(
+      'SELECT * FROM movies WHERE tmdb_id = $1 AND media_type = $2 LIMIT 1',
+      [incoming.tmdbId, incoming.mediaType]
+    );
+    if (result.rowCount) return result.rows[0];
+  }
+
+  if (incoming.imdbId) {
+    const result = await client.query(
+      'SELECT * FROM movies WHERE imdb_id = $1 AND media_type = $2 LIMIT 1',
+      [incoming.imdbId, incoming.mediaType]
+    );
+    if (result.rowCount) return result.rows[0];
+  }
+
+  if (incoming.year && incoming.normalizedOriginalTitle) {
+    const result = await client.query(
+      'SELECT * FROM movies WHERE normalized_original_title = $1 ' +
+      'AND year = $2 AND media_type = $3 LIMIT 1',
+      [incoming.normalizedOriginalTitle, incoming.year, incoming.mediaType]
+    );
+    if (result.rowCount) return result.rows[0];
+  }
+
+  if (incoming.year && incoming.normalizedTitle) {
+    const result = await client.query(
+      'SELECT * FROM movies WHERE normalized_title = $1 ' +
+      'AND year = $2 AND media_type = $3 LIMIT 1',
+      [incoming.normalizedTitle, incoming.year, incoming.mediaType]
+    );
+    if (result.rowCount) return result.rows[0];
+  }
+
+  if (!incoming.year) return null;
+  const candidates = await client.query(
+    'SELECT * FROM movies WHERE year = $1 AND media_type = $2 LIMIT 100',
+    [incoming.year, incoming.mediaType]
+  );
+  return candidates.rows.find((candidate) => (
+    isControlledFuzzyMatch(candidate, incoming)
+  )) || null;
+}
+
+async function findBySource(client, incoming) {
+  const result = await client.query(
+    'SELECT m.* FROM movies m ' +
+    'JOIN movie_provider_sources s ON s.movie_id = m.id ' +
+    'WHERE s.provider = $1 AND ' +
+    '(s.provider_movie_id = $2 OR s.provider_slug = $3) LIMIT 1',
+    [incoming.provider, incoming.providerMovieId, incoming.providerSlug]
+  );
+  return result.rows[0] || null;
+}
+
+async function insertMovie(client, incoming) {
+  const canonicalSlug = await uniqueSlug(
+    client,
+    incoming.providerSlug || incoming.originalTitle || incoming.title,
+    incoming.year
+  );
+  const result = await client.query(
+    'INSERT INTO movies (' +
+    'canonical_slug, title, original_title, normalized_title, ' +
+    'normalized_original_title, media_type, display_type, year, tmdb_id, ' +
+    'imdb_id, overview, thumb_source_url, poster_source_url, quality, ' +
+    'language, status, episode_current, episode_total, duration, actors, ' +
+    'directors, genres, countries, ratings, primary_provider, provider_updated_at, ' +
+    'catalog_state, ready_at, catalog_sort_at' +
+    ') VALUES (' +
+    '$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,' +
+    "$19,$20,$21,$22,$23,$24,$25,$26,'ready',now(),$26" +
+    ') RETURNING *',
+    [
+      canonicalSlug,
+      incoming.title,
+      incoming.originalTitle,
+      incoming.normalizedTitle,
+      incoming.normalizedOriginalTitle,
+      incoming.mediaType,
+      incoming.displayType,
+      incoming.year,
+      incoming.tmdbId,
+      incoming.imdbId,
+      incoming.overview,
+      incoming.thumbSourceUrl,
+      incoming.posterSourceUrl,
+      incoming.quality,
+      incoming.language,
+      incoming.status,
+      incoming.episodeCurrent,
+      incoming.episodeTotal,
+      incoming.duration,
+      JSON.stringify(incoming.actors),
+      JSON.stringify(incoming.directors),
+      JSON.stringify(incoming.genres),
+      JSON.stringify(incoming.countries),
+      JSON.stringify(incoming.ratings),
+      incoming.provider,
+      incoming.providerUpdatedAt
+    ]
+  );
+  return result.rows[0];
+}
+
+async function updateMovie(client, current, incoming) {
+  const movie = mergedMovie(current, incoming);
+  const result = await client.query(
+    'UPDATE movies SET ' +
+    'title=$2, original_title=$3, normalized_title=$4, ' +
+    'normalized_original_title=$5, media_type=$6, display_type=$7, year=$8, ' +
+    'tmdb_id=$9, imdb_id=$10, overview=$11, thumb_source_url=$12, ' +
+    'poster_source_url=$13, quality=$14, language=$15, status=$16, ' +
+    'episode_current=$17, episode_total=$18, duration=$19, actors=$20, ' +
+    'directors=$21, genres=$22, countries=$23, ratings=$24, ' +
+    "primary_provider=$25, provider_updated_at=$26, catalog_state='ready', " +
+    'ready_at=COALESCE(ready_at, now()), ' +
+    'catalog_sort_at=COALESCE($26, catalog_sort_at), updated_at=now() ' +
+    'WHERE id=$1 RETURNING *',
+    [
+      current.id,
+      movie.title,
+      movie.originalTitle,
+      movie.normalizedTitle,
+      movie.normalizedOriginalTitle,
+      movie.mediaType,
+      movie.displayType,
+      movie.year,
+      movie.tmdbId,
+      movie.imdbId,
+      movie.overview,
+      movie.thumbSourceUrl,
+      movie.posterSourceUrl,
+      movie.quality,
+      movie.language,
+      movie.status,
+      movie.episodeCurrent,
+      movie.episodeTotal,
+      movie.duration,
+      JSON.stringify(movie.actors),
+      JSON.stringify(movie.directors),
+      JSON.stringify(movie.genres),
+      JSON.stringify(movie.countries),
+      JSON.stringify(movie.ratings),
+      movie.primaryProvider,
+      movie.providerUpdatedAt
+    ]
+  );
+  return result.rows[0];
+}
+
+export async function upsertCanonical(incoming) {
+  if (!incoming.providerMovieId || !incoming.providerSlug) {
+    throw new Error('Provider movie identity is incomplete');
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    let movie = await findBySource(client, incoming);
+    if (!movie) movie = await findIdentity(client, incoming);
+    movie = movie
+      ? await updateMovie(client, movie, incoming)
+      : await insertMovie(client, incoming);
+
+    await client.query(
+      'INSERT INTO movie_provider_sources (' +
+      'movie_id, provider, provider_movie_id, provider_slug, priority, ' +
+      'availability, metadata, streams, provider_updated_at, last_success_at' +
+      ') VALUES ($1,$2,$3,$4,$5,true,$6,$7,$8,now()) ' +
+      'ON CONFLICT (provider, provider_movie_id) DO UPDATE SET ' +
+      'movie_id=EXCLUDED.movie_id, provider_slug=EXCLUDED.provider_slug, ' +
+      'priority=EXCLUDED.priority, availability=true, metadata=EXCLUDED.metadata, ' +
+      'streams=EXCLUDED.streams, provider_updated_at=EXCLUDED.provider_updated_at, ' +
+      'last_success_at=now(), updated_at=now()',
+      [
+        movie.id,
+        incoming.provider,
+        incoming.providerMovieId,
+        incoming.providerSlug,
+        incoming.priority,
+        JSON.stringify(incoming.metadata),
+        JSON.stringify(incoming.streams),
+        incoming.providerUpdatedAt
+      ]
+    );
+    await client.query('COMMIT');
+    return movie;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function recordProviderSuccess(provider, latencyMs, status = 200, parseFailures = 0) {
+  const detailError = parseFailures > 0
+    ? String(parseFailures) + ' provider detail/parse failures' : null;
+  await pool.query(
+    'INSERT INTO provider_health (' +
+    'provider,last_success_at,last_latency_ms,last_http_status,consecutive_failures,' +
+    'parse_failures,last_error) VALUES ($1,now(),$2,$3,0,$4,$5) ' +
+    'ON CONFLICT (provider) DO UPDATE SET last_success_at=now(), ' +
+    'last_latency_ms=$2,last_http_status=$3,consecutive_failures=0,' +
+    'parse_failures=provider_health.parse_failures+$4,' +
+    'last_error=$5,updated_at=now()',
+    [provider, latencyMs, status, parseFailures, detailError]
+  );
+}
+
+export async function recordProviderFailure(provider, error) {
+  const status = Number(error?.status) || null;
+  const schemaDrift = error?.name === 'ProviderSchemaError' ? 1 : 0;
+  await pool.query(
+    'INSERT INTO provider_health (' +
+    'provider,last_failure_at,last_http_status,consecutive_failures,last_error,' +
+    'schema_drift_failures) VALUES ($1,now(),$2,1,$3,$4) ' +
+    'ON CONFLICT (provider) DO UPDATE SET last_failure_at=now(), ' +
+    'last_http_status=$2,consecutive_failures=provider_health.consecutive_failures+1,' +
+    'last_error=$3,schema_drift_failures=' +
+    'provider_health.schema_drift_failures+$4,updated_at=now()',
+    [provider, status, String(error?.message || error).slice(0, 1000), schemaDrift]
+  );
+}
+
+export async function getCrawlCheckpoint(provider, lane, startPage) {
+  const result = await pool.query(
+    'INSERT INTO crawl_checkpoints (provider, lane, next_page) VALUES ($1,$2,$3) ' +
+    'ON CONFLICT (provider, lane) DO UPDATE SET updated_at=now() ' +
+    'RETURNING *',
+    [provider, lane, startPage]
+  );
+  return result.rows[0];
+}
+
+export async function saveCrawlCheckpoint(provider, lane, checkpoint) {
+  await pool.query(
+    'UPDATE crawl_checkpoints SET next_page=$3, last_page_hash=$4, total_pages=$5, ' +
+    'completed_at=$6, last_success_at=now(), last_error=NULL, updated_at=now() ' +
+    'WHERE provider=$1 AND lane=$2',
+    [
+      provider,
+      lane,
+      checkpoint.nextPage,
+      checkpoint.pageHash || null,
+      checkpoint.totalPages || null,
+      checkpoint.completed ? new Date() : null
+    ]
+  );
+}
+
+export async function recordCrawlCheckpointFailure(provider, lane, error) {
+  await pool.query(
+    'UPDATE crawl_checkpoints SET last_error=$3, updated_at=now() ' +
+    'WHERE provider=$1 AND lane=$2',
+    [provider, lane, String(error?.message || error).slice(0, 1000)]
+  );
+}
+
+function addListFilter(filters, values, sql, value) {
+  values.push(value);
+  filters.push(sql.replace('?', '$' + values.length));
+}
+
+export async function listCanonical(options = {}) {
+  const requestedPage = Math.max(1, Math.floor(Number(options.page) || 1));
+  const limit = Math.min(64, Math.max(1, Number(options.limit) || 24));
+  const filters = ["catalog_state = 'ready'"];
+  const values = [];
+
+  const typeMap = {
+    'phim-le': ['media_type', 'movie'],
+    'phim-bo': ['display_type', 'series'],
+    'hoat-hinh': ['display_type', 'hoathinh'],
+    'tv-shows': ['display_type', 'tvshows']
+  };
+  const mappedType = typeMap[options.type];
+  if (mappedType) {
+    addListFilter(filters, values, mappedType[0] + ' = ?', mappedType[1]);
+  }
+  if (options.genre) {
+    addListFilter(
+      filters,
+      values,
+      "EXISTS (SELECT 1 FROM jsonb_array_elements(genres) item WHERE item->>'slug' = ?)",
+      options.genre
+    );
+  }
+  if (options.country) {
+    addListFilter(
+      filters,
+      values,
+      "EXISTS (SELECT 1 FROM jsonb_array_elements(countries) item WHERE item->>'slug' = ?)",
+      options.country
+    );
+  }
+  if (options.keyword) {
+    const query = '%' + normalizeTitle(options.keyword) + '%';
+    addListFilter(
+      filters,
+      values,
+      '(normalized_title LIKE ? OR normalized_original_title LIKE ?)',
+      query
+    );
+    values.push(query);
+    filters[filters.length - 1] = filters[filters.length - 1]
+      .replace('?', '$' + values.length);
+  }
+
+  const where = filters.length ? ' WHERE ' + filters.join(' AND ') : '';
+  const count = await pool.query(
+    'SELECT count(*)::integer AS count FROM movies' + where,
+    values
+  );
+  const totalItems = count.rows[0]?.count || 0;
+  const totalPages = Math.max(1, Math.ceil(totalItems / limit));
+  const page = Math.min(requestedPage, totalPages);
+  const queryValues = [...values, limit, (page - 1) * limit];
+  const select = options.includePlayable
+    ? 'SELECT movies.*, EXISTS (' +
+      'SELECT 1 FROM movie_provider_sources source ' +
+      "WHERE source.movie_id=movies.id AND source.availability=true " +
+      "AND jsonb_typeof(source.streams)='array' " +
+      'AND jsonb_array_length(source.streams)>0) AS has_playable_source FROM movies'
+    : 'SELECT * FROM movies';
+
+  const rows = await pool.query(
+    select + where +
+    ' ORDER BY catalog_sort_at DESC NULLS LAST, year DESC NULLS LAST, canonical_slug ASC ' +
+    'LIMIT $' + (values.length + 1) + ' OFFSET $' + (values.length + 2),
+    queryValues
+  );
+  return {
+    rows: rows.rows,
+    page,
+    limit,
+    totalItems,
+    totalPages
+  };
+}
+
+export async function findMovie(slug) {
+  const movieResult = await pool.query(
+    'SELECT DISTINCT m.* FROM movies m ' +
+    'LEFT JOIN movie_provider_sources s ON s.movie_id=m.id ' +
+    "WHERE m.catalog_state='ready' AND (m.canonical_slug=$1 OR s.provider_slug=$1) " +
+    'ORDER BY m.catalog_sort_at DESC NULLS LAST, m.canonical_slug ASC LIMIT 1',
+    [slug]
+  );
+  const movie = movieResult.rows[0];
+  if (!movie) return null;
+  const sources = await pool.query(
+    'SELECT * FROM movie_provider_sources WHERE movie_id=$1 AND availability=true ' +
+    'ORDER BY priority ASC, provider ASC',
+    [movie.id]
+  );
+  return { movie, sources: sources.rows };
+}
+
+export async function recommendations(mediaType, tmdbId, limit = 16) {
+  const target = await pool.query(
+    "SELECT * FROM movies WHERE catalog_state='ready' AND tmdb_id=$1 AND media_type=$2 LIMIT 1",
+    [tmdbId, mediaType]
+  );
+  if (!target.rowCount) return [];
+  const movie = target.rows[0];
+  const genre = movie.genres?.[0]?.slug;
+  const values = [movie.id, mediaType];
+  let genreFilter = '';
+  if (genre) {
+    values.push(genre);
+    genreFilter = " AND EXISTS (SELECT 1 FROM jsonb_array_elements(genres) item " +
+      "WHERE item->>'slug'=$3)";
+  }
+  values.push(limit);
+  const result = await pool.query(
+    "SELECT * FROM movies WHERE catalog_state='ready' AND id<>$1 AND media_type=$2" + genreFilter +
+    ' ORDER BY catalog_sort_at DESC NULLS LAST LIMIT $' + values.length,
+    values
+  );
+  return result.rows;
+}
+
+export async function taxonomy(field) {
+  if (!['genres', 'countries'].includes(field)) throw new Error('Invalid taxonomy field');
+  const result = await pool.query(
+    'SELECT item->>\'slug\' AS slug, max(item->>\'name\') AS name, count(*)::integer AS count ' +
+    "FROM movies, jsonb_array_elements(" + field + ") item WHERE catalog_state='ready' " +
+    'GROUP BY item->>\'slug\' ORDER BY name'
+  );
+  return result.rows;
+}
+
+export async function providerHealth() {
+  const result = await pool.query(
+    'SELECT * FROM provider_health ORDER BY provider'
+  );
+  return result.rows;
+}

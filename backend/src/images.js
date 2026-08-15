@@ -8,6 +8,8 @@ import { rename, stat, unlink } from 'node:fs/promises';
 import sharp from 'sharp';
 import { config } from './config.js';
 import { createLocalImageStore } from './imageStore.js';
+import { observeCache } from './observability.js';
+import { pool } from './db.js';
 
 const variants = Object.freeze({
   m: { width: 480, height: 720, quality: 75 },
@@ -64,8 +66,14 @@ function secureEqual(left, right) {
 }
 
 const imageStore = createLocalImageStore(config.imageCacheDir);
+const imageInFlight = new Map();
+const assetIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 async function fetchSource(url) {
+  const parsed = new URL(url);
+  if (parsed.protocol !== 'https:' || !allowedImageHost(parsed.hostname)) {
+    throw new Error('Image source host is not allowed');
+  }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), config.requestTimeoutMs);
   try {
@@ -91,6 +99,64 @@ async function fetchSource(url) {
 }
 
 export async function serveSignedImage(request, response, pathname, searchParams) {
+  const assetMatch = pathname.match(/^\/i\/([md])\/([0-9a-f-]{36})\.webp$/i);
+  if (assetMatch && assetIdPattern.test(assetMatch[2])) {
+    const variant = assetMatch[1];
+    const assetId = assetMatch[2].toLowerCase();
+    const assetResult = await pool.query(
+      'SELECT source_url FROM image_assets WHERE id=$1', [assetId]
+    );
+    if (!assetResult.rowCount) {
+      response.writeHead(404).end();
+      return true;
+    }
+    let filename = await imageStore.find(variant, assetId);
+    let cacheStatus = filename ? 'IMAGE-DISK-HIT' : 'IMAGE-DISK-MISS';
+    if (!filename) {
+      const key = variant + ':' + assetId;
+      let pending = imageInFlight.get(key);
+      if (!pending) {
+        pending = (async () => {
+          const target = await imageStore.prepareWrite(variant, assetId);
+          try {
+            const source = await fetchSource(assetResult.rows[0].source_url);
+            const variantConfig = variants[variant];
+            await sharp(source)
+              .rotate()
+              .resize(variantConfig.width, variantConfig.height, { fit: 'cover', position: 'attention' })
+              .webp({ quality: variantConfig.quality })
+              .toFile(target.temporary);
+            await rename(target.temporary, target.filename);
+            return target.filename;
+          } catch (error) {
+            await unlink(target.temporary).catch(() => {});
+            throw error;
+          }
+        })();
+        imageInFlight.set(key, pending);
+        pending.finally(() => imageInFlight.delete(key)).catch(() => {});
+      }
+      filename = await pending;
+      cacheStatus = 'IMAGE-BUILD';
+    }
+    observeCache(cacheStatus);
+    const metadata = await stat(filename);
+    const etag = '"v3-' + variant + '-' + assetId + '"';
+    if (request.headers['if-none-match'] === etag) {
+      response.writeHead(304, { etag });
+      response.end();
+      return true;
+    }
+    response.writeHead(200, {
+      'cache-control': 'public, max-age=31536000, immutable',
+      'content-length': metadata.size,
+      'content-type': 'image/webp', etag
+    });
+    if (request.method === 'HEAD') response.end();
+    else createReadStream(filename).pipe(response);
+    return true;
+  }
+
   const match = pathname.match(/^\/i\/([md])\/([a-f0-9]{64})\.webp$/);
   if (!match) return false;
 
@@ -115,26 +181,38 @@ export async function serveSignedImage(request, response, pathname, searchParams
   }
 
   let filename = await imageStore.find(variant, expectedHash);
+  let cacheStatus = filename ? 'IMAGE-DISK-HIT' : 'IMAGE-DISK-MISS';
   if (!filename) {
-    const target = await imageStore.prepareWrite(variant, expectedHash);
-    try {
-      const source = await fetchSource(upstreamUrl);
-      const variantConfig = variants[variant];
-      await sharp(source)
-        .rotate()
-        .resize(variantConfig.width, variantConfig.height, {
-          fit: 'cover',
-          position: 'attention'
-        })
-        .webp({ quality: variantConfig.quality })
-        .toFile(target.temporary);
-      await rename(target.temporary, target.filename);
-      filename = target.filename;
-    } catch (error) {
-      await unlink(target.temporary).catch(() => {});
-      throw error;
+    const key = variant + ':' + expectedHash;
+    let pending = imageInFlight.get(key);
+    if (!pending) {
+      pending = (async () => {
+        const target = await imageStore.prepareWrite(variant, expectedHash);
+        try {
+          const source = await fetchSource(upstreamUrl);
+          const variantConfig = variants[variant];
+          await sharp(source)
+            .rotate()
+            .resize(variantConfig.width, variantConfig.height, {
+              fit: 'cover',
+              position: 'attention'
+            })
+            .webp({ quality: variantConfig.quality })
+            .toFile(target.temporary);
+          await rename(target.temporary, target.filename);
+          return target.filename;
+        } catch (error) {
+          await unlink(target.temporary).catch(() => {});
+          throw error;
+        }
+      })();
+      imageInFlight.set(key, pending);
+      pending.finally(() => imageInFlight.delete(key)).catch(() => {});
     }
+    filename = await pending;
+    cacheStatus = 'IMAGE-BUILD';
   }
+  observeCache(cacheStatus);
 
   const metadata = await stat(filename);
   const etag = '"v2-' + variant + '-' + expectedHash + '"';

@@ -49,5 +49,8 @@ export const config = Object.freeze({
   allowedOrigins: csv(
     'ALLOWED_ORIGINS',
     'https://film.bluesia.net,https://phim.bluesia.net'
-  )
+  ),
+  frontendRevalidateUrl: String(process.env.FRONTEND_REVALIDATE_URL || 'http://frontend:3000/api/internal/revalidate'),
+  frontendRevalidateSecret: String(process.env.FRONTEND_REVALIDATE_SECRET || ''),
+  metricsToken: String(process.env.METRICS_TOKEN || '')
 });

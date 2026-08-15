@@ -1,0 +1,18 @@
+{
+  "action": "set_cache_settings",
+  "action_parameters": {
+    "cache": true,
+    "edge_ttl": {
+      "mode": "override_origin",
+      "default": 31536000
+    },
+    "browser_ttl": {
+      "mode": "override_origin",
+      "default": 31536000
+    }
+  },
+  "expression": "(http.host eq \"img.bluesia.net\" and starts_with(http.request.uri.path, \"/i/\") and http.request.method in {\"GET\" \"HEAD\"})",
+  "description": "Blueflare immutable path-only m/d image assets: one-year edge and browser cache",
+  "enabled": true,
+  "ref": "blueflare_signed_images"
+}

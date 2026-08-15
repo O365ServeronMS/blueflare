@@ -35,8 +35,10 @@ export async function fetchJson(url, options = {}) {
       return { data, latencyMs: Date.now() - started, status: response.status };
     } catch (error) {
       lastError = error;
-      if (attempt >= retries) break;
-      await new Promise((resolve) => setTimeout(resolve, 250 * (2 ** attempt)));
+      const retryable = error?.name === 'AbortError' || !error?.status || [408, 425, 429, 500, 502, 503, 504].includes(error.status);
+      if (attempt >= retries || !retryable) break;
+      const backoffMs = Math.min(5000, 250 * (2 ** attempt)) + Math.floor(Math.random() * 100);
+      await new Promise((resolve) => setTimeout(resolve, backoffMs));
     } finally {
       clearTimeout(timeout);
     }

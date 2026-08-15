@@ -1,9 +1,27 @@
 import { pool } from './db.js';
+import { config } from './config.js';
 import {
   isControlledFuzzyMatch,
   normalizeTitle,
   slugify
 } from './identity.js';
+
+async function ensureImageAsset(client, sourceUrl) {
+  let normalized = sourceUrl ? String(sourceUrl).trim() : '';
+  if (!normalized) return null;
+  const parsed = new URL(normalized);
+  if (parsed.protocol !== 'https:' || !config.imageAllowedHosts.some((allowed) => (
+    parsed.hostname === allowed || parsed.hostname.endsWith('.' + allowed)
+  ))) throw new Error('Image source host is not allowed');
+  parsed.hash = '';
+  normalized = parsed.toString();
+  const result = await client.query(
+    'INSERT INTO image_assets (source_url) VALUES ($1) ' +
+    'ON CONFLICT (source_url) DO UPDATE SET updated_at=now() RETURNING id',
+    [normalized]
+  );
+  return result.rows[0].id;
+}
 
 function present(value) {
   if (value === null || value === undefined) return false;
@@ -105,6 +123,24 @@ async function uniqueSlug(client, preferred, year) {
   return base + '-' + Date.now();
 }
 
+async function findStrongIdentity(client, incoming) {
+  if (incoming.tmdbId) {
+    const result = await client.query(
+      'SELECT * FROM movies WHERE tmdb_id = $1 AND media_type = $2 LIMIT 1',
+      [incoming.tmdbId, incoming.mediaType]
+    );
+    if (result.rowCount) return result.rows[0];
+  }
+  if (incoming.imdbId) {
+    const result = await client.query(
+      'SELECT * FROM movies WHERE imdb_id = $1 AND media_type = $2 LIMIT 1',
+      [incoming.imdbId, incoming.mediaType]
+    );
+    if (result.rowCount) return result.rows[0];
+  }
+  return null;
+}
+
 async function findIdentity(client, incoming) {
   if (incoming.tmdbId) {
     const result = await client.query(
@@ -174,10 +210,10 @@ async function insertMovie(client, incoming) {
     'imdb_id, overview, thumb_source_url, poster_source_url, quality, ' +
     'language, status, episode_current, episode_total, duration, actors, ' +
     'directors, genres, countries, ratings, primary_provider, provider_updated_at, ' +
-    'catalog_state, ready_at, catalog_sort_at' +
+    'catalog_state, ready_at, catalog_sort_at, thumb_asset_id, poster_asset_id' +
     ') VALUES (' +
     '$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,' +
-    "$19,$20,$21,$22,$23,$24,$25,$26,'ready',now(),$26" +
+    "$19,$20,$21,$22,$23,$24,$25,$26,'ready',now(),$26,$27,$28" +
     ') RETURNING *',
     [
       canonicalSlug,
@@ -205,7 +241,9 @@ async function insertMovie(client, incoming) {
       JSON.stringify(incoming.countries),
       JSON.stringify(incoming.ratings),
       incoming.provider,
-      incoming.providerUpdatedAt
+      incoming.providerUpdatedAt,
+      await ensureImageAsset(client, incoming.thumbSourceUrl),
+      await ensureImageAsset(client, incoming.posterSourceUrl)
     ]
   );
   return result.rows[0];
@@ -213,6 +251,8 @@ async function insertMovie(client, incoming) {
 
 async function updateMovie(client, current, incoming) {
   const movie = mergedMovie(current, incoming);
+  const thumbAssetId = await ensureImageAsset(client, movie.thumbSourceUrl);
+  const posterAssetId = await ensureImageAsset(client, movie.posterSourceUrl);
   const result = await client.query(
     'UPDATE movies SET ' +
     'title=$2, original_title=$3, normalized_title=$4, ' +
@@ -222,7 +262,7 @@ async function updateMovie(client, current, incoming) {
     'episode_current=$17, episode_total=$18, duration=$19, actors=$20, ' +
     'directors=$21, genres=$22, countries=$23, ratings=$24, ' +
     "primary_provider=$25, provider_updated_at=$26, catalog_state='ready', " +
-    'ready_at=COALESCE(ready_at, now()), ' +
+    'ready_at=COALESCE(ready_at, now()), thumb_asset_id=$27, poster_asset_id=$28, ' +
     'catalog_sort_at=COALESCE($26, catalog_sort_at), updated_at=now() ' +
     'WHERE id=$1 RETURNING *',
     [
@@ -251,10 +291,29 @@ async function updateMovie(client, current, incoming) {
       JSON.stringify(movie.countries),
       JSON.stringify(movie.ratings),
       movie.primaryProvider,
-      movie.providerUpdatedAt
+      movie.providerUpdatedAt,
+      thumbAssetId,
+      posterAssetId
     ]
   );
   return result.rows[0];
+}
+
+function movieFingerprint(movie) {
+  return JSON.stringify([
+    movie.title, movie.original_title, movie.normalized_title,
+    movie.normalized_original_title, movie.media_type, movie.display_type,
+    movie.year, movie.tmdb_id, movie.imdb_id, movie.overview,
+    movie.thumb_source_url, movie.poster_source_url, movie.quality,
+    movie.language, movie.status, movie.episode_current, movie.episode_total,
+    movie.duration, movie.actors, movie.directors, movie.genres, movie.countries,
+    movie.ratings, movie.primary_provider, movie.provider_updated_at
+  ]);
+}
+
+function sourceFingerprint(source) {
+  if (!source) return null;
+  return JSON.stringify([source.provider_slug, source.priority, source.availability, source.metadata, source.streams, source.provider_updated_at]);
 }
 
 export async function upsertCanonical(incoming) {
@@ -265,8 +324,16 @@ export async function upsertCanonical(incoming) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    let movie = await findBySource(client, incoming);
+    const sourceMovie = await findBySource(client, incoming);
+    const strongIdentityMovie = await findStrongIdentity(client, incoming);
+    let movie = strongIdentityMovie || sourceMovie;
     if (!movie) movie = await findIdentity(client, incoming);
+    const previousFingerprint = movie ? movieFingerprint(movie) : null;
+    const previousSourceResult = await client.query(
+      "SELECT provider_slug, priority, availability, metadata, streams, provider_updated_at FROM movie_provider_sources WHERE provider=$1 AND provider_movie_id=$2 LIMIT 1",
+      [incoming.provider, incoming.providerMovieId]
+    );
+    const previousSource = previousSourceResult.rows[0] || null;
     movie = movie
       ? await updateMovie(client, movie, incoming)
       : await insertMovie(client, incoming);
@@ -292,14 +359,30 @@ export async function upsertCanonical(incoming) {
         incoming.providerUpdatedAt
       ]
     );
+    const currentSourceResult = await client.query(
+      "SELECT provider_slug, priority, availability, metadata, streams, provider_updated_at FROM movie_provider_sources WHERE provider=$1 AND provider_movie_id=$2 LIMIT 1",
+      [incoming.provider, incoming.providerMovieId]
+    );
+    const changed = !previousFingerprint || previousFingerprint !== movieFingerprint(movie) ||
+      sourceFingerprint(previousSource) !== sourceFingerprint(currentSourceResult.rows[0]);
     await client.query('COMMIT');
-    return movie;
+    return { movie, changed };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
   } finally {
     client.release();
   }
+}
+
+export async function getMovieInvalidationDimensions(slugs = []) {
+  const normalized = [...new Set(slugs.filter(Boolean).map(String))];
+  if (!normalized.length) return [];
+  const result = await pool.query(
+    "SELECT canonical_slug, genres, countries FROM movies WHERE canonical_slug = ANY($1::text[])",
+    [normalized]
+  );
+  return result.rows;
 }
 
 export async function recordProviderSuccess(provider, latencyMs, status = 200, parseFailures = 0) {
@@ -391,7 +474,7 @@ export async function listCanonical(options = {}) {
     addListFilter(
       filters,
       values,
-      "EXISTS (SELECT 1 FROM jsonb_array_elements(genres) item WHERE item->>'slug' = ?)",
+      "genres @> jsonb_build_array(jsonb_build_object('slug', ?))",
       options.genre
     );
   }
@@ -399,7 +482,7 @@ export async function listCanonical(options = {}) {
     addListFilter(
       filters,
       values,
-      "EXISTS (SELECT 1 FROM jsonb_array_elements(countries) item WHERE item->>'slug' = ?)",
+      "countries @> jsonb_build_array(jsonb_build_object('slug', ?))",
       options.country
     );
   }
@@ -478,8 +561,7 @@ export async function recommendations(mediaType, tmdbId, limit = 16) {
   let genreFilter = '';
   if (genre) {
     values.push(genre);
-    genreFilter = " AND EXISTS (SELECT 1 FROM jsonb_array_elements(genres) item " +
-      "WHERE item->>'slug'=$3)";
+    genreFilter = " AND genres @> jsonb_build_array(jsonb_build_object('slug', $3))";
   }
   values.push(limit);
   const result = await pool.query(

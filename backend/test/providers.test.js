@@ -1,3 +1,4 @@
+import http from 'node:http';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -10,6 +11,7 @@ import {
 } from '../src/identity.js';
 import { normalizeKkphim, normalizeNguonc } from '../src/normalize.js';
 import { signedImageUrl } from '../src/images.js';
+import { fetchJson } from '../src/http.js';
 import { mergedMovie } from '../src/repository.js';
 import { MovieProvider } from '../src/providers/MovieProvider.js';
 import { NguoncProvider } from '../src/providers/NguoncProvider.js';
@@ -139,4 +141,38 @@ test('signed image URLs use the v2 canonical pipeline signature', () => {
   const url = new URL(signedImageUrl('https://phimimg.com/example.jpg', 'd'));
   assert.match(url.searchParams.get('sig'), /^v2\./);
   assert.match(url.pathname, /^\/i\/d\/[a-f0-9]{64}\.webp$/);
+});
+
+
+test('provider HTTP retries transient failures but not permanent 4xx', async () => {
+  let calls = 0;
+  const server = http.createServer((request, response) => {
+    calls += 1;
+    if (request.url === '/transient' && calls === 1) {
+      response.writeHead(503, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ error: 'busy' }));
+      return;
+    }
+    if (request.url === '/transient') {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ ok: true }));
+      return;
+    }
+    response.writeHead(404, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ error: 'missing' }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  try {
+    const recovered = await fetchJson('http://127.0.0.1:' + port + '/transient', { retries: 1, timeoutMs: 1000 });
+    assert.equal(recovered.data.ok, true);
+    assert.equal(calls, 2);
+    await assert.rejects(
+      fetchJson('http://127.0.0.1:' + port + '/missing', { retries: 2, timeoutMs: 1000 }),
+      (error) => error?.status === 404
+    );
+    assert.equal(calls, 3);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });

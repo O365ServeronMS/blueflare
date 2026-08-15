@@ -36,3 +36,6 @@ docs/assets/
 # Local assistant notes
 claude.md
 CLAUDE.md
+
+# Local Blueflare signed-image cache
+backend/data/images/

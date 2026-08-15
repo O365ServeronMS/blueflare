@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { bumpCacheVersion, closeCache, getOrBuild } from './cache.js';
+import { closeCache, getOrBuild, invalidateResponseKeys } from './cache.js';
 import { config } from './config.js';
 import { closeDatabase, migrate } from './db.js';
 import { normalizeKkphim, normalizeNguonc } from './normalize.js';
@@ -11,9 +11,28 @@ import {
   recordProviderFailure,
   recordProviderSuccess,
   saveCrawlCheckpoint,
-  upsertCanonical
+  upsertCanonical,
+  getMovieInvalidationDimensions
 } from './repository.js';
 import { buildHome } from './viewmodels.js';
+
+async function revalidateFrontend(tags) {
+  if (!config.frontendRevalidateSecret || !tags.length) return;
+  try {
+    const response = await fetch(config.frontendRevalidateUrl, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-blueflare-revalidate': config.frontendRevalidateSecret
+      },
+      body: JSON.stringify({ tags }),
+      signal: AbortSignal.timeout(5000)
+    });
+    if (!response.ok) console.warn('[worker] frontend revalidation failed status=' + response.status);
+  } catch (error) {
+    console.warn('[worker] frontend revalidation unavailable', error.message);
+  }
+}
 
 const providers = [new NguoncProvider(), new KkphimProvider()];
 let stopping = false;
@@ -59,6 +78,7 @@ async function syncPage(provider, page) {
   const items = provider.listItems(list.data);
   let imported = 0;
   let failed = 0;
+  const changedSlugs = [];
 
   await mapLimit(items, config.syncConcurrency, async (item) => {
     let normalized;
@@ -73,8 +93,17 @@ async function syncPage(provider, page) {
       );
       normalized = summaryFallback(provider, item);
     }
-    await upsertCanonical(normalized);
-    imported += 1;
+    try {
+      const result = await upsertCanonical(normalized);
+      if (result.changed) changedSlugs.push(result.movie.canonical_slug);
+      imported += 1;
+    } catch (error) {
+      failed += 1;
+      console.warn(
+        '[worker] ' + provider.name + ' upsert failed for ' + item.slug,
+        error.message
+      );
+    }
   });
 
   return {
@@ -83,7 +112,8 @@ async function syncPage(provider, page) {
     status: list.status,
     itemCount: items.length,
     pageHash: pageHash(items),
-    totalPages: totalPages(list.data)
+    totalPages: totalPages(list.data),
+    changedSlugs
   };
 }
 
@@ -91,27 +121,30 @@ async function syncHead(provider) {
   let imported = 0;
   let failed = 0;
   let status = 200;
+  const changedSlugs = [];
   for (let page = 1; page <= config.syncPagesPerRun; page += 1) {
     if (stopping) break;
     const result = await syncPage(provider, page);
     imported += result.imported;
     failed += result.failed;
+    changedSlugs.push(...result.changedSlugs);
     status = result.status;
     if (!result.itemCount) break;
   }
-  return { imported, failed, status };
+  return { imported, failed, status, changedSlugs };
 }
 
 async function syncBackfill(provider) {
-  if (!config.backfillEnabled || stopping) return { imported: 0, failed: 0, status: 200 };
+  if (!config.backfillEnabled || stopping) return { imported: 0, failed: 0, status: 200, changedSlugs: [] };
 
   const startPage = config.backfillStartPage || (config.syncPagesPerRun + 1);
   const checkpoint = await getCrawlCheckpoint(provider.name, 'backfill', startPage);
-  if (checkpoint.completed_at) return { imported: 0, failed: 0, status: 200, completed: true };
+  if (checkpoint.completed_at) return { imported: 0, failed: 0, status: 200, completed: true, changedSlugs: [] };
 
   let imported = 0;
   let failed = 0;
   let status = 200;
+  const changedSlugs = [];
   let page = checkpoint.next_page;
   try {
     for (let index = 0; index < config.backfillPagesPerRun; index += 1) {
@@ -119,6 +152,7 @@ async function syncBackfill(provider) {
       const result = await syncPage(provider, page);
       imported += result.imported;
       failed += result.failed;
+      changedSlugs.push(...result.changedSlugs);
       status = result.status;
       const completed = !result.itemCount || Boolean(result.totalPages && page >= result.totalPages);
       await saveCrawlCheckpoint(provider.name, 'backfill', {
@@ -127,14 +161,14 @@ async function syncBackfill(provider) {
         totalPages: result.totalPages,
         completed
       });
-      if (completed) return { imported, failed, status, completed: true };
+      if (completed) return { imported, failed, status, completed: true, changedSlugs };
       page += 1;
     }
   } catch (error) {
     await recordCrawlCheckpointFailure(provider.name, 'backfill', error).catch(() => {});
     throw error;
   }
-  return { imported, failed, status, nextPage: page };
+  return { imported, failed, status, nextPage: page, changedSlugs };
 }
 
 async function syncProvider(provider) {
@@ -142,25 +176,28 @@ async function syncProvider(provider) {
   let imported = 0;
   let failed = 0;
   let lastStatus = 200;
+  const changedSlugs = [];
   try {
     const head = await syncHead(provider);
     imported += head.imported;
     failed += head.failed;
+    changedSlugs.push(...head.changedSlugs);
     lastStatus = head.status;
     const backfill = await syncBackfill(provider);
     imported += backfill.imported;
     failed += backfill.failed;
+    changedSlugs.push(...backfill.changedSlugs);
     lastStatus = backfill.status || lastStatus;
     await recordProviderSuccess(provider.name, Date.now() - started, lastStatus, failed);
     console.log(
       '[worker] ' + provider.name + ' head+backfill imported=' + imported +
       ' detailFailures=' + failed + ' durationMs=' + (Date.now() - started)
     );
-    return { imported, failed };
+    return { imported, failed, changedSlugs };
   } catch (error) {
     await recordProviderFailure(provider.name, error).catch(() => {});
     console.error('[worker] ' + provider.name + ' sync failed', error);
-    return { imported, failed: failed + 1, error };
+    return { imported, failed: failed + 1, error, changedSlugs };
   }
 }
 
@@ -172,15 +209,46 @@ async function syncCycle() {
   }
 
   const imported = results.reduce((sum, result) => sum + result.imported, 0);
-  if (imported > 0) {
-    const version = await bumpCacheVersion();
-    await getOrBuild('home', buildHome, {
-      version,
-      ttl: config.responseCacheTtlSeconds
+  const changedSlugs = [...new Set(results.flatMap((result) => result.changedSlugs))];
+  if (changedSlugs.length > 0) {
+    const changedMovies = await getMovieInvalidationDimensions(changedSlugs).catch((error) => {
+      console.warn("[worker] taxonomy invalidation lookup failed", error.message);
+      return [];
     });
-    console.log('[worker] cache version=' + version + ' home precomputed');
+    const keys = ['home'];
+    for (const type of ['phim-moi-cap-nhat', 'phim-le', 'phim-bo', 'hoat-hinh', 'tv-shows']) {
+      for (let currentPage = 1; currentPage <= 3; currentPage += 1) keys.push('list:' + type + ':' + currentPage);
+    }
+    for (const movieSlug of changedSlugs) keys.push('movie:' + movieSlug);
+    for (const movie of changedMovies) {
+      for (const field of [movie.genres, movie.countries]) {
+        for (const item of Array.isArray(field) ? field : []) {
+          const slug = String(item?.slug || "").trim().toLowerCase();
+          if (!slug) continue;
+          const prefix = field === movie.genres ? 'genre:' : 'country:';
+          for (let currentPage = 1; currentPage <= 3; currentPage += 1) keys.push(prefix + slug + ':' + currentPage);
+        }
+      }
+    }
+    await invalidateResponseKeys(keys);
+    const tags = ['home', 'list'];
+    for (const type of ['phim-moi-cap-nhat', 'phim-le', 'phim-bo', 'hoat-hinh', 'tv-shows']) tags.push('list:' + type);
+    for (let currentPage = 1; currentPage <= 3; currentPage += 1) tags.push('page:' + currentPage);
+    tags.push(...changedSlugs.map((movieSlug) => 'movie:' + movieSlug));
+    for (const movie of changedMovies) {
+      for (const field of [movie.genres, movie.countries]) {
+        for (const item of Array.isArray(field) ? field : []) {
+          const slug = String(item?.slug || "").trim().toLowerCase();
+          if (!slug) continue;
+          tags.push((field === movie.genres ? 'category:' : 'country:') + slug);
+        }
+      }
+    }
+    await revalidateFrontend([...new Set(tags)]);
+    await getOrBuild('home', buildHome, { ttl: config.responseCacheTtlSeconds });
+    console.log('[worker] resource invalidation changed=' + changedSlugs.length + ' home precomputed');
   } else {
-    console.warn('[worker] no new rows imported; existing cache remains active');
+    console.warn('[worker] no canonical changes; existing cache remains active');
   }
 }
 

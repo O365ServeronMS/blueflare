@@ -1,9 +1,11 @@
+import { timingSafeEqual } from 'node:crypto';
 import http from 'node:http';
 import { cacheVersion, closeCache, getOrBuild } from './cache.js';
 import { config } from './config.js';
 import { closeDatabase, migrate, postgresHealth } from './db.js';
 import { serveSignedImage } from './images.js';
 import { providerHealth } from './repository.js';
+import { metricsSnapshot, observeCache, observeRequest } from './observability.js';
 import {
   buildCountry,
   buildGenre,
@@ -19,7 +21,15 @@ import { redisHealth } from './cache.js';
 function page(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 1) return 1;
-  return Math.floor(parsed);
+  return Math.min(1000, Math.floor(parsed));
+}
+
+function normalizeKeyPart(value, maxLength = 160) {
+  return String(value || '').trim().toLowerCase().slice(0, maxLength);
+}
+
+function normalizeKeyword(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').slice(0, 120);
 }
 
 function allowedOrigin(origin) {
@@ -66,11 +76,19 @@ function json(response, request, status, payload, headers = {}) {
 
 async function cachedJson(request, response, key, builder, ttl) {
   const result = await getOrBuild(key, builder, { ttl });
+  observeCache(result.cacheStatus);
   json(response, request, 200, result.data, {
-    'cache-control': 'public, max-age=60, s-maxage=' + ttl +
-      ', stale-while-revalidate=' + config.responseCacheStaleSeconds,
+    'cache-control': 'public, max-age=60, stale-while-revalidate=' +
+      config.responseCacheStaleSeconds + ', stale-if-error=' + config.responseCacheStaleSeconds,
     'x-blueflare-cache': result.cacheStatus
   });
+}
+
+
+function validMetricsToken(request) {
+  const expected = Buffer.from(config.metricsToken);
+  const actual = Buffer.from(String(request.headers['x-blueflare-metrics'] || ''));
+  return expected.length > 0 && expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 
 async function healthPayload() {
@@ -113,6 +131,19 @@ async function route(request, response) {
     return;
   }
 
+  if (url.pathname === '/api/metrics') {
+    if (!config.metricsToken) {
+      json(response, request, 404, { error: 'Not found' }, { 'cache-control': 'no-store' });
+      return;
+    }
+    if (!validMetricsToken(request)) {
+      json(response, request, 401, { error: 'Unauthorized' }, { 'cache-control': 'no-store' });
+      return;
+    }
+    json(response, request, 200, metricsSnapshot(), { 'cache-control': 'no-store' });
+    return;
+  }
+
   if (url.pathname === '/api/health' || url.pathname === '/healthz') {
     const payload = await healthPayload();
     json(response, request, payload.status === 'ok' ? 200 : 503, payload, {
@@ -127,7 +158,7 @@ async function route(request, response) {
   }
 
   if (url.pathname === '/api/list') {
-    const type = url.searchParams.get('type') || 'phim-moi-cap-nhat';
+    const type = normalizeKeyPart(url.searchParams.get('type') || 'phim-moi-cap-nhat', 80) || 'phim-moi-cap-nhat';
     const currentPage = page(url.searchParams.get('page'));
     await cachedJson(
       request,
@@ -140,7 +171,7 @@ async function route(request, response) {
   }
 
   if (url.pathname === '/api/genre') {
-    const slug = String(url.searchParams.get('slug') || '').trim();
+    const slug = normalizeKeyPart(url.searchParams.get('slug'), 120);
     const currentPage = page(url.searchParams.get('page'));
     await cachedJson(
       request,
@@ -153,7 +184,7 @@ async function route(request, response) {
   }
 
   if (url.pathname === '/api/country') {
-    const slug = String(url.searchParams.get('slug') || '').trim();
+    const slug = normalizeKeyPart(url.searchParams.get('slug'), 120);
     const currentPage = page(url.searchParams.get('page'));
     await cachedJson(
       request,
@@ -166,7 +197,7 @@ async function route(request, response) {
   }
 
   if (url.pathname === '/api/search') {
-    const keyword = String(url.searchParams.get('keyword') || '').trim();
+    const keyword = normalizeKeyword(url.searchParams.get('keyword'));
     const currentPage = page(url.searchParams.get('page'));
     await cachedJson(
       request,
@@ -208,12 +239,15 @@ async function route(request, response) {
       () => buildMovie(slug),
       { ttl: 300 }
     );
+    observeCache(result.cacheStatus);
     if (!result.data) {
-      json(response, request, 404, { error: 'Movie not found' });
+      json(response, request, 404, { error: 'Movie not found' }, {
+        'cache-control': 'public, max-age=30, stale-while-revalidate=60'
+      });
       return;
     }
     json(response, request, 200, result.data, {
-      'cache-control': 'public, max-age=60, s-maxage=300, stale-while-revalidate=86400',
+      'cache-control': 'public, max-age=60, stale-while-revalidate=' + config.responseCacheStaleSeconds + ', stale-if-error=' + config.responseCacheStaleSeconds,
       'x-blueflare-cache': result.cacheStatus
     });
     return;
@@ -241,6 +275,7 @@ async function route(request, response) {
 await migrate();
 
 const server = http.createServer((request, response) => {
+  const started = Date.now();
   route(request, response).catch((error) => {
     console.error('[api] request failed', error);
     if (!response.headersSent) {
@@ -250,6 +285,9 @@ const server = http.createServer((request, response) => {
     } else {
       response.destroy(error);
     }
+  }).finally(() => {
+    const pathname = new URL(request.url || '/', 'http://blueflare.local').pathname;
+    observeRequest(pathname, response.statusCode, Date.now() - started);
   });
 });
 

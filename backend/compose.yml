@@ -41,6 +41,15 @@ services:
     networks:
       - backend
 
+  image-cache-init:
+    build:
+      context: .
+    restart: "no"
+    user: "0:0"
+    command: ["sh", "-c", "mkdir -p /data/images && chown -R node:node /data/images"]
+    volumes:
+      - ${IMAGE_CACHE_HOST_DIR:-./data/images}:/data/images
+
   api:
     build:
       context: .
@@ -49,11 +58,14 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL}
+      FRONTEND_REVALIDATE_SECRET: ${FRONTEND_REVALIDATE_SECRET:-}
     depends_on:
       postgres:
         condition: service_healthy
       valkey:
         condition: service_healthy
+      image-cache-init:
+        condition: service_completed_successfully
     ports:
       - "127.0.0.1:${PORT:-3200}:3200"
     volumes:
@@ -77,6 +89,7 @@ services:
       INTERNAL_CATALOG_URL: http://api:3200
       CATALOG_BASE_URL: http://api:3200
       FRONTEND_REVALIDATE_SECRET: ${FRONTEND_REVALIDATE_SECRET:-}
+      FRONTEND_REVALIDATE_URL: http://frontend:3000/api/internal/revalidate
     depends_on:
       api:
         condition: service_healthy
@@ -99,13 +112,13 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL}
+      FRONTEND_REVALIDATE_SECRET: ${FRONTEND_REVALIDATE_SECRET:-}
+      FRONTEND_REVALIDATE_URL: http://frontend:3000/api/internal/revalidate
     depends_on:
       postgres:
         condition: service_healthy
       valkey:
         condition: service_healthy
-    volumes:
-      - ${IMAGE_CACHE_HOST_DIR:-./data/images}:/data/images
     networks:
       - backend
 

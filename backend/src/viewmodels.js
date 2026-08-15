@@ -1,18 +1,14 @@
-import { signedImageUrl } from './images.js';
+import { config } from './config.js';
+
+function imageUrl(assetId, variant) {
+  return assetId ? config.publicBaseUrl + '/i/' + variant + '/' + assetId + '.webp' : '';
+}
 import {
   findMovie,
   listCanonical,
   recommendations,
   taxonomy
 } from './repository.js';
-
-function signed(url, variant) {
-  try {
-    return url ? signedImageUrl(url, variant) : '';
-  } catch {
-    return '';
-  }
-}
 
 function card(row) {
   const ratings = row.ratings || {};
@@ -23,8 +19,8 @@ function card(row) {
     slug: row.canonical_slug,
     type: row.display_type || row.media_type,
     year: row.year,
-    thumb_url: signed(row.thumb_source_url || row.poster_source_url, 'm'),
-    poster_url: signed(row.poster_source_url || row.thumb_source_url, 'd'),
+    thumb_url: imageUrl(row.thumb_asset_id || row.poster_asset_id, 'm'),
+    poster_url: imageUrl(row.poster_asset_id || row.thumb_asset_id, 'd'),
     quality: row.quality,
     lang: row.language,
     status: row.status,

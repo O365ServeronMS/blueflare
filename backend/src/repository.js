@@ -159,6 +159,7 @@ async function findStrongIdentity(client, incoming) {
       [tmdb.id, tmdb.mediaType, tmdb.season]
     );
     if (result.rowCount) return result.rows[0];
+    return null;
   }
   if (incoming.imdbId) {
     const result = await client.query(

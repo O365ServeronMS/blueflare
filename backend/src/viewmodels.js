@@ -14,8 +14,9 @@ import {
 function card(row) {
 function seasonTitle(row) {
   const season = row.tmdb_media_type === 'tv' ? row.tmdb_season_number : null;
-  const suffix = season === null || season === undefined ? '' : ' (Phần ' + season + ')';
-  return suffix && String(row.title || '').endsWith(suffix) ? row.title : String(row.title || '') + suffix;
+  if (season === null || season === undefined) return String(row.title || '');
+  const baseTitle = String(row.title || '').replace(/(?:\s+\(Phần\s+\d+\))+$/u, '');
+  return baseTitle + ' (Phần ' + season + ')';
 }
   const ratings = row.ratings || {};
   return {

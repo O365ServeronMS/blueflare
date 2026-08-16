@@ -354,7 +354,7 @@ export async function upsertCanonical(incoming) {
       Number(sourceMovie.tmdb_season_number) === Number(identity.season)
     );
     let movie = strongIdentityMovie || (sourceMatchesIdentity ? sourceMovie : null);
-    if (!movie) movie = await findIdentity(client, incoming);
+    if (!movie && (!sourceMovie || sourceMatchesIdentity)) movie = await findIdentity(client, incoming);
     const previousFingerprint = movie ? movieFingerprint(movie) : null;
     const previousSourceResult = await client.query(
       "SELECT provider_slug, priority, availability, metadata, streams, provider_updated_at FROM movie_provider_sources WHERE provider=$1 AND provider_movie_id=$2 LIMIT 1",

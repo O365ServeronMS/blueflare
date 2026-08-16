@@ -717,7 +717,7 @@ export async function findMovie(slug) {
     'SELECT DISTINCT m.* FROM movies m ' +
     'LEFT JOIN movie_provider_sources s ON s.movie_id=m.id ' +
     "WHERE m.catalog_state='ready' AND (m.canonical_slug=$1 OR s.provider_slug=$1) " +
-    'ORDER BY m.catalog_sort_at DESC NULLS LAST, m.canonical_slug ASC LIMIT 1',
+    'ORDER BY (m.canonical_slug=$1) DESC, m.catalog_sort_at DESC NULLS LAST, m.canonical_slug ASC LIMIT 1',
     [slug]
   );
   const movie = movieResult.rows[0];

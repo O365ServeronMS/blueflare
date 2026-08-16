@@ -41,6 +41,34 @@ function latest(left, right) {
   const b = right ? Date.parse(right) : 0;
   return a >= b ? left : right;
 }
+function tmdbIdentity(incoming) {
+  if (incoming.provider !== 'kkphim') return null;
+  const id = Number(incoming.tmdbId);
+  const mediaType = incoming.tmdbMediaType;
+  const season = Number(incoming.tmdbSeasonNumber);
+  if (!Number.isSafeInteger(id) || id <= 0) return null;
+  if (mediaType === 'movie') return { id, mediaType, season: null };
+  if (mediaType === 'tv' && Number.isInteger(season) && season >= 0) {
+    return { id, mediaType, season };
+  }
+  return null;
+}
+
+async function persistTmdbIdentity(client, movieId, incoming) {
+  const identity = tmdbIdentity(incoming);
+  if (!identity) return null;
+  const result = await client.query(
+    'UPDATE movies SET tmdb_id=$2, tmdb_media_type=$3, tmdb_season_number=$4, ' +
+    "tmdb_identity_status=CASE WHEN tmdb_id IS DISTINCT FROM $2 OR tmdb_media_type IS DISTINCT FROM $3 OR tmdb_season_number IS DISTINCT FROM $4 THEN 'pending' ELSE tmdb_identity_status END, " +
+    'tmdb_identity_verified_at=CASE WHEN tmdb_id IS DISTINCT FROM $2 OR tmdb_media_type IS DISTINCT FROM $3 OR tmdb_season_number IS DISTINCT FROM $4 THEN NULL ELSE tmdb_identity_verified_at END, ' +
+    'tmdb_thumb_asset_id=CASE WHEN tmdb_id IS DISTINCT FROM $2 OR tmdb_media_type IS DISTINCT FROM $3 OR tmdb_season_number IS DISTINCT FROM $4 THEN NULL ELSE tmdb_thumb_asset_id END, ' +
+    'tmdb_poster_asset_id=CASE WHEN tmdb_id IS DISTINCT FROM $2 OR tmdb_media_type IS DISTINCT FROM $3 OR tmdb_season_number IS DISTINCT FROM $4 THEN NULL ELSE tmdb_poster_asset_id END ' +
+    'WHERE id=$1 RETURNING *',
+    [movieId, identity.id, identity.mediaType, identity.season]
+  );
+  return result.rows[0];
+}
+
 
 export function mergedMovie(current, incoming) {
   const preferIncoming = incoming.provider === 'nguonc' ||
@@ -124,10 +152,11 @@ async function uniqueSlug(client, preferred, year) {
 }
 
 async function findStrongIdentity(client, incoming) {
-  if (incoming.tmdbId) {
+  const tmdb = tmdbIdentity(incoming);
+  if (tmdb) {
     const result = await client.query(
-      'SELECT * FROM movies WHERE tmdb_id = $1 AND media_type = $2 LIMIT 1',
-      [incoming.tmdbId, incoming.mediaType]
+      'SELECT * FROM movies WHERE tmdb_id=$1 AND tmdb_media_type=$2 AND tmdb_season_number IS NOT DISTINCT FROM $3 LIMIT 1',
+      [tmdb.id, tmdb.mediaType, tmdb.season]
     );
     if (result.rowCount) return result.rows[0];
   }
@@ -142,13 +171,6 @@ async function findStrongIdentity(client, incoming) {
 }
 
 async function findIdentity(client, incoming) {
-  if (incoming.tmdbId) {
-    const result = await client.query(
-      'SELECT * FROM movies WHERE tmdb_id = $1 AND media_type = $2 LIMIT 1',
-      [incoming.tmdbId, incoming.mediaType]
-    );
-    if (result.rowCount) return result.rows[0];
-  }
 
   if (incoming.imdbId) {
     const result = await client.query(
@@ -161,7 +183,7 @@ async function findIdentity(client, incoming) {
   if (incoming.year && incoming.normalizedOriginalTitle) {
     const result = await client.query(
       'SELECT * FROM movies WHERE normalized_original_title = $1 ' +
-      'AND year = $2 AND media_type = $3 LIMIT 1',
+      'AND year = $2 AND media_type = $3 AND tmdb_season_number IS NULL LIMIT 1',
       [incoming.normalizedOriginalTitle, incoming.year, incoming.mediaType]
     );
     if (result.rowCount) return result.rows[0];
@@ -170,7 +192,7 @@ async function findIdentity(client, incoming) {
   if (incoming.year && incoming.normalizedTitle) {
     const result = await client.query(
       'SELECT * FROM movies WHERE normalized_title = $1 ' +
-      'AND year = $2 AND media_type = $3 LIMIT 1',
+      'AND year = $2 AND media_type = $3 AND tmdb_season_number IS NULL LIMIT 1',
       [incoming.normalizedTitle, incoming.year, incoming.mediaType]
     );
     if (result.rowCount) return result.rows[0];
@@ -178,7 +200,7 @@ async function findIdentity(client, incoming) {
 
   if (!incoming.year) return null;
   const candidates = await client.query(
-    'SELECT * FROM movies WHERE year = $1 AND media_type = $2 LIMIT 100',
+    'SELECT * FROM movies WHERE year = $1 AND media_type = $2 AND tmdb_season_number IS NULL LIMIT 100',
     [incoming.year, incoming.mediaType]
   );
   return candidates.rows.find((candidate) => (
@@ -326,7 +348,12 @@ export async function upsertCanonical(incoming) {
     await client.query('BEGIN');
     const sourceMovie = await findBySource(client, incoming);
     const strongIdentityMovie = await findStrongIdentity(client, incoming);
-    let movie = strongIdentityMovie || sourceMovie;
+    const identity = tmdbIdentity(incoming);
+    const sourceMatchesIdentity = !sourceMovie || !identity || (
+      Number(sourceMovie.tmdb_id) === identity.id && sourceMovie.tmdb_media_type === identity.mediaType &&
+      Number(sourceMovie.tmdb_season_number) === Number(identity.season)
+    );
+    let movie = strongIdentityMovie || (sourceMatchesIdentity ? sourceMovie : null);
     if (!movie) movie = await findIdentity(client, incoming);
     const previousFingerprint = movie ? movieFingerprint(movie) : null;
     const previousSourceResult = await client.query(
@@ -337,6 +364,7 @@ export async function upsertCanonical(incoming) {
     movie = movie
       ? await updateMovie(client, movie, incoming)
       : await insertMovie(client, incoming);
+    movie = (await persistTmdbIdentity(client, movie.id, incoming)) || movie;
 
     await client.query(
       'INSERT INTO movie_provider_sources (' +
@@ -372,8 +400,50 @@ export async function upsertCanonical(incoming) {
     throw error;
   } finally {
     client.release();
+
   }
 }
+export async function listTmdbImageCandidates(limit = config.tmdbImageSyncLimit) {
+  const result = await pool.query(
+    "SELECT * FROM movies WHERE tmdb_identity_status IN ('pending', 'retry') AND tmdb_id IS NOT NULL " +
+    "AND (tmdb_image_checked_at IS NULL OR tmdb_image_checked_at < now() - ($1::bigint * interval '1 millisecond')) " +
+    'ORDER BY tmdb_image_checked_at NULLS FIRST, updated_at ASC LIMIT $2',
+    [config.tmdbImageRetryMs, Math.max(1, Math.floor(limit))]
+  );
+  return result.rows;
+}
+
+export async function recordTmdbImages(movieId, images) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const thumbAssetId = await ensureImageAsset(client, images.thumbSourceUrl);
+    const posterAssetId = await ensureImageAsset(client, images.posterSourceUrl);
+    const result = await client.query(
+      "UPDATE movies SET tmdb_thumb_asset_id=$2, tmdb_poster_asset_id=$3, tmdb_identity_status='verified', " +
+      'tmdb_identity_verified_at=now(), tmdb_image_checked_at=now(), updated_at=now() WHERE id=$1 RETURNING *',
+      [movieId, thumbAssetId, posterAssetId]
+    );
+    await client.query('COMMIT');
+    return result.rows[0] || null;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function recordTmdbImageFailure(movieId, error) {
+  const status = error?.code?.includes('MISMATCH') ? 'mismatch' :
+    Number(error?.status) === 404 ? 'unavailable' : 'retry';
+  const result = await pool.query(
+    'UPDATE movies SET tmdb_identity_status=$2, tmdb_image_checked_at=now(), updated_at=now() WHERE id=$1 RETURNING *',
+    [movieId, status]
+  );
+  return result.rows[0] || null;
+}
+
 
 export async function getMovieInvalidationDimensions(slugs = []) {
   const normalized = [...new Set(slugs.filter(Boolean).map(String))];
@@ -529,6 +599,116 @@ export async function listCanonical(options = {}) {
     totalItems,
     totalPages
   };
+}
+
+
+function validTrendingIds(tmdbIds) {
+  const seen = new Set();
+  return (Array.isArray(tmdbIds) ? tmdbIds : [])
+    .map((value) => Number(value))
+    .filter((value) => Number.isSafeInteger(value) && value > 0 && !seen.has(value) && seen.add(value));
+}
+
+function playableSourceExists(alias = 'movies') {
+  return 'EXISTS (SELECT 1 FROM movie_provider_sources source ' +
+    'WHERE source.movie_id=' + alias + '.id AND source.availability=true ' +
+    "AND jsonb_typeof(source.streams)='array' AND jsonb_array_length(source.streams)>0)";
+}
+
+export async function resolveTrendingMovieCandidates(tmdbIds, limit = config.heroTrendingLimit) {
+  const ids = validTrendingIds(tmdbIds);
+  const safeLimit = Math.min(config.heroTrendingLimit, Math.max(1, Math.floor(Number(limit) || 1)));
+  if (!ids.length) return [];
+  const result = await pool.query(
+    'WITH ranked(tmdb_id, position) AS (SELECT * FROM unnest($1::bigint[]) WITH ORDINALITY) ' +
+    'SELECT movies.*, ranked.position FROM ranked JOIN movies ' +
+    "ON movies.tmdb_id=ranked.tmdb_id AND movies.media_type='movie' " +
+    "WHERE movies.catalog_state='ready' AND movies.canonical_slug<>'' " +
+    'AND COALESCE(movies.poster_asset_id, movies.thumb_asset_id) IS NOT NULL ' +
+    'AND ' + playableSourceExists('movies') +
+    ' ORDER BY ranked.position ASC LIMIT $2',
+    [ids, safeLimit]
+  );
+  return result.rows;
+}
+
+export async function getHeroTrendingMovies() {
+  const result = await pool.query(
+    'SELECT movies.* FROM hero_trending_entries entry JOIN movies ON movies.id=entry.movie_id ' +
+    "WHERE movies.catalog_state='ready' AND movies.media_type='movie' AND movies.tmdb_id=entry.tmdb_id " +
+    "AND movies.canonical_slug<>'' AND COALESCE(movies.poster_asset_id, movies.thumb_asset_id) IS NOT NULL " +
+    'AND ' + playableSourceExists('movies') +
+    ' ORDER BY entry.position ASC'
+  );
+  return result.rows;
+}
+
+export async function getHeroTrendingRefreshState() {
+  const result = await pool.query('SELECT * FROM hero_trending_refresh_state WHERE singleton=true');
+  return result.rows[0] || null;
+}
+
+export async function replaceHeroTrendingSnapshot(entries, metadata = {}) {
+  const expected = config.heroTrendingLimit;
+  if (!Array.isArray(entries) || entries.length !== expected) {
+    throw new Error('Hero Trending snapshot must contain exactly ' + expected + ' entries');
+  }
+  const tmdbIds = new Set(entries.map((entry) => Number(entry.tmdb_id)));
+  const movieIds = new Set(entries.map((entry) => String(entry.id)));
+  if (tmdbIds.size !== expected || movieIds.size !== expected) {
+    throw new Error('Hero Trending snapshot contains duplicate identities');
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM hero_trending_entries');
+    for (let index = 0; index < entries.length; index += 1) {
+      const entry = entries[index];
+      await client.query(
+        'INSERT INTO hero_trending_entries (position, movie_id, tmdb_id, fetched_at) VALUES ($1,$2,$3,now())',
+        [index + 1, entry.id, entry.tmdb_id]
+      );
+    }
+    await client.query(
+      'INSERT INTO hero_trending_refresh_state (singleton, last_success_at, last_attempt_at, last_error, candidate_count, matched_count) ' +
+      'VALUES (true, now(), now(), NULL, $1, $2) ON CONFLICT (singleton) DO UPDATE SET ' +
+      'last_success_at=EXCLUDED.last_success_at, last_attempt_at=EXCLUDED.last_attempt_at, ' +
+      'last_error=NULL, candidate_count=EXCLUDED.candidate_count, matched_count=EXCLUDED.matched_count',
+      [Number(metadata.candidateCount) || 0, entries.length]
+    );
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function recordHeroTrendingRefreshFailure(error, metadata = {}) {
+  const message = String(error?.message || error || 'Unknown Hero Trending refresh error').slice(0, 500);
+  await pool.query(
+    'INSERT INTO hero_trending_refresh_state (singleton, last_attempt_at, last_error, candidate_count, matched_count) ' +
+    'VALUES (true, now(), $1, $2, $3) ON CONFLICT (singleton) DO UPDATE SET ' +
+    'last_attempt_at=EXCLUDED.last_attempt_at, last_error=EXCLUDED.last_error, ' +
+    'candidate_count=EXCLUDED.candidate_count, matched_count=EXCLUDED.matched_count',
+    [message, Number(metadata.candidateCount) || 0, Number(metadata.matchedCount) || 0]
+  );
+}
+
+export async function withHeroTrendingRefreshLock(callback) {
+  const client = await pool.connect();
+  const lockId = 9271100;
+  try {
+    const lock = await client.query('SELECT pg_try_advisory_lock($1) AS locked', [lockId]);
+    if (!lock.rows[0]?.locked) return false;
+    await callback();
+    return true;
+  } finally {
+    await client.query('SELECT pg_advisory_unlock($1)', [lockId]).catch(() => {});
+    client.release();
+  }
 }
 
 export async function findMovie(slug) {

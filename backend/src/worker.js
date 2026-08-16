@@ -7,13 +7,22 @@ import { KkphimProvider } from './providers/KkphimProvider.js';
 import { NguoncProvider } from './providers/NguoncProvider.js';
 import {
   getCrawlCheckpoint,
+  getHeroTrendingRefreshState,
+  listTmdbImageCandidates,
+  recordTmdbImageFailure,
+  recordTmdbImages,
   recordCrawlCheckpointFailure,
+  recordHeroTrendingRefreshFailure,
   recordProviderFailure,
   recordProviderSuccess,
+  replaceHeroTrendingSnapshot,
+  resolveTrendingMovieCandidates,
   saveCrawlCheckpoint,
   upsertCanonical,
+  withHeroTrendingRefreshLock,
   getMovieInvalidationDimensions
 } from './repository.js';
+import { fetchTrendingMovieIds, fetchVerifiedTmdbImages } from './tmdb.js';
 import { buildHome } from './viewmodels.js';
 
 async function revalidateFrontend(tags) {
@@ -201,15 +210,76 @@ async function syncProvider(provider) {
   }
 }
 
+
+async function refreshHeroTrendingIfDue() {
+  if (!config.tmdbApiKey) return;
+  const state = await getHeroTrendingRefreshState();
+  const lastSuccessAt = Date.parse(state?.last_success_at || '');
+  if (Number.isFinite(lastSuccessAt) && Date.now() - lastSuccessAt < config.heroTrendingRefreshMs) return;
+
+  try {
+    const refreshed = await withHeroTrendingRefreshLock(async () => {
+      const lockedState = await getHeroTrendingRefreshState();
+      const lockedLastSuccessAt = Date.parse(lockedState?.last_success_at || '');
+      if (Number.isFinite(lockedLastSuccessAt) && Date.now() - lockedLastSuccessAt < config.heroTrendingRefreshMs) return;
+
+      let candidateIds = [];
+      let matches = [];
+      try {
+        candidateIds = await fetchTrendingMovieIds();
+        matches = await resolveTrendingMovieCandidates(candidateIds, config.heroTrendingLimit);
+        if (matches.length !== config.heroTrendingLimit) {
+          throw new Error('TMDB Trending matched ' + matches.length + ' of ' + config.heroTrendingLimit + ' playable catalog movies');
+        }
+        await replaceHeroTrendingSnapshot(matches, { candidateCount: candidateIds.length });
+        await invalidateResponseKeys(['home']);
+        await revalidateFrontend(['home']);
+        await getOrBuild('home', buildHome, { ttl: config.responseCacheTtlSeconds });
+        console.log('[worker] hero trending refreshed candidates=' + candidateIds.length + ' matched=' + matches.length);
+      } catch (error) {
+        await recordHeroTrendingRefreshFailure(error, {
+          candidateCount: candidateIds.length,
+          matchedCount: matches.length
+        }).catch((recordError) => console.warn('[worker] hero trending failure state write failed', recordError.message));
+        throw error;
+      }
+    });
+    if (!refreshed) console.log('[worker] hero trending refresh skipped; lock held by another worker');
+  } catch (error) {
+    console.warn('[worker] hero trending refresh failed', error.message);
+  }
+}
+
 async function syncCycle() {
   const results = [];
+async function refreshTmdbImages() {
+  if (!config.tmdbApiKey) return [];
+  const candidates = await listTmdbImageCandidates();
+  const results = await mapLimit(candidates, config.tmdbImageSyncConcurrency, async (movie) => {
+    try {
+      const images = await fetchVerifiedTmdbImages({
+        tmdbId: movie.tmdb_id,
+        mediaType: movie.tmdb_media_type,
+        seasonNumber: movie.tmdb_season_number
+      });
+      return await recordTmdbImages(movie.id, images);
+    } catch (error) {
+      console.warn('[worker] TMDB image verification failed for ' + movie.canonical_slug, error.message);
+      await recordTmdbImageFailure(movie.id, error);
+      return null;
+    }
+  });
+  return results.filter(Boolean).map((movie) => movie.canonical_slug);
+}
+
   for (const provider of providers) {
     if (stopping) break;
     results.push(await syncProvider(provider));
   }
 
   const imported = results.reduce((sum, result) => sum + result.imported, 0);
-  const changedSlugs = [...new Set(results.flatMap((result) => result.changedSlugs))];
+  const tmdbImageSlugs = await refreshTmdbImages();
+  const changedSlugs = [...new Set([...results.flatMap((result) => result.changedSlugs), ...tmdbImageSlugs])];
   if (changedSlugs.length > 0) {
     const changedMovies = await getMovieInvalidationDimensions(changedSlugs).catch((error) => {
       console.warn("[worker] taxonomy invalidation lookup failed", error.message);
@@ -264,7 +334,8 @@ process.on('SIGINT', () => stop('SIGINT'));
 
 while (!stopping) {
   const started = Date.now();
-  await syncCycle();
+  await refreshHeroTrendingIfDue();
+  if (!stopping) await syncCycle();
   const elapsed = Date.now() - started;
   const delay = Math.max(1000, config.syncIntervalMs - elapsed);
   if (stopping) break;

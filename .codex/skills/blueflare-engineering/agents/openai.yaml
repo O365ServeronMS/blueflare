@@ -1,0 +1,4 @@
+interface:
+  display_name: "Blueflare Engineering"
+  short_description: "Make precise, safe Blueflare changes"
+  default_prompt: "Use $blueflare-engineering to implement this Blueflare change safely and verify it."

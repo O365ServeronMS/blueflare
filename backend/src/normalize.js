@@ -11,6 +11,16 @@ function number(value) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
+function tmdbMediaType(value) {
+  const type = String(value || '').trim().toLowerCase();
+  return type === 'movie' || type === 'tv' ? type : null;
+}
+
+function seasonNumber(value) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
 function people(raw) {
   if (Array.isArray(raw)) return raw.map(value).filter(Boolean);
   return String(raw || '')
@@ -101,6 +111,8 @@ function canonical(input) {
     year: number(input.year),
     tmdbId: number(input.tmdbId),
     imdbId: value(input.imdbId),
+    tmdbMediaType: tmdbMediaType(input.tmdbMediaType),
+    tmdbSeasonNumber: seasonNumber(input.tmdbSeasonNumber),
     overview: value(input.overview),
     thumbSourceUrl: value(input.thumbSourceUrl),
     posterSourceUrl: value(input.posterSourceUrl),
@@ -130,6 +142,9 @@ function compactMetadata(input) {
     original_title: input.originalTitle,
     year: input.year,
     type: input.displayType,
+    tmdb_id: input.tmdbId,
+    tmdb_type: input.tmdbMediaType,
+    tmdb_season: input.tmdbSeasonNumber,
     quality: input.quality,
     language: input.language,
     status: input.status,
@@ -190,6 +205,8 @@ export function normalizeKkphim(payload) {
     tmdbId: movie.tmdb?.id,
     imdbId: movie.imdb?.id,
     overview: movie.content,
+    tmdbMediaType: movie.tmdb?.type,
+    tmdbSeasonNumber: movie.tmdb?.season,
     thumbSourceUrl: movie.poster_url,
     posterSourceUrl: movie.thumb_url,
     quality: movie.quality,

@@ -14,7 +14,8 @@ export class KkphimProvider extends MovieProvider {
       ? '/danh-sach/phim-moi-cap-nhat-v3'
       : '/v1/api/danh-sach/' + encodeURIComponent(type);
     return fetchJson(this.baseUrl + path + '?page=' + page, {
-      timeoutMs: config.requestTimeoutMs
+      timeoutMs: config.requestTimeoutMs,
+      minIntervalMs: config.kkphimRequestMinIntervalMs
     });
   }
 
@@ -25,7 +26,7 @@ export class KkphimProvider extends MovieProvider {
   async detail(slug) {
     const response = await fetchJson(
       this.baseUrl + '/phim/' + encodeURIComponent(slug),
-      { timeoutMs: config.requestTimeoutMs }
+      { timeoutMs: config.requestTimeoutMs, minIntervalMs: config.kkphimRequestMinIntervalMs }
     );
     return {
       ...response,
@@ -37,7 +38,7 @@ export class KkphimProvider extends MovieProvider {
     return fetchJson(
       this.baseUrl + '/v1/api/tim-kiem?keyword=' +
         encodeURIComponent(keyword) + '&page=' + page,
-      { timeoutMs: config.requestTimeoutMs }
+      { timeoutMs: config.requestTimeoutMs, minIntervalMs: config.kkphimRequestMinIntervalMs }
     );
   }
 

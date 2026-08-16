@@ -12,23 +12,34 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
   const slides = useMemo(
     () => [...items]
       .filter((movie) => movie.slug && (movie.poster || movie.thumb))
-      .slice(0, 6),
+      .slice(0, 24),
     [items]
   );
-  const [activeIndex, setActiveIndex] = useState(0);
+  const [activeSlug, setActiveSlug] = useState<string | null>(null);
   const [interactionTick, setInteractionTick] = useState(0);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
+    if (!slides.length) return;
+    if (!activeSlug || !slides.some((movie) => movie.slug === activeSlug)) setActiveSlug(slides[0].slug);
+  }, [activeSlug, slides]);
+
+  const visibleIndex = Math.max(0, slides.findIndex((movie) => movie.slug === activeSlug));
+
+  useEffect(() => {
     if (slides.length <= 1 || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     const timer = window.setInterval(() => {
-      if (!document.hidden) setActiveIndex((current) => (current + 1) % slides.length);
+      if (!document.hidden) {
+        setActiveSlug((current) => {
+          const currentIndex = slides.findIndex((movie) => movie.slug === current);
+          return slides[(Math.max(0, currentIndex) + 1) % slides.length].slug;
+        });
+      }
     }, SLIDE_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, [slides.length, interactionTick]);
+  }, [slides, interactionTick]);
 
   if (!slides.length) return null;
-  const visibleIndex = activeIndex < slides.length ? activeIndex : 0;
   const active = slides[visibleIndex];
   const heroImage = active.poster || active.thumb;
   const displayRating = getDisplayRating(active);
@@ -38,7 +49,7 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
 
   function move(direction: -1 | 1) {
     if (slides.length <= 1) return;
-    setActiveIndex((current) => (current + direction + slides.length) % slides.length);
+    setActiveSlug(slides[(visibleIndex + direction + slides.length) % slides.length].slug);
     setInteractionTick((current) => current + 1);
   }
 
@@ -79,8 +90,8 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
         alt=""
         width={1280}
         height={720}
-        loading="eager"
-        fetchPriority="high"
+        loading={visibleIndex === 0 ? "eager" : "lazy"}
+        fetchPriority={visibleIndex === 0 ? "high" : "auto"}
         decoding="async"
         className="absolute inset-0 h-full w-full object-cover object-center bf-reveal"
         data-movie-poster
@@ -121,17 +132,9 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
 
       {slides.length > 1 ? (
         <>
-          <div className="absolute bottom-24 right-[var(--bf-page-gutter)] z-20 hidden items-center gap-1.5 md:flex" aria-label="Chọn nội dung nổi bật">
-            {slides.map((movie, index) => (
-              <button
-                key={movie.slug}
-                type="button"
-                aria-label={`Hiển thị ${movie.name}`}
-                aria-current={index === visibleIndex ? "true" : undefined}
-                onClick={() => { setActiveIndex(index); setInteractionTick((tick) => tick + 1); }}
-                className={index === visibleIndex ? "h-1 w-7 bg-netflix-red" : "h-1 w-4 bg-white/35 hover:bg-white/70"}
-              />
-            ))}
+          <div className="absolute bottom-24 right-[var(--bf-page-gutter)] z-20 hidden items-center gap-3 text-[11px] font-bold tracking-[0.14em] text-chalk-white md:flex" aria-label="Vị trí nội dung nổi bật">
+            <span className="h-px w-10 bg-white/35" aria-hidden="true" />
+            <span>{String(visibleIndex + 1).padStart(2, "0")} / {String(slides.length).padStart(2, "0")}</span>
           </div>
           <button type="button" aria-label="Nội dung trước" onClick={() => move(-1)} className="absolute left-2 top-1/2 z-20 hidden h-16 w-10 -translate-y-1/2 place-items-center bg-black/35 text-chalk-white transition hover:bg-black/70 md:grid">
             <ChevronLeft className="h-7 w-7" />

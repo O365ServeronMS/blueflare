@@ -14,7 +14,8 @@ export class NguoncProvider extends MovieProvider {
       ? '/api/films/phim-moi-cap-nhat'
       : '/api/films/danh-sach/' + encodeURIComponent(type);
     return fetchJson(this.baseUrl + path + '?page=' + page, {
-      timeoutMs: config.requestTimeoutMs
+      timeoutMs: config.requestTimeoutMs,
+      minIntervalMs: config.nguoncRequestMinIntervalMs
     });
   }
 
@@ -25,7 +26,7 @@ export class NguoncProvider extends MovieProvider {
   async detail(slug) {
     const response = await fetchJson(
       this.baseUrl + '/api/film/' + encodeURIComponent(slug),
-      { timeoutMs: config.requestTimeoutMs }
+      { timeoutMs: config.requestTimeoutMs, minIntervalMs: config.nguoncRequestMinIntervalMs }
     );
     return {
       ...response,
@@ -36,7 +37,7 @@ export class NguoncProvider extends MovieProvider {
   async search(keyword) {
     return fetchJson(
       this.baseUrl + '/api/films/search?keyword=' + encodeURIComponent(keyword),
-      { timeoutMs: config.requestTimeoutMs }
+      { timeoutMs: config.requestTimeoutMs, minIntervalMs: config.nguoncRequestMinIntervalMs }
     );
   }
 

@@ -12,6 +12,7 @@ import {
 import { normalizeKkphim, normalizeNguonc } from '../src/normalize.js';
 import { signedImageUrl } from '../src/images.js';
 import { fetchJson } from '../src/http.js';
+import { fetchTrendingMovieIds } from '../src/tmdb.js';
 import { mergedMovie } from '../src/repository.js';
 import { MovieProvider } from '../src/providers/MovieProvider.js';
 import { NguoncProvider } from '../src/providers/NguoncProvider.js';
@@ -42,6 +43,8 @@ test('KKPhim detail preserves strong IDs and HLS fallback', () => {
   assert.equal(movie.priority, 20);
   assert.equal(movie.tmdbId, 273119);
   assert.equal(movie.imdbId, 'tt31886947');
+  assert.equal(movie.tmdbMediaType, 'tv');
+  assert.equal(movie.tmdbSeasonNumber, 1);
   assert.equal(movie.streams[0].server_name, 'KKPhim · Vietsub');
   assert.match(movie.streams[0].server_data[0].link_m3u8, /\.m3u8$/);
   assert.equal(movie.thumbSourceUrl, payload.movie.poster_url);
@@ -175,4 +178,28 @@ test('provider HTTP retries transient failures but not permanent 4xx', async () 
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+
+test('TMDB weekly trending client preserves rank and removes duplicate IDs', async () => {
+  const requestedPages = [];
+  const ids = await fetchTrendingMovieIds({
+    apiKey: 'test-key',
+    baseUrl: 'https://tmdb.test/3',
+    language: 'vi-VN',
+    pages: 2,
+    fetchImpl: async (url) => {
+      requestedPages.push({ path: url.pathname, page: url.searchParams.get('page'), language: url.searchParams.get('language') });
+      const page = url.searchParams.get('page');
+      return {
+        ok: true,
+        json: async () => ({ results: page === '1' ? [{ id: 8 }, { id: 4 }, { id: 8 }] : [{ id: 2 }, { id: 4 }] })
+      };
+    }
+  });
+  assert.deepEqual(ids, [8, 4, 2]);
+  assert.deepEqual(requestedPages, [
+    { path: '/3/trending/movie/week', page: '1', language: 'vi-VN' },
+    { path: '/3/trending/movie/week', page: '2', language: 'vi-VN' }
+  ]);
 });

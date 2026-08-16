@@ -21,7 +21,9 @@ import { redisHealth } from './cache.js';
 function page(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 1) return 1;
-  return Math.min(1000, Math.floor(parsed));
+  // Keep the API bounded against arbitrary cache keys while allowing the
+  // catalog's currently available deep pages (for example page 1220).
+  return Math.min(10000, Math.floor(parsed));
 }
 
 function normalizeKeyPart(value, maxLength = 160) {

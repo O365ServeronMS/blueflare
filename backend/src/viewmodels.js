@@ -5,22 +5,28 @@ function imageUrl(assetId, variant) {
 }
 import {
   findMovie,
+  getHeroTrendingMovies,
   listCanonical,
   recommendations,
   taxonomy
 } from './repository.js';
 
 function card(row) {
+function seasonTitle(row) {
+  const season = row.tmdb_media_type === 'tv' ? row.tmdb_season_number : null;
+  const suffix = season === null || season === undefined ? '' : ' (Phần ' + season + ')';
+  return suffix && String(row.title || '').endsWith(suffix) ? row.title : String(row.title || '') + suffix;
+}
   const ratings = row.ratings || {};
   return {
     _id: row.id,
-    name: row.title,
+    name: seasonTitle(row),
     origin_name: row.original_title,
     slug: row.canonical_slug,
     type: row.display_type || row.media_type,
     year: row.year,
-    thumb_url: imageUrl(row.thumb_asset_id || row.poster_asset_id, 'm'),
-    poster_url: imageUrl(row.poster_asset_id || row.thumb_asset_id, 'd'),
+    thumb_url: imageUrl(row.tmdb_thumb_asset_id || row.thumb_asset_id || row.poster_asset_id, 'm'),
+    poster_url: imageUrl(row.tmdb_poster_asset_id || row.poster_asset_id || row.thumb_asset_id, 'd'),
     quality: row.quality,
     lang: row.language,
     status: row.status,
@@ -30,7 +36,8 @@ function card(row) {
     country: row.countries || [],
     tmdb: {
       id: row.tmdb_id,
-      type: row.media_type,
+      type: row.tmdb_media_type || row.media_type,
+      season: row.tmdb_season_number ?? null,
       vote_average: ratings.tmdb || null,
       vote_count: ratings.tmdb_count || null
     },
@@ -94,25 +101,20 @@ export async function buildSearch(keyword, page) {
 }
 
 export async function buildHome() {
-  const [newMovies, phimLe, phimBo, hoatHinh] = await Promise.all([
+  const [heroTrending, newMovies, phimLe, phimBo, hoatHinh] = await Promise.all([
+    getHeroTrendingMovies(),
     listCanonical({ page: 1, limit: 24, includePlayable: true }),
-    listCanonical({ type: 'phim-le', page: 1, limit: 16 }),
+    listCanonical({ type: 'phim-le', page: 1, limit: 24, includePlayable: true }),
     listCanonical({ type: 'phim-bo', page: 1, limit: 16 }),
     listCanonical({ type: 'hoat-hinh', page: 1, limit: 16 })
   ]);
-  const newCards = newMovies.rows.map(card);
-  const heroMovies = newMovies.rows
-    .filter((movie) => (
-      movie.has_playable_source &&
-      movie.poster_source_url &&
-      String(movie.overview || '').trim().length >= 60
-    ))
-    .slice(0, 5)
-    .map(card);
+  const fallbackHero = phimLe.rows
+    .filter((movie) => movie.has_playable_source && movie.canonical_slug && (movie.poster_asset_id || movie.thumb_asset_id))
+    .slice(0, config.heroTrendingLimit);
   return {
-    heroMovies,
-    newMovies: { items: newCards },
-    phimLe: { items: phimLe.rows.map(card) },
+    heroMovies: (heroTrending.length ? heroTrending : fallbackHero).map(card),
+    newMovies: { items: newMovies.rows.map(card) },
+    phimLe: { items: phimLe.rows.slice(0, 16).map(card) },
     phimBo: { items: phimBo.rows.map(card) },
     hoatHinh: { items: hoatHinh.rows.map(card) }
   };

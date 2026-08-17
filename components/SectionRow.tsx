@@ -50,8 +50,8 @@ export function SectionRow({
       </div>
       <div ref={trackRef} className="bf-rail-track flex snap-x snap-mandatory gap-1.5 overflow-x-auto px-[var(--bf-page-gutter)] pb-4 pt-1 sm:gap-2" tabIndex={0}>
         {items.slice(0, itemLimit).map((movie) => (
-          <div key={movie.slug} className="w-[44vw] min-w-[164px] max-w-[320px] shrink-0 snap-start sm:w-[31vw] lg:w-[18vw]">
-            <MovieCard movie={movie} compact returnTo={returnTo} variant="landscape" />
+          <div key={movie.slug} className="w-[32vw] min-w-[124px] max-w-[190px] shrink-0 snap-start sm:w-[22vw] lg:w-[13vw]">
+            <MovieCard movie={movie} compact returnTo={returnTo} />
           </div>
         ))}
       </div>

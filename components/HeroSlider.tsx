@@ -45,7 +45,7 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
   const displayRating = getDisplayRating(active);
   const detailHref = hrefWithReturnTo(`/movie/${active.slug}`, "/", "home");
   const playHref = hrefWithReturnTo(`/movie/${active.slug}?play=1#player`, "/", "home");
-  const supportingCopy = [active.category, active.country].filter(Boolean).join(" · ");
+  const heroTitle = active.originName || active.name;
 
   function move(direction: -1 | 1) {
     if (slides.length <= 1) return;
@@ -105,18 +105,14 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
         <div className="max-w-[34rem]">
           <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.16em] text-silver">Blueflare nổi bật</p>
           <h1 className="max-w-[12ch] text-[34px] font-black leading-[0.98] tracking-[-0.035em] text-chalk-white sm:text-[46px] md:text-[56px] lg:text-[64px]">
-            {active.name}
+            {heroTitle}
           </h1>
-          {active.originName && active.originName !== active.name ? (
-            <p className="mt-3 line-clamp-1 max-w-lg text-[14px] font-medium text-silver md:text-[16px]">{active.originName}</p>
-          ) : null}
           <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 text-[13px] font-medium text-chalk-white">
             {displayRating ? <span>{displayRating.text}</span> : null}
             {active.year ? <span>{active.year}</span> : null}
             {active.quality ? <span>{active.quality}</span> : null}
             {active.episodeCurrent ? <span className="text-silver">{active.episodeCurrent}</span> : null}
           </div>
-          {supportingCopy ? <p className="mt-3 line-clamp-2 max-w-xl text-[13px] leading-5 text-silver md:text-[15px] md:leading-6">{supportingCopy}</p> : null}
           <div className="mt-6 flex flex-wrap items-center gap-3">
             <a href={playHref} className="inline-flex min-h-11 items-center justify-center gap-2 rounded bg-chalk-white px-5 py-2.5 text-[14px] font-bold text-deep-space transition hover:bg-silver">
               <Play className="h-5 w-5 fill-current" aria-hidden="true" />

@@ -57,7 +57,7 @@ export function HomeIsland({
             <section key={row}>
               <div className="bf-page-gutter mb-3 h-5 w-44"><div className="h-full animate-pulse rounded-sm bg-graphite" /></div>
               <div className="flex gap-2 overflow-hidden px-[var(--bf-page-gutter)]">
-                {[0, 1, 2, 3, 4, 5].map((item) => <div key={item} className="aspect-video w-[44vw] min-w-[164px] max-w-[320px] animate-pulse rounded bg-graphite sm:w-[31vw] lg:w-[18vw]" />)}
+                {[0, 1, 2, 3, 4, 5].map((item) => <div key={item} className="aspect-[2/3] w-[32vw] min-w-[124px] max-w-[190px] animate-pulse rounded bg-graphite sm:w-[22vw] lg:w-[13vw]" />)}
               </div>
             </section>
           ))}

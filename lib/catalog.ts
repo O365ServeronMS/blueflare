@@ -14,7 +14,6 @@
 import type { EpisodeServer, HomePayload, ListPayload, MovieCard, MovieDetail } from "@/lib/types";
 import { normalizedEpisodeName, normalizedEpisodeSlug } from "@/lib/episodes";
 import { normalizePage } from "@/lib/navigation";
-import { buildVsembedServer } from "@/lib/vsembed";
 
 export const CATALOG_BASE = "https://img.bluesia.net";
 type RawItem = Record<string, any>;
@@ -188,9 +187,6 @@ export async function getMovie(slug: string): Promise<MovieDetail> {
     countryList: detailLabels(movieRaw?.country),
     episodes
   };
-
-  const vsembedServer = buildVsembedServer(movie);
-  if (vsembedServer) movie.episodes = [...movie.episodes, vsembedServer];
 
   return movie;
 }

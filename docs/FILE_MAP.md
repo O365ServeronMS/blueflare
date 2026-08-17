@@ -31,7 +31,7 @@ archive documents.
 - `lib/catalog-server.ts`: cached server API helpers and cache tags.
 - `lib/navigation.ts`: `returnTo` and category-context policy.
 - `lib/playback.ts`: centralized device/source priority and URL validation.
-- `lib/episodes.ts`, `lib/vsembed.ts`, `lib/types.ts`, `lib/utils.ts`: shared helpers and models.
+- `lib/episodes.ts`, `lib/types.ts`, `lib/utils.ts`: shared helpers and models.
 
 ## Docker backend and deployment
 

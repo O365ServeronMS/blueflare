@@ -15,12 +15,9 @@ import {
   navSourceFromSearchParams,
   returnToFromSearchParams
 } from "@/lib/navigation";
-import { isMobilePlaybackUserAgent, normalizePlaybackUrl } from "@/lib/playback";
+import { normalizePlaybackUrl } from "@/lib/playback";
 import type { MovieCard, MovieDetail } from "@/lib/types";
 import { getDisplayRating, stripHtml } from "@/lib/utils";
-
-const VIDSRC_HOSTS = new Set(["vsembed.ru", "vsembed.su", "vidsrc-embed.ru", "vidsrc-embed.su", "vidsrcme.su", "vsrc.su"]);
-const MOBILE_VIDSRC_HOST = "vsembed.su";
 
 function slugFromPath() {
   const match = window.location.pathname.match(/^\/movie\/([^/?#]+)/);
@@ -30,22 +27,6 @@ function slugFromPath() {
 function displayEpisodeServerName(serverName?: string) {
   const name = String(serverName || "").trim();
   return name || "Server";
-}
-
-function resolveEmbedUrl(src: string | undefined, params: URLSearchParams, mobileUA: boolean) {
-  const normalized = normalizePlaybackUrl(src);
-  if (!normalized) return undefined;
-  try {
-    const url = new URL(normalized);
-    if (!VIDSRC_HOSTS.has(url.hostname)) return normalized;
-    const mirror = String(params.get("mirror") || "").trim().toLowerCase();
-    if (VIDSRC_HOSTS.has(mirror)) url.hostname = mirror;
-    else if (mobileUA) url.hostname = MOBILE_VIDSRC_HOST;
-    url.searchParams.set("autoplay", "0");
-    return url.toString();
-  } catch {
-    return undefined;
-  }
 }
 
 function toMovieCard(movie: MovieDetail): MovieCard {
@@ -154,8 +135,7 @@ export function MovieDetailIsland() {
   const episode = findEpisodeByWatchKey(server, epKey);
   const requestedPlayer = String(params.get("player") || "").toLowerCase();
   const preferredMode = requestedPlayer === "embed" ? "iframe" : requestedPlayer === "hls" ? "hls" : undefined;
-  const mobileUA = isMobilePlaybackUserAgent(navigator.userAgent || "");
-  const playerEmbed = resolveEmbedUrl(episode?.linkEmbed, params, mobileUA);
+  const playerEmbed = normalizePlaybackUrl(episode?.linkEmbed);
   const m3u8 = episode?.linkM3u8;
   const initialPlayerOpen = params.get("play") === "1";
 

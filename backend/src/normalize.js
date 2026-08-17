@@ -6,6 +6,18 @@ function value(value) {
   return text || null;
 }
 
+function imageUrl(raw) {
+  const text = value(raw);
+  if (!text) return null;
+  try {
+    const parsed = new URL(text);
+    if (parsed.pathname === '' || parsed.pathname === '/') return null;
+    return text;
+  } catch {
+    return null;
+  }
+}
+
 function number(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
@@ -114,8 +126,8 @@ function canonical(input) {
     tmdbMediaType: tmdbMediaType(input.tmdbMediaType),
     tmdbSeasonNumber: seasonNumber(input.tmdbSeasonNumber),
     overview: value(input.overview),
-    thumbSourceUrl: value(input.thumbSourceUrl),
-    posterSourceUrl: value(input.posterSourceUrl),
+    thumbSourceUrl: imageUrl(input.thumbSourceUrl),
+    posterSourceUrl: imageUrl(input.posterSourceUrl),
     quality: value(input.quality),
     language: value(input.language),
     status: value(input.status),

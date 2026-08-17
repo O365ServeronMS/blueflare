@@ -26,10 +26,6 @@ export function isDesktopDevice(value = currentNavigator()) {
   return Boolean(value && !isIOSDevice(value) && !isAndroidDevice(value));
 }
 
-export function isMobilePlaybackUserAgent(userAgent: string) {
-  return /android|iphone|ipad|ipod|mobile|iemobile|opera mini|webos/i.test(userAgent);
-}
-
 export function canPlayNativeHls(video: HTMLVideoElement) {
   return Boolean(video.canPlayType("application/vnd.apple.mpegurl"));
 }

@@ -144,7 +144,6 @@
 - OPhim metadata normalization is centralized in `lib/ophim.ts`; prefer extending `normalizeCard()` and shared types instead of duplicating shape logic in UI.
 - Shared movie/source types belong in `lib/types.ts`.
 - Display-specific formatting belongs in `lib/utils.ts` or components, not in API route handlers.
-- VSEmbed fallback construction belongs in `lib/vsembed.ts`.
 - Need verification: no D1 binding is evident in `wrangler.jsonc`; do not assume active D1 storage without checking current config.
 
 ## UI
@@ -195,14 +194,6 @@
 - Default HLS buffer target should remain 60 seconds. Aggressive mode may target 180 seconds with a 300-second max cap only on good connections; 5-minute buffering is not a universal default.
 - Embed playback uses `IframePlayerFacade.tsx`; unified source selection logic is in `src/pages/movie/[slug].astro` and `components/MoviePlayer.tsx`.
 - Preserve mobile/embed fallback behavior unless the task targets player selection.
-
-## Vidsrc Playback Must Remain Isolated From OPhim Player Changes
-
-- OPhim playback may use hls.js plus native video fallback for direct m3u8 streams.
-- Vidsrc playback/API/embed flow must not be modified unless explicitly requested.
-- Do not remove dependencies used by Vidsrc.
-- Do not route Vidsrc through the OPhim HLS player.
-- Any future player optimization must check source/provider separation first.
 
 ## SEO And Public Files
 

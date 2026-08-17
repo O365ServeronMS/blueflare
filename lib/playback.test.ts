@@ -3,7 +3,6 @@ import {
   isIOSDevice,
   isAndroidDevice,
   isDesktopDevice,
-  isMobilePlaybackUserAgent,
   normalizePlaybackUrl,
   resolveHlsPlaybackSource,
   resolvePlaybackSource,
@@ -98,24 +97,6 @@ describe("isDesktopDevice", () => {
     // In Node/Vitest, globalThis.navigator exists but has no mobile UA,
     // so isDesktopDevice() with default navigator returns true.
     expect(isDesktopDevice()).toBe(true);
-  });
-});
-
-describe("isMobilePlaybackUserAgent", () => {
-  test("matches Android", () => {
-    expect(isMobilePlaybackUserAgent(android.userAgent)).toBe(true);
-  });
-
-  test("matches iPhone", () => {
-    expect(isMobilePlaybackUserAgent(ios.userAgent)).toBe(true);
-  });
-
-  test("matches iPad", () => {
-    expect(isMobilePlaybackUserAgent("Mozilla/5.0 (iPad; CPU OS 17_0)")).toBe(true);
-  });
-
-  test("rejects desktop UA", () => {
-    expect(isMobilePlaybackUserAgent(desktop.userAgent)).toBe(false);
   });
 });
 

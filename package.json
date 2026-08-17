@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "node .next/standalone/server.js",
     "preview": "node .next/standalone/server.js",
-    "deploy": "docker build -f Dockerfile.frontend -t blueflare-frontend:latest ."
+    "deploy": "docker build -f Dockerfile.frontend -t blueflare-frontend:latest .",
+    "test": "vitest run"
   },
   "dependencies": {
     "@tailwindcss/postcss": "4.3.3",
@@ -27,7 +28,8 @@
     "typescript": "7.0.2"
   },
   "devDependencies": {
-    "sharp": "^0.35.2"
+    "sharp": "^0.35.2",
+    "vitest": "^4.1.10"
   },
   "browserslist": [
     "Chrome >= 90",

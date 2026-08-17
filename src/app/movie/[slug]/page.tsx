@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { ArrowLeft, Play } from "lucide-react";
+import { ExpandableSynopsis } from "@/components/ExpandableSynopsis";
 import { MovieActions } from "@/components/LocalMovieActions";
 import { MoviePlayer } from "@/components/MoviePlayer";
 import { getMovieServer } from "@/lib/catalog-server";
@@ -98,7 +99,11 @@ export default async function MoviePage({ params, searchParams }: { params: Para
               {movie.time ? <span>{movie.time}</span> : null}
               {movie.episodeCurrent ? <span className="text-silver">{movie.episodeCurrent}</span> : null}
             </div>
-            <p className="mt-4 line-clamp-3 max-w-2xl text-[14px] leading-6 text-silver md:text-[16px]">{stripHtml(movie.content) || "Thông tin nội dung đang được cập nhật."}</p>
+            <ExpandableSynopsis
+              text={movie.content || "Thông tin nội dung đang được cập nhật."}
+              className="mt-4 max-w-2xl"
+              copyClassName="text-[14px] leading-6 text-silver md:text-[16px]"
+            />
             <div className="mt-6 flex flex-wrap items-center gap-3">
               <a href={playerHref} className="bf-play-cta"><Play className="h-5 w-5 fill-current" aria-hidden="true" />Phát</a>
               <MovieActions movie={movieCard} />
@@ -128,7 +133,6 @@ export default async function MoviePage({ params, searchParams }: { params: Para
             </div>
           </section>
         ) : null}
-        <section className="mt-12 max-w-3xl border-t border-white/10 pt-9"><h2 className="text-[24px] font-bold text-white">Giới thiệu</h2><p className="mt-4 text-[15px] leading-7 text-silver">{stripHtml(movie.content) || "Thông tin nội dung đang được cập nhật."}</p></section>
       </div>
     </article>
   );

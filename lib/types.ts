@@ -21,6 +21,8 @@ export type MovieCard = {
   ratings?: { imdb?: number | string; tmdb?: number | string };
   country?: string;
   category?: string;
+  /** Synopsis; present on detail payloads and on home hero cards only. */
+  content?: string;
 };
 
 export type Episode = {
@@ -37,7 +39,6 @@ export type EpisodeServer = {
 };
 
 export type MovieDetail = MovieCard & {
-  content?: string;
   actor?: string[];
   director?: string[];
   episodeTotal?: string;

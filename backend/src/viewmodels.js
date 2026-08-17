@@ -113,7 +113,10 @@ export async function buildHome() {
     .filter((movie) => movie.has_playable_source && movie.canonical_slug && (movie.poster_asset_id || movie.thumb_asset_id))
     .slice(0, config.heroTrendingLimit);
   return {
-    heroMovies: (heroTrending.length ? heroTrending : fallbackHero).map(card),
+    // Hero cards carry the synopsis so the slider can render it without a
+    // detail fetch; list/search cards stay lean.
+    heroMovies: (heroTrending.length ? heroTrending : fallbackHero)
+      .map((row) => ({ ...card(row), content: row.overview || null })),
     newMovies: { items: newMovies.rows.map(card) },
     phimLe: { items: phimLe.rows.slice(0, 16).map(card) },
     phimBo: { items: phimBo.rows.map(card) },

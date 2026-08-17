@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowLeft, ChevronDown, Play } from "lucide-react";
+import { ArrowLeft, Play } from "lucide-react";
+import { ExpandableSynopsis } from "@/components/ExpandableSynopsis";
 import { MovieActions } from "@/components/LocalMovieActions";
 import { SectionRow } from "@/components/SectionRow";
 import { MoviePlayer } from "@/components/MoviePlayer";
@@ -17,7 +18,7 @@ import {
 } from "@/lib/navigation";
 import { normalizePlaybackUrl } from "@/lib/playback";
 import type { MovieCard, MovieDetail } from "@/lib/types";
-import { getDisplayRating, stripHtml } from "@/lib/utils";
+import { getDisplayRating } from "@/lib/utils";
 
 function slugFromPath() {
   const match = window.location.pathname.match(/^\/movie\/([^/?#]+)/);
@@ -69,7 +70,6 @@ export function MovieDetailIsland() {
   const [movie, setMovie] = useState<MovieDetail | null>(null);
   const [recommendations, setRecommendations] = useState<MovieCard[]>([]);
   const [error, setError] = useState(false);
-  const [synopsisOpen, setSynopsisOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -201,7 +201,11 @@ export function MovieDetailIsland() {
               {movie.time ? <span>{movie.time}</span> : null}
               {movie.episodeCurrent ? <span className="text-silver">{movie.episodeCurrent}</span> : null}
             </div>
-            <p className="mt-4 line-clamp-3 max-w-2xl text-[14px] leading-6 text-silver md:text-[16px]">{stripHtml(movie.content) || "Thông tin nội dung đang được cập nhật."}</p>
+            <ExpandableSynopsis
+              text={movie.content || "Thông tin nội dung đang được cập nhật."}
+              className="mt-4 max-w-2xl"
+              copyClassName="text-[14px] leading-6 text-silver md:text-[16px]"
+            />
             <div className="mt-6 flex flex-wrap items-center gap-3">
               <a href={heroPlayHref} onClick={(event) => replacePlayerNavigation(event, heroPlayHref)} className="bf-play-cta">
                 <Play className="h-5 w-5 fill-current" aria-hidden="true" />
@@ -267,15 +271,7 @@ export function MovieDetailIsland() {
 
         <section className="mt-12 grid gap-10 border-t border-white/10 pt-9 lg:grid-cols-[minmax(0,1.5fr)_minmax(280px,0.75fr)]">
           <div>
-            <h2 className="text-[24px] font-bold text-white">Giới thiệu</h2>
-            <div className={`movie-synopsis mt-4${synopsisOpen ? " is-expanded" : ""}`}>
-              <p className="movie-synopsis-copy max-w-3xl text-[15px] leading-7 text-silver">{stripHtml(movie.content) || "Thông tin nội dung đang được cập nhật."}</p>
-              <button type="button" aria-expanded={synopsisOpen} onClick={() => setSynopsisOpen((open) => !open)} className="mt-3 inline-flex items-center gap-1.5 text-[13px] font-bold text-white transition hover:text-netflix-red">
-                {synopsisOpen ? "Thu gọn" : "Xem thêm"}
-                <ChevronDown className="movie-synopsis-icon h-4 w-4" />
-              </button>
-            </div>
-            <div className="mt-6 flex flex-wrap gap-x-3 gap-y-2 text-[13px] text-silver">
+            <div className="flex flex-wrap gap-x-3 gap-y-2 text-[13px] text-silver">
               {movie.categoryList?.map((item) => <span key={`c-${item.slug}`}>{item.name}</span>)}
               {movie.countryList?.map((item) => <span key={`n-${item.slug}`}>{item.name}</span>)}
             </div>

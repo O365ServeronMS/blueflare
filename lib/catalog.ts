@@ -85,7 +85,8 @@ export function normalizeCard(raw: RawItem): MovieCard {
       vote_count: num(raw?.imdb?.vote_count)
     },
     country: labelText(raw?.country),
-    category: labelText(raw?.category)
+    category: labelText(raw?.category),
+    content: typeof raw?.content === "string" && raw.content.trim() ? raw.content : undefined
   };
 }
 

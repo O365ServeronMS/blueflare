@@ -165,12 +165,13 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .line-clamp-2 { -webkit-line-clamp: 2; }
 .line-clamp-3 { -webkit-line-clamp: 3; }
 
+.movie-synopsis { --bf-synopsis-lines: 2; }
 .movie-synopsis-copy { margin: 0; }
 .movie-synopsis:not(.is-expanded) .movie-synopsis-copy {
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: var(--bf-synopsis-lines);
 }
 .movie-synopsis-icon { transition: transform var(--bf-motion-fast) ease; }
 .movie-synopsis.is-expanded .movie-synopsis-icon { transform: rotate(180deg); }

@@ -2,6 +2,7 @@
 
 import { KeyboardEvent, TouchEvent, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Info, Play } from "lucide-react";
+import { ExpandableSynopsis } from "@/components/ExpandableSynopsis";
 import type { MovieCard } from "@/lib/types";
 import { hrefWithReturnTo } from "@/lib/navigation";
 import { getDisplayRating } from "@/lib/utils";
@@ -17,6 +18,7 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
   );
   const [activeSlug, setActiveSlug] = useState<string | null>(null);
   const [interactionTick, setInteractionTick] = useState(0);
+  const [synopsisExpanded, setSynopsisExpanded] = useState(false);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
@@ -26,8 +28,10 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
 
   const visibleIndex = Math.max(0, slides.findIndex((movie) => movie.slug === activeSlug));
 
+  // Rotation pauses while a synopsis is expanded so the text cannot slide out
+  // from under someone who is reading it.
   useEffect(() => {
-    if (slides.length <= 1 || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (slides.length <= 1 || synopsisExpanded || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     const timer = window.setInterval(() => {
       if (!document.hidden) {
         setActiveSlug((current) => {
@@ -37,7 +41,7 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
       }
     }, SLIDE_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, [slides, interactionTick]);
+  }, [slides, interactionTick, synopsisExpanded]);
 
   if (!slides.length) return null;
   const active = slides[visibleIndex];
@@ -113,6 +117,13 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
             {active.quality ? <span>{active.quality}</span> : null}
             {active.episodeCurrent ? <span className="text-silver">{active.episodeCurrent}</span> : null}
           </div>
+          <ExpandableSynopsis
+            text={active.content}
+            className="mt-4 max-w-[32rem]"
+            copyClassName="text-[14px] leading-6 text-silver md:text-[15px]"
+            resetKey={active.slug}
+            onExpandedChange={setSynopsisExpanded}
+          />
           <div className="mt-6 flex flex-wrap items-center gap-3">
             <a href={playHref} className="inline-flex min-h-11 items-center justify-center gap-2 rounded bg-chalk-white px-5 py-2.5 text-[14px] font-bold text-deep-space transition hover:bg-silver">
               <Play className="h-5 w-5 fill-current" aria-hidden="true" />

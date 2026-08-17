@@ -40,6 +40,11 @@ export const config = Object.freeze({
   tmdbImageSyncLimit: integer('TMDB_IMAGE_SYNC_LIMIT', 32, 1),
   tmdbImageSyncConcurrency: integer('TMDB_IMAGE_SYNC_CONCURRENCY', 2, 1),
   tmdbImageRetryMs: integer('TMDB_IMAGE_RETRY_MS', 6 * 60 * 60 * 1000, 60 * 1000),
+  // Title-search fallback for rows with no provider artwork. Kept small per run
+  // and retried slowly: a miss usually means TMDB has no such title at all.
+  tmdbImageFallbackLimit: integer('TMDB_IMAGE_FALLBACK_LIMIT', 16, 1),
+  tmdbImageFallbackConcurrency: integer('TMDB_IMAGE_FALLBACK_CONCURRENCY', 2, 1),
+  tmdbImageFallbackRetryMs: integer('TMDB_IMAGE_FALLBACK_RETRY_MS', 7 * 24 * 60 * 60 * 1000, 60 * 1000),
   redisUrl: process.env.REDIS_URL || 'redis://valkey:6379',
   imageSigningSecret,
   imageCacheDir: process.env.IMAGE_CACHE_DIR || '/data/images',

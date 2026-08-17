@@ -446,6 +446,62 @@ export async function recordTmdbImageFailure(movieId, error) {
 }
 
 
+/**
+ * Rows a provider never supplied artwork for, ordered least-recently-checked.
+ *
+ * Restricted to rows with no provider image of their own, so a borrowed poster
+ * can never displace real artwork. Rows already carrying a tmdb_id belong to the
+ * verified-by-id pipeline and are left to it.
+ */
+export async function listTmdbImageFallbackCandidates(limit = config.tmdbImageFallbackLimit) {
+  const result = await pool.query(
+    'SELECT id, canonical_slug, original_title, title, media_type FROM movies ' +
+    "WHERE tmdb_image_fallback_status <> 'matched' " +
+    'AND thumb_asset_id IS NULL AND poster_asset_id IS NULL ' +
+    'AND tmdb_thumb_asset_id IS NULL AND tmdb_id IS NULL ' +
+    "AND catalog_state = 'ready' " +
+    "AND original_title IS NOT NULL AND original_title <> '' " +
+    "AND (tmdb_image_fallback_checked_at IS NULL OR tmdb_image_fallback_checked_at < now() - ($1::bigint * interval '1 millisecond')) " +
+    'ORDER BY tmdb_image_fallback_checked_at NULLS FIRST, updated_at ASC LIMIT $2',
+    [config.tmdbImageFallbackRetryMs, Math.max(1, Math.floor(limit))]
+  );
+  return result.rows;
+}
+
+export async function recordTmdbImageFallback(movieId, match) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const thumbAssetId = await ensureImageAsset(client, match.thumbSourceUrl);
+    const posterAssetId = await ensureImageAsset(client, match.posterSourceUrl);
+    // tmdb_id stays NULL on purpose: a title guess must never feed identity
+    // resolution, or a bad match could merge two unrelated titles.
+    const result = await client.query(
+      'UPDATE movies SET tmdb_thumb_asset_id=$2, tmdb_poster_asset_id=$3, ' +
+      "tmdb_image_fallback_status='matched', tmdb_image_fallback_id=$4, " +
+      'tmdb_image_fallback_checked_at=now(), updated_at=now() WHERE id=$1 RETURNING *',
+      [movieId, thumbAssetId, posterAssetId, match.tmdbId]
+    );
+    await client.query('COMMIT');
+    return result.rows[0] || null;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function recordTmdbImageFallbackMiss(movieId, status) {
+  const allowed = status === 'ambiguous' || status === 'error' ? status : 'unmatched';
+  const result = await pool.query(
+    'UPDATE movies SET tmdb_image_fallback_status=$2, tmdb_image_fallback_checked_at=now() ' +
+    'WHERE id=$1 RETURNING *',
+    [movieId, allowed]
+  );
+  return result.rows[0] || null;
+}
+
 export async function getMovieInvalidationDimensions(slugs = []) {
   const normalized = [...new Set(slugs.filter(Boolean).map(String))];
   if (!normalized.length) return [];

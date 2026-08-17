@@ -9,7 +9,10 @@ import {
   getCrawlCheckpoint,
   getHeroTrendingRefreshState,
   listTmdbImageCandidates,
+  listTmdbImageFallbackCandidates,
   recordTmdbImageFailure,
+  recordTmdbImageFallback,
+  recordTmdbImageFallbackMiss,
   recordTmdbImages,
   recordCrawlCheckpointFailure,
   recordHeroTrendingRefreshFailure,
@@ -22,7 +25,7 @@ import {
   withHeroTrendingRefreshLock,
   getMovieInvalidationDimensions
 } from './repository.js';
-import { fetchTrendingMovieIds, fetchVerifiedTmdbImages } from './tmdb.js';
+import { fetchTrendingMovieIds, fetchVerifiedTmdbImages, searchTmdbImagesByTitle } from './tmdb.js';
 import { buildHome } from './viewmodels.js';
 
 async function revalidateFrontend(tags) {
@@ -272,6 +275,41 @@ async function refreshTmdbImages() {
   return results.filter(Boolean).map((movie) => movie.canonical_slug);
 }
 
+/**
+ * Borrow artwork for rows the providers left without any image.
+ *
+ * Separate from `refreshTmdbImages()` because these rows carry no tmdb_id to
+ * verify against: identity is guessed from the title and only an unambiguous
+ * exact match is accepted, so most candidates are expected to be declined.
+ */
+async function refreshTmdbImageFallbacks() {
+  if (!config.tmdbApiKey) return [];
+  const candidates = await listTmdbImageFallbackCandidates();
+  if (!candidates.length) return [];
+
+  let matched = 0;
+  const results = await mapLimit(candidates, config.tmdbImageFallbackConcurrency, async (movie) => {
+    try {
+      const { match, status } = await searchTmdbImagesByTitle({
+        title: movie.original_title,
+        mediaType: movie.media_type
+      });
+      if (!match) {
+        await recordTmdbImageFallbackMiss(movie.id, status);
+        return null;
+      }
+      matched += 1;
+      return await recordTmdbImageFallback(movie.id, match);
+    } catch (error) {
+      console.warn('[worker] TMDB image fallback failed for ' + movie.canonical_slug, error.message);
+      await recordTmdbImageFallbackMiss(movie.id, 'error').catch(() => {});
+      return null;
+    }
+  });
+  console.log('[worker] tmdb image fallback checked=' + candidates.length + ' matched=' + matched);
+  return results.filter(Boolean).map((movie) => movie.canonical_slug);
+}
+
   for (const provider of providers) {
     if (stopping) break;
     results.push(await syncProvider(provider));
@@ -279,7 +317,15 @@ async function refreshTmdbImages() {
 
   const imported = results.reduce((sum, result) => sum + result.imported, 0);
   const tmdbImageSlugs = await refreshTmdbImages();
-  const changedSlugs = [...new Set([...results.flatMap((result) => result.changedSlugs), ...tmdbImageSlugs])];
+  const tmdbFallbackSlugs = await refreshTmdbImageFallbacks().catch((error) => {
+    console.warn('[worker] tmdb image fallback pass failed', error.message);
+    return [];
+  });
+  const changedSlugs = [...new Set([
+    ...results.flatMap((result) => result.changedSlugs),
+    ...tmdbImageSlugs,
+    ...tmdbFallbackSlugs
+  ])];
   if (changedSlugs.length > 0) {
     const changedMovies = await getMovieInvalidationDimensions(changedSlugs).catch((error) => {
       console.warn("[worker] taxonomy invalidation lookup failed", error.message);

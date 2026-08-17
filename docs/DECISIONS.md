@@ -146,6 +146,13 @@
 - Display-specific formatting belongs in `lib/utils.ts` or components, not in API route handlers.
 - Need verification: no D1 binding is evident in `wrangler.jsonc`; do not assume active D1 storage without checking current config.
 
+### TMDB poster fallback is a guess, and must stay quarantined from identity
+
+- Providers sometimes supply no artwork at all (NguonC returns its bare domain as `thumb_url`). Such rows also carry no `tmdb_id`/`imdb_id`, so the verified-by-id pipeline cannot reach them; `refreshTmdbImageFallbacks()` guesses identity from `original_title` instead.
+- These rows have no year, so title equality is the only evidence available. Accept only an unambiguous exact-title match that has a poster; decline ambiguous and near-miss results. A wrong poster is worse than the placeholder.
+- Never write a search-derived match into `movies.tmdb_id`. Identity resolution reads that column, so a bad guess could merge two unrelated titles. The matched id belongs in `tmdb_image_fallback_id`, which identity never reads.
+- Only rows with no provider artwork are eligible, so a borrowed poster can never displace a real one. Every borrowed poster is reversible by selecting `tmdb_image_fallback_status='matched'`.
+
 ## UI
 
 - The app is mobile-first with a constrained shell in `BaseLayout.astro` and fixed bottom nav in `BottomNav.tsx`.

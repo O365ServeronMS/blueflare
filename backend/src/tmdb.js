@@ -78,6 +78,63 @@ async function fetchTmdb(path, options = {}) {
   return response.json();
 }
 
+function comparableTitle(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+/**
+ * Pick a search hit confident enough to borrow artwork from.
+ *
+ * These rows have no year to disambiguate with, so title equality is the only
+ * evidence available and a plausible-looking single result is not proof. Only an
+ * unambiguous exact-title match is accepted: anything else returns a reason so
+ * the caller can record why it declined instead of retrying blindly.
+ */
+export function selectUniqueTmdbMatch(results, title) {
+  const wanted = comparableTitle(title);
+  if (!wanted) return { match: null, status: 'unmatched' };
+
+  const exact = (Array.isArray(results) ? results : []).filter((result) => (
+    comparableTitle(result?.name ?? result?.title) === wanted ||
+    comparableTitle(result?.original_name ?? result?.original_title) === wanted
+  ));
+  // Artwork is the entire point, so a match without a poster is not a match.
+  const usable = exact.filter((result) => typeof result?.poster_path === 'string' && result.poster_path);
+
+  if (!usable.length) return { match: null, status: 'unmatched' };
+  // Two different titles sharing a name cannot be told apart without a year.
+  if (usable.length > 1) return { match: null, status: 'ambiguous' };
+  return { match: usable[0], status: 'matched' };
+}
+
+export async function searchTmdbImagesByTitle(candidate, options = {}) {
+  const title = String(candidate?.title || '').trim();
+  if (!title) return { match: null, status: 'unmatched' };
+
+  // `media_type` is the catalog's own family, not a TMDB value.
+  const endpoint = candidate?.mediaType === 'single' ? 'movie' : 'tv';
+  const body = await fetchTmdb(
+    '/search/' + endpoint + '?query=' + encodeURIComponent(title),
+    options
+  );
+  const { match, status } = selectUniqueTmdbMatch(body?.results, title);
+  if (!match) return { match: null, status };
+
+  return {
+    status,
+    match: {
+      tmdbId: validMovieId(match.id),
+      thumbSourceUrl: imageSource(match.poster_path, 'w500', options.imageBaseUrl),
+      posterSourceUrl: imageSource(match.backdrop_path, 'w1280', options.imageBaseUrl)
+    }
+  };
+}
+
 export async function fetchVerifiedTmdbImages(identity, options = {}) {
   const tmdbId = validMovieId(identity?.tmdbId);
   const mediaType = validMediaType(identity?.mediaType);

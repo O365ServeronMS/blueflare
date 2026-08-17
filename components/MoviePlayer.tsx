@@ -1,6 +1,6 @@
 "use client";
 
-import { Play, X } from "lucide-react";
+import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { HlsVideo } from "@/components/HlsVideo";
 import { IframePlayerFacade } from "@/components/IframePlayerFacade";
@@ -63,13 +63,6 @@ export function MoviePlayer({
     setPlaybackSource(resolvePlaybackSource({ iframeUrl: embedSrc, hlsUrl: hlsSrc }, probe));
   }, [embedSrc, hlsSrc, isOpen, preferredMode]);
 
-  function openPlayer() {
-    setIsOpen(true);
-    window.requestAnimationFrame(() => {
-      playerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-  }
-
   function handleIframeError() {
     iframeFailedRef.current = true;
     const hlsUrl = normalizePlaybackUrl(hlsSrc);
@@ -97,17 +90,6 @@ export function MoviePlayer({
 
   return (
     <div className="grid gap-3">
-      <button
-        type="button"
-        aria-controls="movie-player"
-        aria-expanded={isOpen}
-        className="inline-flex min-h-12 items-center justify-center gap-2 rounded bg-netflix-red px-6 py-3 text-[14px] font-bold text-white transition-colors hover:bg-[#f6121d]"
-        onClick={openPlayer}
-      >
-        <Play className="h-5 w-5 fill-current" aria-hidden="true" />
-        {isOpen ? "Player đã sẵn sàng" : "Xem phim"}
-      </button>
-
       {isOpen ? (
         <div ref={playerRef} id="movie-player" className="scroll-mt-4 overflow-hidden rounded bg-deep-space">
           <WatchRecorder movie={movie} />

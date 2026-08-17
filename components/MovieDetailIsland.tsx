@@ -203,7 +203,7 @@ export function MovieDetailIsland() {
             </div>
             <p className="mt-4 line-clamp-3 max-w-2xl text-[14px] leading-6 text-silver md:text-[16px]">{stripHtml(movie.content) || "Thông tin nội dung đang được cập nhật."}</p>
             <div className="mt-6 flex flex-wrap items-center gap-3">
-              <a href={heroPlayHref} onClick={(event) => replacePlayerNavigation(event, heroPlayHref)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded bg-white px-5 py-2.5 text-[14px] font-bold text-black transition hover:bg-silver">
+              <a href={heroPlayHref} onClick={(event) => replacePlayerNavigation(event, heroPlayHref)} className="bf-play-cta">
                 <Play className="h-5 w-5 fill-current" aria-hidden="true" />
                 Phát
               </a>
@@ -231,8 +231,7 @@ export function MovieDetailIsland() {
           <section className="mt-10" aria-labelledby="episodes-heading">
             <div className="flex items-end justify-between gap-4">
               <div>
-                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-silver">Tiếp tục xem</p>
-                <h2 id="episodes-heading" className="mt-1 text-[24px] font-bold text-white">Tập phim</h2>
+                <h2 id="episodes-heading" className="text-[24px] font-bold text-white">Chọn nguồn Phát</h2>
               </div>
               <p className="text-[12px] text-ash">{selectedEpisodeLabel}</p>
             </div>

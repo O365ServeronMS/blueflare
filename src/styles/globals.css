@@ -103,6 +103,40 @@ button, a { -webkit-tap-highlight-color: transparent; }
     linear-gradient(180deg, rgba(0, 0, 0, 0.24), transparent 38%, #000 100%);
 }
 
+/* Netflix-premium primary CTA: the red treatment the old "Xem phim" button used,
+   now the single Play action on the detail hero. */
+.bf-play-cta {
+  display: inline-flex;
+  min-height: 3rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 0.25rem;
+  padding: 0.75rem 1.75rem;
+  background: linear-gradient(180deg, #f6121d 0%, var(--color-netflix-red) 58%, #b20710 100%);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.18) inset, 0 14px 30px -14px rgba(229, 9, 20, 0.95);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  transition: background var(--bf-motion-fast) ease, box-shadow var(--bf-motion-fast) ease, transform var(--bf-motion-fast) ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .bf-play-cta:hover {
+    background: linear-gradient(180deg, #ff2a33 0%, #f6121d 58%, #c30812 100%);
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.22) inset, 0 18px 36px -14px rgba(229, 9, 20, 1);
+  }
+}
+
+.bf-play-cta:active { transform: translateY(1px); }
+.bf-play-cta:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .bf-play-cta { transition: none; }
+  .bf-play-cta:active { transform: none; }
+}
+
 .bf-media-card {
   position: relative;
   isolation: isolate;

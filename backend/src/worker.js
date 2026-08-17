@@ -250,8 +250,6 @@ async function refreshHeroTrendingIfDue() {
   }
 }
 
-async function syncCycle() {
-  const results = [];
 async function refreshTmdbImages() {
   if (!config.tmdbApiKey) return [];
   const candidates = await listTmdbImageCandidates();
@@ -272,6 +270,8 @@ async function refreshTmdbImages() {
   return results.filter(Boolean).map((movie) => movie.canonical_slug);
 }
 
+async function syncCycle() {
+  const results = [];
   for (const provider of providers) {
     if (stopping) break;
     results.push(await syncProvider(provider));

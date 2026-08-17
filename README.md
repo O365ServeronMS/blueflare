@@ -28,7 +28,7 @@ The same repository owns the Blueflare backend under `backend/`: provider sync, 
 | Providers | NguonC primary; KKPhim fallback/alternate streams |
 | Data/cache | PostgreSQL canonical catalog + Valkey final responses + Next render cache |
 | Images | Signed `m`/`d` variants (frontend never signs) |
-| Video | hls.js light build (dynamic fallback) + Vidsrc/VSEmbed embeds |
+| Video | hls.js light build (dynamic fallback) + provider embeds |
 
 ## Run locally
 

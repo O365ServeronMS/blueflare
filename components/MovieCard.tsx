@@ -107,12 +107,10 @@ export function MovieCard({
           />
           <span className="absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/15" aria-hidden="true" />
           {status ? (
-            <span className={status === "HD"
-              ? "absolute bottom-2 left-2 rounded-sm bg-luxury-gold px-2 py-1 text-[10px] font-bold tracking-[0.05em] text-deep-space"
-              : "absolute bottom-2 left-2 rounded-sm bg-black/85 px-2 py-1 text-[10px] font-bold tracking-[0.05em] text-chalk-white"}>{status}</span>
+            <span className="bf-tag bf-tag-accent absolute bottom-2 left-2">{status}</span>
           ) : null}
           {displayRating ? (
-            <span className="absolute right-2 top-2 rounded-sm bg-luxury-gold px-2 py-1 text-[10px] font-bold text-deep-space">{displayRating.score.toFixed(1)}</span>
+            <span className="bf-tag bf-tag-accent absolute right-2 top-2">{displayRating.score.toFixed(1)}</span>
           ) : null}
         </div>
         <Title className={compact ? "mt-2 line-clamp-1 text-[13px] font-medium text-chalk-white" : "mt-2.5 line-clamp-1 text-[14px] font-medium text-chalk-white sm:text-[15px]"}>{movie.name}</Title>

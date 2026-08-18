@@ -147,12 +147,12 @@ export function ListIsland({ type, returnTo: initialReturnTo = "" }: { type: str
       {(supportsCountryFilter || supportsCategoryFilter) ? (
         <section className="bf-page-gutter mt-5" aria-label="Lọc nhanh">
           <div className="no-scrollbar flex gap-2 overflow-x-auto pb-2">
-            <a href={listHref(1, { country: "", category: "" })} aria-current={!country && !category ? "true" : undefined} className={!country && !category ? "whitespace-nowrap rounded bg-netflix-red px-3 py-2 text-[12px] font-bold text-white" : "whitespace-nowrap rounded bg-graphite px-3 py-2 text-[12px] font-medium text-silver hover:text-white"}>Tất cả</a>
+            <a href={listHref(1, { country: "", category: "" })} aria-current={!country && !category ? "true" : undefined} className="bf-tag bf-tag-outline whitespace-nowrap">Tất cả</a>
             {supportsCountryFilter ? quickCountries.map((item) => (
-              <a key={item.slug} href={listHref(1, { country: item.slug, category: "" })} aria-current={country === item.slug ? "true" : undefined} className={country === item.slug ? "whitespace-nowrap rounded bg-netflix-red px-3 py-2 text-[12px] font-bold text-white" : "whitespace-nowrap rounded bg-graphite px-3 py-2 text-[12px] font-medium text-silver hover:text-white"}>{item.label}</a>
+              <a key={item.slug} href={listHref(1, { country: item.slug, category: "" })} aria-current={country === item.slug ? "true" : undefined} className="bf-tag bf-tag-outline whitespace-nowrap">{item.label}</a>
             )) : null}
             {supportsCategoryFilter ? quickCategories.map((item) => (
-              <a key={item.slug} href={listHref(1, { country: "", category: item.slug })} aria-current={category === item.slug ? "true" : undefined} className={category === item.slug ? "whitespace-nowrap rounded bg-netflix-red px-3 py-2 text-[12px] font-bold text-white" : "whitespace-nowrap rounded bg-graphite px-3 py-2 text-[12px] font-medium text-silver hover:text-white"}>{item.label}</a>
+              <a key={item.slug} href={listHref(1, { country: "", category: item.slug })} aria-current={category === item.slug ? "true" : undefined} className="bf-tag bf-tag-outline whitespace-nowrap">{item.label}</a>
             )) : null}
           </div>
         </section>

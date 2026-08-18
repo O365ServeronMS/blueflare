@@ -72,8 +72,14 @@ export function GlobalNav({ initialPathname = "/", initialSearch = "" }: { initi
       data-open={menuOpen || searchOpen}
     >
       <nav className="bf-content-width bf-page-gutter flex h-14 items-center gap-5 md:h-16" aria-label="Điều hướng chính">
-        <a href="/" onClick={closePanels} className="shrink-0 text-[19px] font-black tracking-[-0.04em] text-netflix-red md:text-[22px]" aria-label="Blueflare - Trang chủ">
-          BLUEFLARE
+        <a href="/" onClick={closePanels} className="flex shrink-0 items-center gap-2" aria-label="Blueflare - Trang chủ">
+          <svg width="18" height="20" viewBox="0 0 20 22" className="shrink-0" aria-hidden="true">
+            <path
+              d="M10 0 C4 6 2 10 2 14 C2 18.4 5.6 22 10 22 C14.4 22 18 18.4 18 14 C18 10 16 6 10 0 Z M10 5 C13 9 15 11.5 15 14.2 C15 16.8 12.8 19 10 19 C7.2 19 5 16.8 5 14.2 C5 11.5 7 9 10 5 Z"
+              fill="var(--color-netflix-red)"
+            />
+          </svg>
+          <span className="bf-brand text-[19px] font-black tracking-[-0.04em] text-netflix-red md:text-[22px]">BLUEFLARE</span>
         </a>
 
         <div className="hidden min-w-0 items-center gap-4 lg:flex">

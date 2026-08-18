@@ -192,6 +192,7 @@ export function MovieDetailIsland() {
           </a>
           <div className="max-w-[42rem]">
             <p className="text-[11px] font-bold uppercase tracking-[0.15em] text-silver">Blueflare giới thiệu</p>
+            {movie.type ? <span className="bf-tag bf-tag-accent mt-3 inline-flex">{movie.type === "single" ? "PHIM" : "SERIES"}</span> : null}
             <h1 className="mt-3 max-w-[13ch] text-[38px] font-black leading-[0.98] tracking-[-0.035em] text-white sm:text-[52px] lg:text-[64px]">{movie.name}</h1>
             {movie.originName && movie.originName !== movie.name ? <p className="mt-3 text-[14px] font-medium text-silver md:text-[16px]">{movie.originName}</p> : null}
             <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 text-[13px] font-medium text-white">

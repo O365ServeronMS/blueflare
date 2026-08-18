@@ -89,6 +89,11 @@ services:
     env_file: ${BLUEFLARE_ENV_FILE:-.env}
     environment:
       NODE_ENV: production
+      # .env's PORT is the api service's port; without this override the
+      # frontend's Next standalone server would inherit it via env_file
+      # above and bind 3200 instead of the 3000 the healthcheck/port
+      # mapping below expect.
+      PORT: "3000"
       INTERNAL_CATALOG_URL: http://api:3200
       CATALOG_BASE_URL: http://api:3200
       FRONTEND_REVALIDATE_SECRET: ${FRONTEND_REVALIDATE_SECRET:-}

@@ -30,7 +30,8 @@ export function MovieCard({
   priority = false,
   navSourceKey = "",
   returnTo = "",
-  variant = "poster"
+  variant = "poster",
+  rank
 }: {
   movie: MovieCardType;
   compact?: boolean;
@@ -39,6 +40,8 @@ export function MovieCard({
   navSourceKey?: string;
   returnTo?: string;
   variant?: "poster" | "landscape";
+  /** Trending position; renders the Top-10 numeral inside the poster. */
+  rank?: number;
 }) {
   const portrait = validHttpImage(movie.thumb);
   const landscape = validHttpImage(movie.poster);
@@ -90,7 +93,7 @@ export function MovieCard({
   return (
     <a href={detailHref} className="bf-media-card group block min-w-0">
       <article>
-        <div className="relative aspect-[2/3] overflow-hidden rounded bg-graphite">
+        <div className="bf-poster-frame relative aspect-[2/3] overflow-hidden rounded bg-graphite">
           <img
             src={imageSrc}
             alt={movie.name}
@@ -106,6 +109,9 @@ export function MovieCard({
             className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.025]"
           />
           <span className="absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/15" aria-hidden="true" />
+          {rank ? (
+            <span className="bf-rank pointer-events-none absolute bottom-0 left-1 z-10" aria-hidden="true">{rank}</span>
+          ) : null}
           {status ? (
             <span className="bf-tag bf-tag-accent absolute left-2 top-2">{status}</span>
           ) : null}

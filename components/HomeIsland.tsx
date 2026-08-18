@@ -66,10 +66,25 @@ export function HomeIsland({
     );
   }
 
+  // Same 24-item shortlist the hero slider rotates through — the trending
+  // row below reuses it as-is instead of fetching or rendering anything new.
+  const heroItems = data.hero.filter((movie) => movie.slug && (movie.poster || movie.thumb)).slice(0, 24);
+
   return (
     <>
-      <HeroSlider items={data.hero} />
+      <HeroSlider items={heroItems} />
       <div className="pb-6">
+        {heroItems.length ? (
+          <SectionRow
+            title="Phim đang được xem nhiều"
+            href="/list/phim-moi-cap-nhat"
+            items={heroItems}
+            returnTo={returnTo}
+            spotlight
+            ranked
+            itemLimit={heroItems.length}
+          />
+        ) : null}
         {data.sections.slice(0, visibleSections).map((section, index) => (
           <SectionRow
             key={section.href || index}
@@ -77,9 +92,8 @@ export function HomeIsland({
             href={section.href}
             items={section.items}
             returnTo={returnTo}
-            spotlight={index === 0}
-            ranked={index === 0}
-            itemLimit={index === 0 ? 10 : section.href === "/list/phim-moi-cap-nhat" ? 24 : 16}
+            spotlight={index === 0 && !heroItems.length}
+            itemLimit={section.href === "/list/phim-moi-cap-nhat" ? 24 : 16}
           />
         ))}
       </div>

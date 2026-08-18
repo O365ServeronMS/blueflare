@@ -132,24 +132,6 @@ export function GlobalNav({ initialPathname = "/", initialSearch = "" }: { initi
         </div>
       </nav>
 
-      {!menuOpen && !searchOpen ? (
-        <div className="bf-mobile-tabs bf-page-gutter flex items-center gap-6 overflow-x-auto pb-3 lg:hidden" aria-label="Danh mục chính">
-          {primaryItems.slice(0, 3).map((item) => (
-            <a
-              key={item.key}
-              href={item.href}
-              aria-current={activeKey === item.key ? "page" : undefined}
-              className={cn(
-                "shrink-0 text-[14px] font-medium text-silver transition-colors",
-                activeKey === item.key && "text-chalk-white"
-              )}
-            >
-              {item.label}
-            </a>
-          ))}
-        </div>
-      ) : null}
-
       {searchOpen ? (
         <div className="bf-content-width bf-page-gutter border-t border-white/10 bg-black pb-5 pt-4">
           <div className="ml-auto max-w-xl">

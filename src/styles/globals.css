@@ -79,15 +79,22 @@ body {
 /* Posters/backdrops render at their real, full color — no filter is ever
    applied to img[data-movie-poster]. */
 
+/* Trending rank numeral — the "Netflix Top 10" glossy embossed numeral:
+   a grey-to-black gradient fill clipped to the glyph, with a crisp white
+   outline, rather than a flat silhouette. */
 .bf-rank {
-  font-size: 56px;
+  font-size: 64px;
   font-weight: 900;
-  color: #000;
-  -webkit-text-stroke: 2px #fff;
-  line-height: 1;
+  line-height: 0.78;
+  letter-spacing: -0.04em;
+  background: linear-gradient(180deg, #7a7a7a 0%, #141414 55%, #000000 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-stroke: 3px #fff;
 }
 @media (min-width: 1024px) {
-  .bf-rank { font-size: 88px; }
+  .bf-rank { font-size: 100px; -webkit-text-stroke: 4px #fff; }
 }
 
 a { text-decoration: none; }

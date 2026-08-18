@@ -107,7 +107,7 @@ export function MovieCard({
           />
           <span className="absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/15" aria-hidden="true" />
           {status ? (
-            <span className="bf-tag bf-tag-accent absolute bottom-2 left-2">{status}</span>
+            <span className="bf-tag bf-tag-accent absolute left-2 top-2">{status}</span>
           ) : null}
           {displayRating ? (
             <span className="bf-tag bf-tag-accent absolute right-2 top-2">{displayRating.score.toFixed(1)}</span>

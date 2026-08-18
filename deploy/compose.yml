@@ -42,17 +42,19 @@ services:
       - backend
 
   image-cache-init:
-    build:
-      context: .
+    # alpine thay vì build image backend: service này chỉ mkdir + chown.
+    # alpine không có user `node`, phải dùng uid:gid số — 1000:1000 là `node`
+    # trong node:22-bookworm-slim mà api/worker chạy.
+    image: alpine:3
     restart: "no"
     user: "0:0"
-    command: ["sh", "-c", "mkdir -p /data/images && chown -R node:node /data/images"]
+    command: ["sh", "-c", "mkdir -p /data/images && chown -R 1000:1000 /data/images"]
     volumes:
       - ${IMAGE_CACHE_HOST_DIR:-./data/images}:/data/images
 
   api:
     build:
-      context: .
+      context: ${BLUEFLARE_SRC:-/home/ubuntu/blueflare}/backend
     restart: unless-stopped
     env_file: ${BLUEFLARE_ENV_FILE:-.env}
     environment:
@@ -81,7 +83,7 @@ services:
 
   frontend:
     build:
-      context: ..
+      context: ${BLUEFLARE_SRC:-/home/ubuntu/blueflare}
       dockerfile: Dockerfile.frontend
     restart: unless-stopped
     # Lets FEATURE_*/HOME_SECTION_LIMIT flags reach the frontend at runtime;
@@ -113,7 +115,7 @@ services:
 
   worker:
     build:
-      context: .
+      context: ${BLUEFLARE_SRC:-/home/ubuntu/blueflare}/backend
     restart: unless-stopped
     command: ["node", "src/worker.js"]
     env_file: ${BLUEFLARE_ENV_FILE:-.env}

@@ -45,21 +45,41 @@ npm run start      # serve the standalone build
 Want the full stack? 🐳
 
 ```bash
-cd backend
-cp .env.example .env
-sudo docker compose --env-file .env -f compose.yml up -d --build
+cp backend/.env.example /opt/docker/stacks/blueflare/.env   # rồi điền secret
+cd /opt/docker/stacks/blueflare && docker compose up -d --build
 ```
 
 ## 🚢 Deploy on the VPS
 
-No Worker here — just rebuild the container:
+Codebase và runtime nằm ở hai chỗ (xem [ADR-001](docs/adr/ADR-001-tach-stack-runtime-khoi-codebase.md)):
+
+| | Đường dẫn | Nội dung |
+|---|---|---|
+| Codebase | `/home/ubuntu/blueflare` | repo này — nguồn duy nhất của mọi thứ trong git |
+| Runtime | `/opt/docker/stacks/blueflare` | `compose.yml`, `.env`, `deploy/`, `data/images/` |
+
+Compose build thẳng từ codebase qua `BLUEFLARE_SRC` (mặc định `/home/ubuntu/blueflare`),
+nên deploy code mới là hai bước:
 
 ```bash
-cd /opt/docker/stacks/blueflare/backend
-sudo docker compose --env-file .env -f compose.yml up -d --build frontend
-sudo docker compose --env-file .env -f compose.yml ps frontend
+git pull
+cd /opt/docker/stacks/blueflare && docker compose up -d --build frontend
 curl -fsS http://127.0.0.1:3100/healthz
 ```
+
+Nếu sửa `compose.yml` hay script trong `deploy/`, bản chuẩn nằm trong repo — đồng bộ sang
+stack rồi mới áp dụng:
+
+```bash
+/home/ubuntu/blueflare/deploy/sync-stack.sh --dry-run   # xem trước
+/home/ubuntu/blueflare/deploy/sync-stack.sh
+```
+
+Đổi cấu hình mà không rebuild: `cd /opt/docker/stacks/blueflare && ./deploy/apply-env.sh`
+(script validate `.env` theo `.env.example` rồi tạo lại container từ image sẵn có).
+
+⚠️ Đừng bao giờ chạy `docker compose down -v` — cờ `-v` xóa named volume, tức là mất
+toàn bộ Postgres. Backup: `./deploy/backup-postgres.sh`.
 
 Then reload Caddy per [`backend/README.md`](backend/README.md). ✅
 

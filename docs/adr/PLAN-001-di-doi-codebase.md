@@ -1,6 +1,6 @@
 # Plan: Tách codebase về /home/ubuntu/blueflare, giữ runtime ở /opt/docker/stacks/blueflare
 
-Thực thi ADR-001 (Option B). Trạng thái: **chờ duyệt, chưa chạy.**
+Thực thi ADR-001 (Option B). Trạng thái: **đã hoàn tất 2026-08-18.** Xem "Kết quả" ở cuối file.
 
 ## Nguyên tắc
 
@@ -151,3 +151,27 @@ filesystem), systemd, cron — đã kiểm tra, không có gì trỏ vào đư�
 | `chown node:node` fail vì alpine không có user `node` | Dùng `1000:1000` dạng số |
 | Build hỏng vì context mới thiếu file | Tách bước 16 (no-build) khỏi 18 (build); `.dockerignore` đi cùng source nên vẫn áp dụng |
 | Script deploy trỏ sai chỗ | `apply-env.sh` tự suy `STACK_DIR`; chạy thật ở bước 20 để xác nhận |
+
+## Kết quả (2026-08-18)
+
+Hoàn tất. Downtime thực tế ~4 phút. `/opt/docker/stacks/blueflare` từ 4.2 G còn 114 M
+(trong đó 114 M là `data/images`); codebase ~24 M ở `/home/ubuntu/blueflare`.
+
+Ba chỗ lệch so với plan:
+
+1. **`backend/data` thuộc sở hữu root**, nên `mv` bằng user `ubuntu` báo EPERM — dời một
+   thư mục phải ghi lại mục `..` bên trong nó. `sudo` cần mật khẩu nên không dùng được.
+   Xử lý bằng `docker run --rm -v /opt/docker/stacks/blueflare:/s alpine:3` chạy `mv` với
+   quyền root, đồng thời `chown 1000:1000` thư mục `data` để lần sau không vướng nữa.
+2. **`deploy/` giữ trong git, không dời hẳn ra stack.** Plan ban đầu định `mv` cả `deploy/`
+   ra khỏi repo, làm mất version control cho script vận hành. Thay bằng mô hình
+   repo-là-bản-chuẩn đã định sẵn cho `compose.yml` ở bước 22, áp dụng cho cả `deploy/`:
+   bản chuẩn ở `deploy/` trong repo, stack giữ bản copy, đồng bộ bằng `deploy/sync-stack.sh`.
+3. **`BLUEFLARE_SRC` lọt vào env của container** vì `env_file` nạp cả `.env`. Vô hại
+   (container không đọc biến này), ghi nhận để không tưởng nhầm là lỗi khi đọc `docker inspect`.
+
+Đã xác minh sau khi dời: 5 service `healthy`; `api/health` báo postgres + valkey OK;
+45.714 bản ghi phim còn nguyên; ảnh cache phục vụ được end-to-end qua `img.bluesia.net`
+(2.690 file, khớp giữa host và container); `deploy/apply-env.sh` và
+`deploy/backup-postgres.sh` chạy đúng **không cần biến override** — đường dẫn mặc định
+`$STACK_DIR/compose.yml` trong hai script cuối cùng đã khớp thực tế.

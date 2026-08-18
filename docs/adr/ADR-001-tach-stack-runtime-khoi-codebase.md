@@ -1,6 +1,6 @@
 # ADR-001: Tách thư mục runtime của stack Docker khỏi codebase
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-08-18
 **Deciders:** chủ VPS / maintainer Blueflare
 

@@ -35,11 +35,22 @@ archive documents.
 
 ## Docker backend and deployment
 
-- `backend/compose.yml`: frontend, API, worker, PostgreSQL 17, and Valkey 8.
+Runtime sống ở `/opt/docker/stacks/blueflare`, không nằm trong repo — xem
+`docs/adr/ADR-001-tach-stack-runtime-khoi-codebase.md`. Các file dưới đây là **bản chuẩn**
+trong git; thư mục stack giữ bản copy, đồng bộ bằng `deploy/sync-stack.sh`.
+
+- `deploy/compose.yml`: frontend, API, worker, PostgreSQL 18, and Valkey 9. Build context
+  trỏ về codebase qua `${BLUEFLARE_SRC:-/home/ubuntu/blueflare}`.
+- `deploy/sync-stack.sh`: copy compose + script vận hành từ repo sang thư mục stack.
+- `deploy/apply-env.sh`: validate `.env` rồi tạo lại container, không rebuild.
+- `deploy/backup-postgres.sh`: dump Postgres ra `/opt/docker/backups/blueflare/postgres/`.
 - `backend/src/`: provider sync, canonical merge, ViewModels, cache, and signed images.
-- `backend/deploy/phim.bluesia.net.caddy`: public reverse proxy to frontend port 3100.
-- `backend/deploy/img.bluesia.net.caddy`: public reverse proxy to API port 3200.
-- `backend/deploy/cloudflare-frontend-static-rule.json`: optional normal Cloudflare cache rule for immutable `/_next/static/` assets.
+- `deploy/phim.bluesia.net.caddy`: public reverse proxy to frontend port 3100.
+- `deploy/img.bluesia.net.caddy`: public reverse proxy to API port 3200.
+- `deploy/cloudflare-frontend-static-rule.json`: optional normal Cloudflare cache rule for immutable `/_next/static/` assets.
+
+Chỉ tồn tại ở thư mục stack, **không** trong git: `.env` (secret),
+`.env.example` (symlink về `backend/.env.example`), `data/images/` (cache ảnh đã ký, 114 M).
 
 ## Fast search hints
 

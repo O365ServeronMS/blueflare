@@ -4,7 +4,7 @@ export const metadata: Metadata = { title: "Thông tin — Bluesia Cinema" };
 
 export default function SettingsPage() {
   return (
-    <div className="bf-content-width bf-page-gutter pb-16 pt-24 md:pt-28">
+    <div className="bf-content-width bf-page-gutter pb-16 pt-32 lg:pt-28">
       <header className="max-w-3xl">
         <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-silver">Về Blueflare</p>
         <h1 className="mt-2 text-[34px] font-black tracking-tight text-white sm:text-[48px]">Điện ảnh là trung tâm.</h1>

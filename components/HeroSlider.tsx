@@ -1,13 +1,15 @@
 "use client";
 
 import { KeyboardEvent, TouchEvent, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Info, Play } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Info, Plus, Play } from "lucide-react";
 import { ExpandableSynopsis } from "@/components/ExpandableSynopsis";
+import { useFavoriteToggle } from "@/components/LocalMovieActions";
 import type { MovieCard } from "@/lib/types";
 import { hrefWithReturnTo } from "@/lib/navigation";
 import { getDisplayRating } from "@/lib/utils";
 
 const SLIDE_INTERVAL_MS = 7000;
+const EMPTY_MOVIE: MovieCard = { name: "", slug: "", poster: "", thumb: "" };
 
 export function HeroSlider({ items }: { items: MovieCard[] }) {
   const slides = useMemo(
@@ -43,8 +45,10 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
     return () => window.clearInterval(timer);
   }, [slides, interactionTick, synopsisExpanded]);
 
-  if (!slides.length) return null;
   const active = slides[visibleIndex];
+  const { isFavorite, toggle: toggleFavorite } = useFavoriteToggle(active || EMPTY_MOVIE);
+
+  if (!slides.length) return null;
   const heroImage = active.poster || active.thumb;
   const displayRating = getDisplayRating(active);
   const detailHref = hrefWithReturnTo(`/movie/${active.slug}`, "/", "home");
@@ -105,13 +109,13 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
       />
       <div className="bf-hero-overlay absolute inset-0" />
 
-      <div className="bf-content-width bf-page-gutter relative z-10 flex h-full items-end pb-28 md:items-center md:pb-14 md:pt-16">
+      <div className="bf-content-width bf-page-gutter relative z-10 flex h-full flex-col items-center justify-end pb-8 text-center md:items-start md:justify-center md:pb-14 md:pt-16 md:text-left">
         <div className="max-w-[34rem]">
           <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.16em] text-silver">Blueflare nổi bật</p>
           <h1 className="max-w-[12ch] text-[34px] font-black leading-[0.98] tracking-[-0.035em] text-chalk-white sm:text-[46px] md:text-[56px] lg:text-[64px]">
             {heroTitle}
           </h1>
-          <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 text-[13px] font-medium text-chalk-white">
+          <div className="mt-4 flex flex-wrap items-center justify-center gap-x-3 gap-y-2 text-[13px] font-medium text-chalk-white md:justify-start">
             {displayRating ? <span>{displayRating.text}</span> : null}
             {active.year ? <span>{active.year}</span> : null}
             {active.quality ? <span>{active.quality}</span> : null}
@@ -124,7 +128,8 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
             resetKey={active.slug}
             onExpandedChange={setSynopsisExpanded}
           />
-          <div className="mt-6 flex flex-wrap items-center gap-3">
+
+          <div className="mt-6 hidden flex-wrap items-center gap-3 md:flex">
             <a href={playHref} className="inline-flex min-h-11 items-center justify-center gap-2 rounded bg-chalk-white px-5 py-2.5 text-[14px] font-bold text-deep-space transition hover:bg-silver">
               <Play className="h-5 w-5 fill-current" aria-hidden="true" />
               Phát
@@ -132,6 +137,29 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
             <a href={detailHref} className="inline-flex min-h-11 items-center justify-center gap-2 rounded bg-charcoal/80 px-5 py-2.5 text-[14px] font-bold text-chalk-white transition hover:bg-charcoal">
               <Info className="h-5 w-5" aria-hidden="true" />
               Thông tin khác
+            </a>
+          </div>
+
+          <div className="mt-6 flex items-start justify-around gap-4 md:hidden">
+            <button
+              type="button"
+              onClick={toggleFavorite}
+              className="flex flex-col items-center gap-1.5 text-[12px] text-silver"
+            >
+              <span className="grid h-[26px] w-[26px] place-items-center rounded bg-charcoal text-chalk-white">
+                {isFavorite ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+              </span>
+              Danh sách
+            </button>
+            <a href={playHref} className="inline-flex min-h-11 items-center justify-center gap-2 rounded bg-netflix-red px-7 py-2.5 text-[15px] font-bold text-chalk-white">
+              <Play className="h-4 w-4 fill-current" aria-hidden="true" />
+              Play
+            </a>
+            <a href={detailHref} className="flex flex-col items-center gap-1.5 text-[12px] text-silver">
+              <span className="grid h-[26px] w-[26px] place-items-center rounded bg-charcoal text-chalk-white">
+                <Info className="h-3.5 w-3.5" />
+              </span>
+              Info
             </a>
           </div>
         </div>

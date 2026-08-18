@@ -79,7 +79,7 @@ export function GlobalNav({ initialPathname = "/", initialSearch = "" }: { initi
               fill="var(--color-netflix-red)"
             />
           </svg>
-          <span className="bf-brand text-[19px] font-black tracking-[-0.04em] text-netflix-red md:text-[22px]">BLUEFLARE</span>
+          <span className="text-[19px] font-black tracking-[-0.04em] text-netflix-red md:text-[22px]">BLUEFLARE</span>
         </a>
 
         <div className="hidden min-w-0 items-center gap-4 lg:flex">
@@ -131,6 +131,24 @@ export function GlobalNav({ initialPathname = "/", initialSearch = "" }: { initi
           </button>
         </div>
       </nav>
+
+      {!menuOpen && !searchOpen ? (
+        <div className="bf-page-gutter flex items-center gap-6 overflow-x-auto pb-3 lg:hidden" aria-label="Danh mục chính">
+          {primaryItems.slice(0, 3).map((item) => (
+            <a
+              key={item.key}
+              href={item.href}
+              aria-current={activeKey === item.key ? "page" : undefined}
+              className={cn(
+                "shrink-0 text-[14px] font-medium text-silver transition-colors",
+                activeKey === item.key && "text-chalk-white"
+              )}
+            >
+              {item.label}
+            </a>
+          ))}
+        </div>
+      ) : null}
 
       {searchOpen ? (
         <div className="bf-content-width bf-page-gutter border-t border-white/10 bg-black pb-5 pt-4">

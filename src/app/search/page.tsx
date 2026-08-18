@@ -35,7 +35,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Searc
   }
 
   return (
-    <div className="bf-content-width pb-10 pt-24 md:pt-28">
+    <div className="bf-content-width pb-10 pt-32 lg:pt-28">
       <header className="bf-page-gutter">
         <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-silver">Blueflare search</p>
         <h1 className="mt-2 text-[32px] font-black tracking-tight text-chalk-white sm:text-[44px]">{keyword ? `Kết quả cho “${keyword}”` : "Tìm kiếm phim"}</h1>

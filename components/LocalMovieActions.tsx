@@ -71,17 +71,23 @@ export function useLocalMovies(key: "favorites" | "history") {
   return { items, setItems: (next: StoredMovie[]) => write(storageKey, next) };
 }
 
-export function MovieActions({ movie }: { movie: MovieCard }) {
+export function useFavoriteToggle(movie: MovieCard) {
   const favorites = useStoredMovies(FAV_KEY, LEGACY_FAV_KEY);
   const isFavorite = useMemo(() => favorites.some((item) => item.slug === movie.slug), [favorites, movie.slug]);
 
-  const toggleFavorite = () => {
+  const toggle = () => {
     const current = read(FAV_KEY, LEGACY_FAV_KEY);
     const next = current.some((item) => item.slug === movie.slug)
       ? current.filter((item) => item.slug !== movie.slug)
       : [{ ...movie, savedAt: Date.now() }, ...current];
     write(FAV_KEY, next);
   };
+
+  return { isFavorite, toggle };
+}
+
+export function MovieActions({ movie }: { movie: MovieCard }) {
+  const { isFavorite, toggle: toggleFavorite } = useFavoriteToggle(movie);
 
   return (
     <div className="flex flex-wrap gap-2">

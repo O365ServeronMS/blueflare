@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Archivo, Inter } from "next/font/google";
+import { Inter } from "next/font/google";
 import { GlobalNav } from "@/components/GlobalNav";
 import { ImageFallbackHandler } from "@/src/app/image-fallback-handler";
 import "@/src/styles/globals.css";
@@ -10,18 +10,6 @@ import "@/src/styles/globals.css";
 const inter = Inter({
   subsets: ["latin", "vietnamese"],
   variable: "--font-inter",
-  display: "swap"
-});
-
-// Display face for the Top-10 numerals only. Netflix Sans is "slightly
-// condensed and geometric" (DESIGN.md) and Inter is neither, which left the
-// numerals reading too wide. Archivo is a geometric grotesque carrying a width
-// axis, so the numerals can be narrowed to match. Latin subset only — this is
-// used for digits and nothing else.
-const archivo = Archivo({
-  subsets: ["latin"],
-  axes: ["wdth"],
-  variable: "--font-display",
   display: "swap"
 });
 
@@ -41,7 +29,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="vi" data-scroll-behavior="smooth" className={`${inter.variable} ${archivo.variable}`}>
+    <html lang="vi" data-scroll-behavior="smooth" className={inter.variable}>
       <body className="min-h-screen bg-deep-space text-chalk-white antialiased">
         <GlobalNav />
         <ImageFallbackHandler />

@@ -130,7 +130,7 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
           />
 
           <div className="mt-6 hidden flex-wrap items-center gap-3 md:flex">
-            <a href={playHref} className="inline-flex min-h-11 items-center justify-center gap-2 rounded bg-chalk-white px-5 py-2.5 text-[14px] font-bold text-deep-space transition hover:bg-silver">
+            <a href={playHref} className="bf-play-cta">
               <Play className="h-5 w-5 fill-current" aria-hidden="true" />
               Phát
             </a>
@@ -151,7 +151,7 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
               </span>
               Danh sách
             </button>
-            <a href={playHref} className="inline-flex min-h-11 items-center justify-center gap-2 rounded bg-netflix-red px-7 py-2.5 text-[15px] font-bold text-chalk-white">
+            <a href={playHref} className="bf-play-cta">
               <Play className="h-4 w-4 fill-current" aria-hidden="true" />
               Play
             </a>

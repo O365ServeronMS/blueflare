@@ -78,7 +78,7 @@ export function MovieCard({
                 {displayRating ? <span>{displayRating.score.toFixed(1)}</span> : null}
               </p>
             </div>
-            <span className="hidden h-9 w-9 shrink-0 place-items-center rounded-full bg-chalk-white text-deep-space transition group-hover:grid group-focus-visible:grid">
+            <span className="hidden h-9 w-9 shrink-0 place-items-center rounded-full bg-netflix-red text-chalk-white transition group-hover:grid group-focus-visible:grid">
               <Play className="ml-0.5 h-4 w-4 fill-current" aria-hidden="true" />
             </span>
           </div>

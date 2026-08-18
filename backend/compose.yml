@@ -84,6 +84,9 @@ services:
       context: ..
       dockerfile: Dockerfile.frontend
     restart: unless-stopped
+    # Lets FEATURE_*/HOME_SECTION_LIMIT flags reach the frontend at runtime;
+    # the fixed values below still take precedence over anything set in .env.
+    env_file: ${BLUEFLARE_ENV_FILE:-.env}
     environment:
       NODE_ENV: production
       INTERNAL_CATALOG_URL: http://api:3200

@@ -38,7 +38,7 @@ async function revalidateFrontend(tags) {
         'x-blueflare-revalidate': config.frontendRevalidateSecret
       },
       body: JSON.stringify({ tags }),
-      signal: AbortSignal.timeout(5000)
+      signal: AbortSignal.timeout(config.revalidateTimeoutMs)
     });
     if (!response.ok) console.warn('[worker] frontend revalidation failed status=' + response.status);
   } catch (error) {
@@ -48,6 +48,12 @@ async function revalidateFrontend(tags) {
 
 const providers = [new NguoncProvider(), new KkphimProvider()];
 let stopping = false;
+let lastBackfillRunAt = 0;
+
+function providersFor(names) {
+  const allow = new Set(names.map((name) => String(name).toLowerCase()));
+  return providers.filter((provider) => allow.has(provider.name.toLowerCase()));
+}
 
 async function mapLimit(items, limit, callback) {
   const results = new Array(items.length);
@@ -161,6 +167,10 @@ async function syncBackfill(provider) {
   try {
     for (let index = 0; index < config.backfillPagesPerRun; index += 1) {
       if (stopping) break;
+      if (config.backfillEndPage > 0 && page > config.backfillEndPage) {
+        await saveCrawlCheckpoint(provider.name, 'backfill', { nextPage: page, completed: true });
+        return { imported, failed, status, completed: true, changedSlugs };
+      }
       const result = await syncPage(provider, page);
       imported += result.imported;
       failed += result.failed;
@@ -175,6 +185,9 @@ async function syncBackfill(provider) {
       });
       if (completed) return { imported, failed, status, completed: true, changedSlugs };
       page += 1;
+      if (config.backfillCooldownMs > 0 && index < config.backfillPagesPerRun - 1 && !stopping) {
+        await new Promise((resolve) => setTimeout(resolve, config.backfillCooldownMs));
+      }
     }
   } catch (error) {
     await recordCrawlCheckpointFailure(provider.name, 'backfill', error).catch(() => {});
@@ -185,37 +198,42 @@ async function syncBackfill(provider) {
 
 async function syncProvider(provider) {
   const started = Date.now();
-  let imported = 0;
-  let failed = 0;
-  let lastStatus = 200;
-  const changedSlugs = [];
   try {
     const head = await syncHead(provider);
-    imported += head.imported;
-    failed += head.failed;
-    changedSlugs.push(...head.changedSlugs);
-    lastStatus = head.status;
-    const backfill = await syncBackfill(provider);
-    imported += backfill.imported;
-    failed += backfill.failed;
-    changedSlugs.push(...backfill.changedSlugs);
-    lastStatus = backfill.status || lastStatus;
-    await recordProviderSuccess(provider.name, Date.now() - started, lastStatus, failed);
+    await recordProviderSuccess(provider.name, Date.now() - started, head.status, head.failed);
     console.log(
-      '[worker] ' + provider.name + ' head+backfill imported=' + imported +
-      ' detailFailures=' + failed + ' durationMs=' + (Date.now() - started)
+      '[worker] ' + provider.name + ' head imported=' + head.imported +
+      ' detailFailures=' + head.failed + ' durationMs=' + (Date.now() - started)
     );
-    return { imported, failed, changedSlugs };
+    return head;
   } catch (error) {
     await recordProviderFailure(provider.name, error).catch(() => {});
     console.error('[worker] ' + provider.name + ' sync failed', error);
-    return { imported, failed: failed + 1, error, changedSlugs };
+    return { imported: 0, failed: 1, error, changedSlugs: [] };
   }
 }
 
+async function runBackfillPass() {
+  const results = [];
+  for (const provider of providersFor(config.backfillProviders)) {
+    if (stopping) break;
+    const started = Date.now();
+    try {
+      const result = await syncBackfill(provider);
+      results.push(result);
+      console.log(
+        '[worker] ' + provider.name + ' backfill imported=' + result.imported +
+        ' detailFailures=' + result.failed + ' durationMs=' + (Date.now() - started)
+      );
+    } catch (error) {
+      console.error('[worker] ' + provider.name + ' backfill failed', error);
+    }
+  }
+  return results;
+}
 
 async function refreshHeroTrendingIfDue() {
-  if (!config.tmdbApiKey) return;
+  if (!config.tmdbEnabled || !config.tmdbApiKey) return;
   const state = await getHeroTrendingRefreshState();
   const lastSuccessAt = Date.parse(state?.last_success_at || '');
   if (Number.isFinite(lastSuccessAt) && Date.now() - lastSuccessAt < config.heroTrendingRefreshMs) return;
@@ -253,10 +271,8 @@ async function refreshHeroTrendingIfDue() {
   }
 }
 
-async function syncCycle() {
-  const results = [];
 async function refreshTmdbImages() {
-  if (!config.tmdbApiKey) return [];
+  if (!config.tmdbEnabled || !config.tmdbImageSyncEnabled || !config.tmdbApiKey) return [];
   const candidates = await listTmdbImageCandidates();
   const results = await mapLimit(candidates, config.tmdbImageSyncConcurrency, async (movie) => {
     try {
@@ -283,7 +299,7 @@ async function refreshTmdbImages() {
  * exact match is accepted, so most candidates are expected to be declined.
  */
 async function refreshTmdbImageFallbacks() {
-  if (!config.tmdbApiKey) return [];
+  if (!config.tmdbEnabled || !config.tmdbImageFallbackEnabled || !config.tmdbApiKey) return [];
   const candidates = await listTmdbImageFallbackCandidates();
   if (!candidates.length) return [];
 
@@ -310,19 +326,29 @@ async function refreshTmdbImageFallbacks() {
   return results.filter(Boolean).map((movie) => movie.canonical_slug);
 }
 
-  for (const provider of providers) {
-    if (stopping) break;
-    results.push(await syncProvider(provider));
+async function syncCycle() {
+  const headResults = [];
+  if (config.syncEnabled) {
+    for (const provider of providersFor(config.syncProviders)) {
+      if (stopping) break;
+      headResults.push(await syncProvider(provider));
+    }
   }
 
-  const imported = results.reduce((sum, result) => sum + result.imported, 0);
+  let backfillResults = [];
+  if (config.backfillEnabled && !stopping && Date.now() - lastBackfillRunAt >= config.backfillIntervalMs) {
+    lastBackfillRunAt = Date.now();
+    backfillResults = await runBackfillPass();
+  }
+
   const tmdbImageSlugs = await refreshTmdbImages();
   const tmdbFallbackSlugs = await refreshTmdbImageFallbacks().catch((error) => {
     console.warn('[worker] tmdb image fallback pass failed', error.message);
     return [];
   });
   const changedSlugs = [...new Set([
-    ...results.flatMap((result) => result.changedSlugs),
+    ...headResults.flatMap((result) => result.changedSlugs),
+    ...backfillResults.flatMap((result) => result.changedSlugs),
     ...tmdbImageSlugs,
     ...tmdbFallbackSlugs
   ])];
@@ -332,8 +358,8 @@ async function refreshTmdbImageFallbacks() {
       return [];
     });
     const keys = ['home'];
-    for (const type of ['phim-moi-cap-nhat', 'phim-le', 'phim-bo', 'hoat-hinh', 'tv-shows']) {
-      for (let currentPage = 1; currentPage <= 3; currentPage += 1) keys.push('list:' + type + ':' + currentPage);
+    for (const type of config.invalidateListTypes) {
+      for (let currentPage = 1; currentPage <= config.invalidatePageDepth; currentPage += 1) keys.push('list:' + type + ':' + currentPage);
     }
     for (const movieSlug of changedSlugs) keys.push('movie:' + movieSlug);
     for (const movie of changedMovies) {
@@ -342,14 +368,14 @@ async function refreshTmdbImageFallbacks() {
           const slug = String(item?.slug || "").trim().toLowerCase();
           if (!slug) continue;
           const prefix = field === movie.genres ? 'genre:' : 'country:';
-          for (let currentPage = 1; currentPage <= 3; currentPage += 1) keys.push(prefix + slug + ':' + currentPage);
+          for (let currentPage = 1; currentPage <= config.invalidatePageDepth; currentPage += 1) keys.push(prefix + slug + ':' + currentPage);
         }
       }
     }
     await invalidateResponseKeys(keys);
     const tags = ['home', 'list'];
-    for (const type of ['phim-moi-cap-nhat', 'phim-le', 'phim-bo', 'hoat-hinh', 'tv-shows']) tags.push('list:' + type);
-    for (let currentPage = 1; currentPage <= 3; currentPage += 1) tags.push('page:' + currentPage);
+    for (const type of config.invalidateListTypes) tags.push('list:' + type);
+    for (let currentPage = 1; currentPage <= config.invalidatePageDepth; currentPage += 1) tags.push('page:' + currentPage);
     tags.push(...changedSlugs.map((movieSlug) => 'movie:' + movieSlug));
     for (const movie of changedMovies) {
       for (const field of [movie.genres, movie.countries]) {

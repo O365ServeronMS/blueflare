@@ -39,3 +39,10 @@ CLAUDE.md
 
 # Local Blueflare signed-image cache
 backend/data/images/
+
+# Claude Code local state and worktrees (multi-GB if left untracked)
+.claude/
+.codex/
+
+# Astro content-collection cache (legacy stack)
+.astro/

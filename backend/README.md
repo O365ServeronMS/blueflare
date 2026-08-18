@@ -34,7 +34,7 @@ The API is published only on 127.0.0.1:3200. Caddy is the public TLS boundary.
 
 Create the runtime environment:
 
-    cd /home/ubuntu/blueflare/backend
+    cd /opt/docker/stacks/blueflare/backend
     cp .env.example .env
 
 Replace POSTGRES_PASSWORD and IMAGE_SIGNING_SECRET with independent random
@@ -89,7 +89,7 @@ Append deploy/img.bluesia.net.caddy to /etc/caddy/Caddyfile, format, validate,
 and reload:
 
 	# Run once; do not append a duplicate block on later deployments.
-	cd /home/ubuntu/blueflare
+	cd /opt/docker/stacks/blueflare
 	sudo tee -a /etc/caddy/Caddyfile < backend/deploy/img.bluesia.net.caddy
     sudo caddy fmt --overwrite /etc/caddy/Caddyfile
     sudo caddy validate --config /etc/caddy/Caddyfile
@@ -111,7 +111,7 @@ to that port; no static directory or rewrite file is used.
 
 Build and restart only the frontend service during a release:
 
-    cd /home/ubuntu/blueflare/backend
+    cd /opt/docker/stacks/blueflare/backend
     sudo docker compose --env-file .env -f compose.yml up -d --build frontend
     sudo docker compose --env-file .env -f compose.yml ps frontend
     curl -fsS http://127.0.0.1:3100/healthz
@@ -183,7 +183,7 @@ availability, raw metadata, streams, and success timestamps.
 
 ## Verification
 
-    cd /home/ubuntu/blueflare/backend
+    cd /opt/docker/stacks/blueflare/backend
     npm test
     sudo docker compose --env-file .env -f compose.yml logs --tail=100 worker
     curl -fsS http://127.0.0.1:3200/api/home-data

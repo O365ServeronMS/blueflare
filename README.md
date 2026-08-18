@@ -55,7 +55,7 @@ sudo docker compose --env-file .env -f compose.yml up -d --build
 No Worker here — just rebuild the container:
 
 ```bash
-cd /home/ubuntu/blueflare/backend
+cd /opt/docker/stacks/blueflare/backend
 sudo docker compose --env-file .env -f compose.yml up -d --build frontend
 sudo docker compose --env-file .env -f compose.yml ps frontend
 curl -fsS http://127.0.0.1:3100/healthz

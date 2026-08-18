@@ -222,6 +222,9 @@ button, a { -webkit-tap-highlight-color: transparent; }
 @media (orientation: landscape) and (max-height: 560px) {
   .watch-header { padding-block: 6px; }
   .watch-header-copy { display: flex; align-items: baseline; gap: 8px; }
+  /* Short-landscape phones: the persistent category strip costs too much
+     vertical space here — fall back to the hamburger drawer for nav. */
+  .bf-mobile-tabs { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

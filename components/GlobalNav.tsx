@@ -133,7 +133,7 @@ export function GlobalNav({ initialPathname = "/", initialSearch = "" }: { initi
       </nav>
 
       {!menuOpen && !searchOpen ? (
-        <div className="bf-page-gutter flex items-center gap-6 overflow-x-auto pb-3 lg:hidden" aria-label="Danh mục chính">
+        <div className="bf-mobile-tabs bf-page-gutter flex items-center gap-6 overflow-x-auto pb-3 lg:hidden" aria-label="Danh mục chính">
           {primaryItems.slice(0, 3).map((item) => (
             <a
               key={item.key}

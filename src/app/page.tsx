@@ -11,10 +11,25 @@ export const metadata = {
 export default async function HomePage() {
   await connection();
   const home = await getHomeServer();
+  // Same up-to-24-item shortlist the hero slider rotates through — the
+  // trending row below reuses it as-is instead of fetching or rendering
+  // anything new.
+  const heroItems = home.hero.filter((movie) => movie.slug && (movie.poster || movie.thumb)).slice(0, 24);
   return (
     <>
-      <HeroSlider items={home.hero} />
+      <HeroSlider items={heroItems} />
       <div className="pb-6">
+        {heroItems.length ? (
+          <SectionRow
+            title="Phim đang được xem nhiều"
+            href="/list/phim-moi-cap-nhat"
+            items={heroItems}
+            returnTo="/"
+            spotlight
+            ranked
+            itemLimit={heroItems.length}
+          />
+        ) : null}
         {home.sections.map((section, index) => (
           <SectionRow
             key={section.href || index}
@@ -22,7 +37,7 @@ export default async function HomePage() {
             href={section.href}
             items={section.items}
             returnTo="/"
-            spotlight={index === 0}
+            spotlight={index === 0 && !heroItems.length}
             itemLimit={section.href === "/list/phim-moi-cap-nhat" ? 24 : 16}
           />
         ))}

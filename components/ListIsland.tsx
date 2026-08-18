@@ -90,7 +90,7 @@ export function ListIsland({ type, returnTo: initialReturnTo = "" }: { type: str
 
   if (error) {
     return (
-      <section className="bf-content-width bf-page-gutter flex min-h-[70vh] items-center pt-20">
+      <section className="bf-content-width bf-page-gutter flex min-h-[70vh] items-center pt-28">
         <div>
           <p className="text-[12px] font-bold uppercase tracking-[0.14em] text-netflix-red">Không thể tải danh mục</p>
           <h1 className="mt-3 text-[34px] font-black text-chalk-white">Thư viện đang gián đoạn.</h1>
@@ -124,7 +124,7 @@ export function ListIsland({ type, returnTo: initialReturnTo = "" }: { type: str
 
   if (!data) {
     return (
-      <div className="bf-content-width bf-page-gutter pb-16 pt-28" aria-busy="true">
+      <div className="bf-content-width bf-page-gutter pb-16 pt-32 lg:pt-28" aria-busy="true">
         <div className="h-9 w-56 animate-pulse rounded bg-graphite" />
         <div className="mt-8 grid grid-cols-2 gap-x-3 gap-y-7 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7">
           {[...Array(18)].map((_, index) => <div key={index} className="aspect-[2/3] animate-pulse rounded bg-graphite" />)}
@@ -138,7 +138,7 @@ export function ListIsland({ type, returnTo: initialReturnTo = "" }: { type: str
   const displayTitle = [typeTitles[type] || data.title, activeCountryName, activeCategoryName].filter(Boolean).join(" · ");
 
   return (
-    <div className="bf-content-width pb-10 pt-24 md:pt-28">
+    <div className="bf-content-width pb-10 pt-32 lg:pt-28">
       <header className="bf-page-gutter">
         <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-silver">Khám phá Blueflare</p>
         <h1 className="mt-2 text-[32px] font-black tracking-tight text-chalk-white sm:text-[44px]">{displayTitle}</h1>

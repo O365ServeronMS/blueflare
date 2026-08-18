@@ -34,7 +34,7 @@ export function HomeIsland({
 
   if (error) {
     return (
-      <section className="flex min-h-[560px] items-end bg-deep-space bf-page-gutter pb-20 pt-24">
+      <section className="flex min-h-[560px] items-end bg-deep-space bf-page-gutter pb-20 pt-32 lg:pt-24">
         <div className="max-w-xl">
           <p className="text-[12px] font-bold uppercase tracking-[0.14em] text-netflix-red">Mất kết nối thư viện</p>
           <h1 className="mt-3 text-[36px] font-black leading-tight tracking-tight text-chalk-white sm:text-[52px]">Rạp phim đang tạm nghỉ.</h1>
@@ -78,7 +78,8 @@ export function HomeIsland({
             items={section.items}
             returnTo={returnTo}
             spotlight={index === 0}
-            itemLimit={section.href === "/list/phim-moi-cap-nhat" ? 24 : 16}
+            ranked={index === 0}
+            itemLimit={index === 0 ? 10 : section.href === "/list/phim-moi-cap-nhat" ? 24 : 16}
           />
         ))}
       </div>

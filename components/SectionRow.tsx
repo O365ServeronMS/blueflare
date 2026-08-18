@@ -53,7 +53,7 @@ export function SectionRow({
       <div ref={trackRef} className="bf-rail-track flex snap-x snap-mandatory gap-1.5 overflow-x-auto px-[var(--bf-page-gutter)] pb-4 pt-1 sm:gap-2" tabIndex={0}>
         {items.slice(0, itemLimit).map((movie, index) => (
           <div key={movie.slug} className="relative w-[32vw] min-w-[124px] max-w-[190px] shrink-0 snap-start sm:w-[22vw] lg:w-[13vw]">
-            {ranked ? <span className="bf-rank pointer-events-none absolute -bottom-2.5 -left-1 z-10">{index + 1}</span> : null}
+            {ranked ? <span className="bf-rank pointer-events-none absolute -bottom-2.5 -left-1 z-30">{index + 1}</span> : null}
             <MovieCard movie={movie} compact returnTo={returnTo} />
           </div>
         ))}

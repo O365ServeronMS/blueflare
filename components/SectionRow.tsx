@@ -32,7 +32,7 @@ export function SectionRow({
   }
 
   return (
-    <section className={spotlight ? "relative z-20 -mt-16 pb-3 md:-mt-20" : "relative mt-7 pb-3 md:mt-10"} aria-labelledby={`rail-${title.replace(/\s+/g, "-").toLowerCase()}`}>
+    <section className={spotlight ? "relative z-20 mt-6 pb-3 md:-mt-20" : "relative mt-7 pb-3 md:mt-10"} aria-labelledby={`rail-${title.replace(/\s+/g, "-").toLowerCase()}`}>
       <div className="bf-content-width bf-page-gutter mb-3 flex items-end justify-between gap-4">
         <a href={href} className="group inline-flex min-w-0 items-center gap-2">
           <h2 id={`rail-${title.replace(/\s+/g, "-").toLowerCase()}`} className="line-clamp-1 text-[17px] font-bold leading-tight text-chalk-white md:text-[20px]">

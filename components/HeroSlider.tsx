@@ -123,7 +123,7 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
           </div>
           <ExpandableSynopsis
             text={active.content}
-            className="mt-4 max-w-[32rem]"
+            className="mt-4 max-w-[32rem] text-left"
             copyClassName="text-[14px] leading-6 text-silver md:text-[15px]"
             resetKey={active.slug}
             onExpandedChange={setSynopsisExpanded}

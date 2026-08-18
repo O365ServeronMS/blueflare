@@ -109,13 +109,13 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
       />
       <div className="bf-hero-overlay absolute inset-0" />
 
-      <div className="bf-content-width bf-page-gutter relative z-10 flex h-full flex-col items-center justify-end pb-8 text-center md:items-start md:justify-center md:pb-14 md:pt-16 md:text-left">
+      <div className="bf-content-width bf-page-gutter relative z-10 flex h-full flex-col items-start justify-end pb-8 md:justify-center md:pb-14 md:pt-16">
         <div className="max-w-[34rem]">
           <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.16em] text-silver">Blueflare nổi bật</p>
           <h1 className="max-w-[12ch] text-[34px] font-black leading-[0.98] tracking-[-0.035em] text-chalk-white sm:text-[46px] md:text-[56px] lg:text-[64px]">
             {heroTitle}
           </h1>
-          <div className="mt-4 flex flex-wrap items-center justify-center gap-x-3 gap-y-2 text-[13px] font-medium text-chalk-white md:justify-start">
+          <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 text-[13px] font-medium text-chalk-white">
             {displayRating ? <span>{displayRating.text}</span> : null}
             {active.year ? <span>{active.year}</span> : null}
             {active.quality ? <span>{active.quality}</span> : null}
@@ -123,7 +123,7 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
           </div>
           <ExpandableSynopsis
             text={active.content}
-            className="mt-4 max-w-[32rem] text-left"
+            className="mt-4 max-w-[32rem]"
             copyClassName="text-[14px] leading-6 text-silver md:text-[15px]"
             resetKey={active.slug}
             onExpandedChange={setSynopsisExpanded}
@@ -140,7 +140,7 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
             </a>
           </div>
 
-          <div className="mt-6 flex items-start justify-around gap-4 md:hidden">
+          <div className="mt-6 flex items-start gap-6 md:hidden">
             <button
               type="button"
               onClick={toggleFavorite}

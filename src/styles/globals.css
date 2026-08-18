@@ -79,22 +79,27 @@ body {
 /* Posters/backdrops render at their real, full color — no filter is ever
    applied to img[data-movie-poster]. */
 
-/* Trending rank numeral — the "Netflix Top 10" glossy embossed numeral:
-   a grey-to-black gradient fill clipped to the glyph, with a crisp white
-   outline, rather than a flat silhouette. */
+/* Trending rank numeral — the "Netflix Top 10" glossy embossed numeral, seated
+   in the poster's bottom-left corner: a grey-to-black gradient fill clipped to
+   the glyph with a crisp white outline, rather than a flat silhouette.
+   Sized against the poster frame (container query) so it stays proportional at
+   every breakpoint instead of tracking the viewport. */
+.bf-poster-frame { container-type: inline-size; }
+
 .bf-rank {
-  font-size: 64px;
+  display: block;
+  font-size: 64px; /* fallback where container queries are unavailable */
+  font-size: 40cqw;
   font-weight: 900;
   line-height: 0.78;
   letter-spacing: -0.04em;
-  background: linear-gradient(180deg, #7a7a7a 0%, #141414 55%, #000000 100%);
+  background: linear-gradient(180deg, #8a8a8a 0%, #1a1a1a 58%, #000000 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
   -webkit-text-stroke: 3px #fff;
-}
-@media (min-width: 1024px) {
-  .bf-rank { font-size: 100px; -webkit-text-stroke: 4px #fff; }
+  -webkit-text-stroke: 1.8cqw #fff;
+  paint-order: stroke fill;
 }
 
 a { text-decoration: none; }

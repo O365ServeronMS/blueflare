@@ -22,13 +22,23 @@ const utilityItems = [
   { href: "/settings", label: "Cài đặt", icon: Settings },
 ];
 
-export function GlobalNav({ initialPathname = "/", initialSearch = "" }: { initialPathname?: string; initialSearch?: string }) {
+type GlobalNavProps = {
+  initialPathname?: string;
+  initialSearch?: string;
+  featureSearch?: boolean;
+  featureLocalLibrary?: boolean;
+};
+
+export function GlobalNav({ initialPathname = "/", initialSearch = "", featureSearch = true, featureLocalLibrary = true }: GlobalNavProps) {
   const [pathname, setPathname] = useState(initialPathname);
   const [search, setSearch] = useState(initialSearch);
   const [scrolled, setScrolled] = useState(initialPathname !== "/");
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const activeKey = getActiveNavKey(pathname, search);
+  const visibleUtilityItems = featureLocalLibrary
+    ? utilityItems
+    : utilityItems.filter((item) => item.href !== "/favorites" && item.href !== "/history");
 
   useEffect(() => {
     function syncLocation() {
@@ -96,18 +106,20 @@ export function GlobalNav({ initialPathname = "/", initialSearch = "" }: { initi
         </div>
 
         <div className="ml-auto flex items-center">
-          <button
-            type="button"
-            aria-label={searchOpen ? "Đóng tìm kiếm" : "Mở tìm kiếm"}
-            aria-expanded={searchOpen}
-            onClick={() => { setSearchOpen((open) => !open); setMenuOpen(false); }}
-            className="grid h-11 w-11 place-items-center text-chalk-white transition-colors hover:text-silver"
-          >
-            {searchOpen ? <X className="h-5 w-5" /> : <Search className="h-5 w-5" />}
-          </button>
+          {featureSearch ? (
+            <button
+              type="button"
+              aria-label={searchOpen ? "Đóng tìm kiếm" : "Mở tìm kiếm"}
+              aria-expanded={searchOpen}
+              onClick={() => { setSearchOpen((open) => !open); setMenuOpen(false); }}
+              className="grid h-11 w-11 place-items-center text-chalk-white transition-colors hover:text-silver"
+            >
+              {searchOpen ? <X className="h-5 w-5" /> : <Search className="h-5 w-5" />}
+            </button>
+          ) : null}
 
           <div className="hidden items-center md:flex">
-            {utilityItems.map((item) => {
+            {visibleUtilityItems.map((item) => {
               const Icon = item.icon;
               return (
                 <a key={item.href} href={item.href} aria-label={item.label} className="grid h-11 w-10 place-items-center text-silver transition-colors hover:text-chalk-white">
@@ -129,7 +141,7 @@ export function GlobalNav({ initialPathname = "/", initialSearch = "" }: { initi
         </div>
       </nav>
 
-      {searchOpen ? (
+      {featureSearch && searchOpen ? (
         <div className="bf-content-width bf-page-gutter border-t border-white/10 bg-black pb-5 pt-4">
           <div className="ml-auto max-w-xl">
             <SearchSuggest autoFocus />
@@ -156,7 +168,7 @@ export function GlobalNav({ initialPathname = "/", initialSearch = "" }: { initi
             ))}
           </div>
           <div className="mt-3 grid grid-cols-3 gap-2">
-            {utilityItems.map((item) => {
+            {visibleUtilityItems.map((item) => {
               const Icon = item.icon;
               return (
                 <a key={item.href} href={item.href} onClick={closePanels} className="flex min-h-11 items-center justify-center gap-2 rounded px-2 text-[12px] font-medium text-silver hover:bg-graphite hover:text-chalk-white">

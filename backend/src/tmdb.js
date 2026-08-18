@@ -10,7 +10,7 @@ export async function fetchTrendingMovieIds(options = {}) {
   const baseUrl = String(options.baseUrl ?? config.tmdbBaseUrl).replace(/\/$/, '');
   const language = String(options.language ?? config.tmdbTrendingLanguage).trim();
   const pages = Math.max(1, Math.floor(options.pages ?? config.heroTrendingCandidatePages));
-  const timeoutMs = Math.max(1000, Math.floor(options.timeoutMs ?? 5000));
+  const timeoutMs = Math.max(1000, Math.floor(options.timeoutMs ?? config.tmdbRequestTimeoutMs));
   const fetchImpl = options.fetchImpl || fetch;
 
   if (!apiKey) throw new Error('TMDB API key is not configured');
@@ -62,7 +62,7 @@ async function fetchTmdb(path, options = {}) {
   const apiKey = String(options.apiKey ?? config.tmdbApiKey).trim();
   const baseUrl = String(options.baseUrl ?? config.tmdbBaseUrl).replace(/\/$/, '');
   const language = String(options.language ?? config.tmdbTrendingLanguage).trim();
-  const timeoutMs = Math.max(1000, Math.floor(options.timeoutMs ?? 5000));
+  const timeoutMs = Math.max(1000, Math.floor(options.timeoutMs ?? config.tmdbRequestTimeoutMs));
   const fetchImpl = options.fetchImpl || fetch;
   if (!apiKey) throw new Error('TMDB API key is not configured');
   if (!baseUrl.startsWith('https://')) throw new Error('TMDB base URL must use HTTPS');

@@ -1,7 +1,17 @@
 import type { Metadata } from "next";
+import { Inter } from "next/font/google";
 import { GlobalNav } from "@/components/GlobalNav";
 import { ImageFallbackHandler } from "@/src/app/image-fallback-handler";
 import "@/src/styles/globals.css";
+
+// Netflix Sans stand-in named by DESIGN.md. Self-hosted by next/font, so the
+// real weight 900 is available — without it the browser synthesizes a faux
+// bold from the system fallback and heavy type (the Top-10 numerals) is wrong.
+const inter = Inter({
+  subsets: ["latin", "vietnamese"],
+  variable: "--font-inter",
+  display: "swap"
+});
 
 export const viewport = { themeColor: "#000000" };
 
@@ -19,7 +29,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="vi" data-scroll-behavior="smooth">
+    <html lang="vi" data-scroll-behavior="smooth" className={inter.variable}>
       <body className="min-h-screen bg-deep-space text-chalk-white antialiased">
         <GlobalNav />
         <ImageFallbackHandler />

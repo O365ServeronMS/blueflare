@@ -1,7 +1,8 @@
+@import url("https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&display=swap");
 @import "tailwindcss";
 
 @theme {
-  --color-netflix-red: #e50914;
+  --color-netflix-red: #ec3013;
   --color-feature-card-gradient: #1d153f;
   --color-deep-space: #000000;
   --color-graphite: #2d2d2d;
@@ -12,6 +13,7 @@
   --color-chalk-white: #ffffff;
   --color-luxury-gold: #d4af37;
   --font-sans: Inter, Roboto, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-heading: "Archivo", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --text-caption: 13px;
   --leading-caption: 1.5;
   --text-body: 16px;
@@ -38,7 +40,7 @@
   --bf-text-primary: #ffffff;
   --bf-text-secondary: #b3b3b3;
   --bf-text-tertiary: #808080;
-  --bf-accent: #e50914;
+  --bf-accent: #ec3013;
   --bf-page-gutter: clamp(16px, 4vw, 72px);
   --bf-nav-height: 64px;
   --bf-motion-fast: 160ms;
@@ -75,6 +77,10 @@ body {
   color: var(--bf-text-primary);
   font-family: Inter, Roboto, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
+
+h1, h2, h3, h4, h5, h6 { font-family: var(--font-heading); font-weight: 800; }
+.bf-brand { font-family: var(--font-heading); font-weight: 800; }
+img[data-movie-poster] { filter: grayscale(1) contrast(1.08); }
 
 a { text-decoration: none; }
 button, input, select, textarea { font: inherit; }
@@ -113,8 +119,8 @@ button, a { -webkit-tap-highlight-color: transparent; }
   gap: 0.5rem;
   border-radius: 0.25rem;
   padding: 0.75rem 1.75rem;
-  background: linear-gradient(180deg, #f6121d 0%, var(--color-netflix-red) 58%, #b20710 100%);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.18) inset, 0 14px 30px -14px rgba(229, 9, 20, 0.95);
+  background: linear-gradient(180deg, #ff5b3a 0%, var(--color-netflix-red) 58%, #8f1b06 100%);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.18) inset, 0 14px 30px -14px rgba(236, 48, 19, 0.95);
   color: #fff;
   font-size: 14px;
   font-weight: 700;
@@ -124,8 +130,8 @@ button, a { -webkit-tap-highlight-color: transparent; }
 
 @media (hover: hover) and (pointer: fine) {
   .bf-play-cta:hover {
-    background: linear-gradient(180deg, #ff2a33 0%, #f6121d 58%, #c30812 100%);
-    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.22) inset, 0 18px 36px -14px rgba(229, 9, 20, 1);
+    background: linear-gradient(180deg, #ff7a52 0%, #ff5b3a 58%, #b52a0d 100%);
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.22) inset, 0 18px 36px -14px rgba(236, 48, 19, 1);
   }
 }
 
@@ -149,6 +155,20 @@ button, a { -webkit-tap-highlight-color: transparent; }
   .bf-media-card:hover,
   .bf-media-card:focus-within { z-index: 20; transform: scale(1.045); }
 }
+
+.bf-tag {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 3px 10px;
+  border-radius: 2px;
+  line-height: 1.5;
+}
+.bf-tag-accent { background: var(--color-netflix-red); color: #fff; }
+.bf-tag-outline { border: 1px solid var(--color-netflix-red); color: var(--color-netflix-red); background: transparent; }
+.bf-tag-outline[aria-current="true"] { background: var(--color-netflix-red); color: #fff; }
 
 .bf-card-vignette { background: linear-gradient(180deg, transparent 44%, rgba(0, 0, 0, 0.86) 100%); }
 .bf-rail-track { scrollbar-width: none; scroll-padding-inline: var(--bf-page-gutter); }

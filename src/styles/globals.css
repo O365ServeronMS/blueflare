@@ -88,8 +88,7 @@ body {
 
 .bf-rank {
   display: block;
-  font-family: var(--font-display), "Archivo", var(--font-inter), sans-serif;
-  font-stretch: 84%;
+  opacity: 0.74;
   font-size: 64px; /* fallback where container queries are unavailable */
   font-size: 40cqw;
   font-weight: 900;

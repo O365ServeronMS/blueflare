@@ -104,7 +104,7 @@ export default async function MoviePage({ params, searchParams }: { params: Para
               className="mt-4 max-w-2xl"
               copyClassName="text-[14px] leading-6 text-silver md:text-[16px]"
             />
-            <div className="mt-6 flex flex-wrap items-center gap-3">
+            <div className="bf-hero-actions mt-6 flex flex-wrap items-center gap-3">
               <a href={playerHref} className="bf-play-cta"><Play className="h-5 w-5 fill-current" aria-hidden="true" />Phát</a>
               <MovieActions movie={movieCard} />
             </div>

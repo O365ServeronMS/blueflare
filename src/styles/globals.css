@@ -308,13 +308,40 @@ button, a { -webkit-tap-highlight-color: transparent; }
     max-height: none;
   }
 
+  /* Landscape phones are ~740-930px wide, so the sm:/md: type scale would
+     otherwise apply full desktop typography inside a 360px-tall viewport and
+     push the Play CTA below the fold. The hero shrinks to its content instead
+     of forcing a viewport-height block, and the top padding clears the
+     floating back button so the two never collide. */
   .bf-detail-shell {
-    min-height: 100svh;
-    padding-top: calc(var(--bf-nav-height) + 0.75rem);
-    padding-bottom: 1.75rem;
+    min-height: 0;
+    padding-top: calc(var(--bf-nav-height) + 0.5rem);
+    padding-bottom: 1rem;
   }
 
+  /* Only the inner content column carries the page gutter. The back button is
+     absolutely positioned against the padding box, so it stays at the gutter
+     while the text column moves right — landscape trades plentiful horizontal
+     space for the scarce vertical kind instead of stacking the two. */
+  .bf-detail-shell.bf-page-gutter { padding-left: calc(var(--bf-page-gutter) + 3.5rem); }
+
   .bf-detail-shell [data-nav-back] { top: calc(var(--bf-nav-height) + 0.5rem); }
+
+  .bf-detail-shell h1 {
+    font-size: 28px;
+    margin-top: 0.25rem;
+  }
+
+  /* Nothing is removed to make the fold — the synopsis just collapses to one
+     line and the gaps tighten. "Xem thêm" still expands it in place. */
+  .bf-detail-shell .movie-synopsis {
+    /* ExpandableSynopsis sets this custom property inline, so a breakpoint
+       override has to outrank the style attribute. */
+    --bf-synopsis-lines: 1 !important;
+    margin-top: 0.5rem;
+  }
+
+  .bf-detail-shell .bf-hero-actions { margin-top: 0.75rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {

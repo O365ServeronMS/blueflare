@@ -16,7 +16,7 @@ npm run preview   # serve the standalone build
 npm run deploy    # build the frontend Docker image only
 ```
 
-The VPS stack is operated from `backend/` with Docker Compose. Do not run a production restart or Caddy reload unless explicitly requested.
+Codebase and runtime are separate directories (ADR-001): the repo lives at `/home/ubuntu/blueflare`, while the Docker stack runs from `/opt/docker/stacks/blueflare` (`compose.yml`, `.env`, `deploy/`, `data/images/`). `deploy/compose.yml` and `deploy/*` in this repo are the source of truth; `deploy/sync-stack.sh` copies them to the stack directory. Compose builds straight from the codebase through `BLUEFLARE_SRC`. Do not run a production restart, a sync, or a Caddy reload unless explicitly requested.
 
 ## Source map
 
@@ -26,7 +26,8 @@ The VPS stack is operated from `backend/` with Docker Compose. Do not run a prod
 - `lib/navigation.ts`: returnTo/page URL contracts.
 - `lib/playback.ts`: device/source ordering; keep it centralized.
 - `src/styles/globals.css`: shared design tokens and Tailwind styles.
-- `backend/`: VPS origin and Compose deployment.
+- `backend/`: VPS origin (API, sync worker, migrations, image cache).
+- `deploy/`: canonical `compose.yml`, Caddy site files, Cloudflare rules, and operational scripts (`sync-stack.sh`, `apply-env.sh`, `backup-postgres.sh`).
 
 ## Data, cache, and navigation invariants
 
@@ -46,4 +47,6 @@ The VPS stack is operated from `backend/` with Docker Compose. Do not run a prod
 
 ## Verification
 
-Run `npm run build`, `docker compose -f backend/compose.yml config --quiet`, and a container smoke test for `/healthz`, `/list/phim-le?page=2`, `/list/phim-le?page=3`, and protected revalidation. Run `git diff --check`.
+Run `npm run build`, validate the compose file with
+`BLUEFLARE_ENV_FILE=$PWD/backend/.env.example docker compose -f deploy/compose.yml config --quiet`
+(the absolute `BLUEFLARE_ENV_FILE` is required because the real `.env` only exists in the stack directory), and a container smoke test for `/healthz`, `/list/phim-le?page=2`, `/list/phim-le?page=3`, and protected revalidation. Run `git diff --check`.

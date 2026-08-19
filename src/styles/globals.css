@@ -114,6 +114,8 @@ button, a { -webkit-tap-highlight-color: transparent; }
 
 .bf-page-gutter { padding-inline: var(--bf-page-gutter); }
 .bf-content-width { width: 100%; max-width: 1920px; margin-inline: auto; }
+.bf-nav-row { height: var(--bf-nav-height); }
+
 .bf-nav-surface { background: linear-gradient(180deg, rgba(0, 0, 0, 0.92), rgba(0, 0, 0, 0)); }
 .bf-nav-surface[data-scrolled="true"],
 .bf-nav-surface[data-open="true"] { background: rgba(0, 0, 0, 0.96); }
@@ -133,32 +135,92 @@ button, a { -webkit-tap-highlight-color: transparent; }
 /* Standard Play CTA — the single button style used everywhere a Play/Phát
    action appears (hero, detail page, mobile hero row): flat brand red, no
    gradient. */
-.bf-play-cta {
+.bf-play-cta,
+.bf-secondary-cta,
+.bf-icon-cta {
   display: inline-flex;
   min-height: 3rem;
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
   border-radius: 4px;
-  padding: 0.75rem 1.75rem;
-  background: var(--color-netflix-red);
-  color: #fff;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.01em;
+  white-space: nowrap;
   transition: background var(--bf-motion-fast) ease, transform var(--bf-motion-fast) ease;
+}
+
+.bf-play-cta,
+.bf-secondary-cta {
+  padding: 0.75rem 1rem;
+}
+
+.bf-icon-cta {
+  width: 3rem;
+  flex: none;
+  padding: 0;
+}
+
+@media (min-width: 768px) {
+  .bf-play-cta,
+  .bf-secondary-cta,
+  .bf-icon-cta { font-size: 14px; }
+  .bf-play-cta { padding: 0.75rem 1.75rem; }
+  .bf-secondary-cta { padding: 0.75rem 1.25rem; }
+}
+
+.bf-play-cta {
+  background: var(--color-netflix-red);
+  color: #fff;
+}
+
+.bf-secondary-cta,
+.bf-icon-cta {
+  background: color-mix(in srgb, var(--color-charcoal) 80%, transparent);
+  color: var(--color-chalk-white);
 }
 
 @media (hover: hover) and (pointer: fine) {
   .bf-play-cta:hover { background: #ff5c50; }
+  .bf-secondary-cta:hover,
+  .bf-icon-cta:hover { background: var(--color-charcoal); }
 }
 
-.bf-play-cta:active { transform: translateY(1px); }
-.bf-play-cta:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.bf-play-cta:active,
+.bf-secondary-cta:active,
+.bf-icon-cta:active { transform: translateY(1px); }
+
+.bf-play-cta:focus-visible,
+.bf-secondary-cta:focus-visible,
+.bf-icon-cta:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 
 @media (prefers-reduced-motion: reduce) {
-  .bf-play-cta { transition: none; }
-  .bf-play-cta:active { transform: none; }
+  .bf-play-cta,
+  .bf-secondary-cta,
+  .bf-icon-cta { transition: none; }
+  .bf-play-cta:active,
+  .bf-secondary-cta:active,
+  .bf-icon-cta:active { transform: none; }
+}
+
+/* Secondary CTA that collapses to an icon-only square on phones. */
+.bf-cta-compact {
+  width: 3rem;
+  flex: none;
+  padding: 0;
+  gap: 0;
+}
+
+.bf-cta-compact .bf-cta-label { display: none; }
+
+@media (min-width: 768px) {
+  .bf-cta-compact {
+    width: auto;
+    padding: 0.75rem 1.25rem;
+    gap: 0.5rem;
+  }
+  .bf-cta-compact .bf-cta-label { display: inline; }
 }
 
 .bf-media-card {
@@ -229,9 +291,57 @@ button, a { -webkit-tap-highlight-color: transparent; }
   }
 }
 
+/* Short landscape phones: vertical space is the scarce resource, so the nav
+   band shrinks to the 44px tap-target floor, stops painting a solid bar over
+   the artwork, and the heroes stop being taller than the viewport. */
 @media (orientation: landscape) and (max-height: 560px) {
+  :root { --bf-nav-height: 44px; }
+
   .watch-header { padding-block: 6px; }
   .watch-header-copy { display: flex; align-items: baseline; gap: 8px; }
+
+  .bf-nav-surface { background: linear-gradient(180deg, rgba(0, 0, 0, 0.68), rgba(0, 0, 0, 0)); }
+
+  .bf-hero-shell {
+    height: 100svh;
+    min-height: 320px;
+    max-height: none;
+  }
+
+  /* Landscape phones are ~740-930px wide, so the sm:/md: type scale would
+     otherwise apply full desktop typography inside a 360px-tall viewport and
+     push the Play CTA below the fold. The hero shrinks to its content instead
+     of forcing a viewport-height block, and the top padding clears the
+     floating back button so the two never collide. */
+  .bf-detail-shell {
+    min-height: 0;
+    padding-top: calc(var(--bf-nav-height) + 0.5rem);
+    padding-bottom: 1rem;
+  }
+
+  /* Only the inner content column carries the page gutter. The back button is
+     absolutely positioned against the padding box, so it stays at the gutter
+     while the text column moves right — landscape trades plentiful horizontal
+     space for the scarce vertical kind instead of stacking the two. */
+  .bf-detail-shell.bf-page-gutter { padding-left: calc(var(--bf-page-gutter) + 3.5rem); }
+
+  .bf-detail-shell [data-nav-back] { top: calc(var(--bf-nav-height) + 0.5rem); }
+
+  .bf-detail-shell h1 {
+    font-size: 28px;
+    margin-top: 0.25rem;
+  }
+
+  /* Nothing is removed to make the fold — the synopsis just collapses to one
+     line and the gaps tighten. "Xem thêm" still expands it in place. */
+  .bf-detail-shell .movie-synopsis {
+    /* ExpandableSynopsis sets this custom property inline, so a breakpoint
+       override has to outrank the style attribute. */
+    --bf-synopsis-lines: 1 !important;
+    margin-top: 0.5rem;
+  }
+
+  .bf-detail-shell .bf-hero-actions { margin-top: 0.75rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {

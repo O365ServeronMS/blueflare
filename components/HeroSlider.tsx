@@ -84,7 +84,7 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
 
   return (
     <section
-      className="relative h-[72vh] min-h-[520px] max-h-[880px] overflow-hidden bg-deep-space outline-none md:h-[78vh]"
+      className="bf-hero-shell relative h-[72vh] min-h-[520px] max-h-[880px] overflow-hidden bg-deep-space outline-none md:h-[78vh]"
       tabIndex={0}
       onKeyDown={handleKeyDown}
       onTouchStart={handleTouchStart}
@@ -129,38 +129,24 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
             onExpandedChange={setSynopsisExpanded}
           />
 
-          <div className="mt-6 hidden flex-wrap items-center gap-3 md:flex">
-            <a href={playHref} className="bf-play-cta">
+          <div className="mt-6 flex flex-wrap items-center gap-3">
+            <a href={playHref} className="bf-play-cta flex-1 basis-0 md:flex-none">
               <Play className="h-5 w-5 fill-current" aria-hidden="true" />
               Phát
             </a>
-            <a href={detailHref} className="inline-flex min-h-11 items-center justify-center gap-2 rounded bg-charcoal/80 px-5 py-2.5 text-[14px] font-bold text-chalk-white transition hover:bg-charcoal">
+            <a href={detailHref} className="bf-secondary-cta flex-1 basis-0 md:flex-none">
               <Info className="h-5 w-5" aria-hidden="true" />
               Thông tin khác
             </a>
-          </div>
-
-          <div className="mt-6 flex items-start gap-6 md:hidden">
             <button
               type="button"
               onClick={toggleFavorite}
-              className="flex flex-col items-center gap-1.5 text-[12px] text-silver"
+              className="bf-icon-cta"
+              aria-pressed={isFavorite}
+              aria-label={isFavorite ? `Bỏ ${heroTitle} khỏi danh sách` : `Thêm ${heroTitle} vào danh sách`}
             >
-              <span className="grid h-[26px] w-[26px] place-items-center rounded bg-charcoal text-chalk-white">
-                {isFavorite ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-              </span>
-              Danh sách
+              {isFavorite ? <Check className="h-5 w-5" aria-hidden="true" /> : <Plus className="h-5 w-5" aria-hidden="true" />}
             </button>
-            <a href={playHref} className="bf-play-cta">
-              <Play className="h-4 w-4 fill-current" aria-hidden="true" />
-              Play
-            </a>
-            <a href={detailHref} className="flex flex-col items-center gap-1.5 text-[12px] text-silver">
-              <span className="grid h-[26px] w-[26px] place-items-center rounded bg-charcoal text-chalk-white">
-                <Info className="h-3.5 w-3.5" />
-              </span>
-              Info
-            </a>
           </div>
         </div>
       </div>

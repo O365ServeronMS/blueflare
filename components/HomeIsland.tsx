@@ -51,7 +51,7 @@ export function HomeIsland({
   if (!data) {
     return (
       <div aria-busy="true" aria-label="Đang tải trang chủ">
-        <div className="h-[72vh] min-h-[520px] animate-pulse bg-graphite" />
+        <div className="bf-hero-shell h-[72vh] min-h-[520px] animate-pulse bg-graphite" />
         <div className="relative z-10 -mt-16 space-y-10">
           {[0, 1].map((row) => (
             <section key={row}>

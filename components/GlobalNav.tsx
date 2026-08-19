@@ -83,7 +83,7 @@ export function GlobalNav({ initialPathname = "/", initialSearch = "", featureSe
       data-scrolled={scrolled}
       data-open={menuOpen || searchOpen}
     >
-      <nav className="bf-content-width bf-page-gutter flex h-14 items-center gap-5 md:h-16" aria-label="Điều hướng chính">
+      <nav className="bf-nav-row bf-content-width bf-page-gutter flex items-center gap-5" aria-label="Điều hướng chính">
         <a href="/" onClick={closePanels} className="flex shrink-0 items-center gap-2" aria-label="Blueflare - Trang chủ">
           <BlueflareIcon className="h-6 w-6 shrink-0 md:h-7 md:w-7" />
           <BlueflareWordmark className="hidden h-[17px] w-auto sm:block md:h-5" />

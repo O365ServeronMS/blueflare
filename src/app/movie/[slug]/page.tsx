@@ -83,10 +83,10 @@ export default async function MoviePage({ params, searchParams }: { params: Para
 
   return (
     <article className="pb-10">
-      <section className="relative min-h-[74vh] overflow-hidden bg-deep-space md:min-h-[78vh]">
+      <section className="bf-detail-shell relative min-h-[74vh] overflow-hidden bg-deep-space md:min-h-[78vh]">
         {movie.poster || movie.thumb ? <img src={movie.poster || movie.thumb} alt="" width={1280} height={720} loading="eager" fetchPriority="high" decoding="async" className="absolute inset-0 h-full w-full object-cover" /> : null}
         <div className="bf-detail-overlay absolute inset-0" />
-        <div className="bf-content-width bf-page-gutter relative z-10 flex min-h-[74vh] flex-col justify-end pb-16 pt-24 md:min-h-[78vh] md:pb-24">
+        <div className="bf-detail-shell bf-content-width bf-page-gutter relative z-10 flex min-h-[74vh] flex-col justify-end pb-16 pt-24 md:min-h-[78vh] md:pb-24">
           <a href={backHref} data-nav-back aria-label="Quay lại danh sách phim" className="absolute left-[var(--bf-page-gutter)] top-20 grid h-11 w-11 place-items-center rounded bg-black/55 text-white transition hover:bg-graphite md:top-24"><ArrowLeft className="h-5 w-5" /></a>
           <div className="max-w-[42rem]">
             <p className="text-[11px] font-bold uppercase tracking-[0.15em] text-silver">Bluesia giới thiệu</p>

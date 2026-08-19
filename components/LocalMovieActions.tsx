@@ -91,13 +91,22 @@ export function MovieActions({ movie }: { movie: MovieCard }) {
 
   return (
     <div className="flex flex-wrap gap-2">
-      <button onClick={toggleFavorite} className="inline-flex min-h-11 items-center justify-center gap-2 rounded bg-charcoal/80 px-4 py-2.5 text-[13px] font-bold text-white transition hover:bg-charcoal">
-        {isFavorite ? <Check className="h-4 w-4" /> : <Heart className="h-4 w-4" />}
-        {isFavorite ? "Đã lưu" : "Danh sách của tôi"}
+      <button
+        onClick={toggleFavorite}
+        className="bf-secondary-cta bf-cta-compact"
+        aria-pressed={isFavorite}
+        aria-label={isFavorite ? "Bỏ khỏi danh sách của tôi" : "Thêm vào danh sách của tôi"}
+      >
+        {isFavorite ? <Check className="h-5 w-5" aria-hidden="true" /> : <Heart className="h-5 w-5" aria-hidden="true" />}
+        <span className="bf-cta-label">{isFavorite ? "Đã lưu" : "Danh sách của tôi"}</span>
       </button>
-      <button onClick={() => addHistory(movie)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded bg-charcoal/80 px-4 py-2.5 text-[13px] font-bold text-white transition hover:bg-charcoal">
-        <Clock3 className="h-4 w-4" />
-        Lưu lịch sử
+      <button
+        onClick={() => addHistory(movie)}
+        className="bf-secondary-cta bf-cta-compact"
+        aria-label="Lưu lịch sử"
+      >
+        <Clock3 className="h-5 w-5" aria-hidden="true" />
+        <span className="bf-cta-label">Lưu lịch sử</span>
       </button>
     </div>
   );

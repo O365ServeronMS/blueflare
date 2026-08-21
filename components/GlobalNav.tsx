@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import { Clock3, Heart, Menu, Search, Settings, X } from "lucide-react";
 import { SearchSuggest } from "@/components/SearchSuggest";
 import { BlueflareIcon } from "@/components/logo/BlueflareIcon";
@@ -23,16 +24,17 @@ const utilityItems = [
 ];
 
 type GlobalNavProps = {
-  initialPathname?: string;
-  initialSearch?: string;
   featureSearch?: boolean;
   featureLocalLibrary?: boolean;
 };
 
-export function GlobalNav({ initialPathname = "/", initialSearch = "", featureSearch = true, featureLocalLibrary = true }: GlobalNavProps) {
-  const [pathname, setPathname] = useState(initialPathname);
-  const [search, setSearch] = useState(initialSearch);
-  const [scrolled, setScrolled] = useState(initialPathname !== "/");
+export function GlobalNav({ featureSearch = true, featureLocalLibrary = true }: GlobalNavProps) {
+  const pathname = usePathname();
+  // Populated client-side only, after hydration — used solely to infer the
+  // active tab on /movie/* detail pages from ?returnTo=. Empty on first
+  // paint means no tab lights up rather than the wrong one flashing.
+  const [search, setSearch] = useState("");
+  const [scrolled, setScrolled] = useState(pathname !== "/");
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const activeKey = getActiveNavKey(pathname, search);
@@ -42,7 +44,6 @@ export function GlobalNav({ initialPathname = "/", initialSearch = "", featureSe
 
   useEffect(() => {
     function syncLocation() {
-      setPathname(window.location.pathname);
       setSearch(window.location.search);
       setScrolled(window.scrollY > 28 || window.location.pathname !== "/");
     }
@@ -51,14 +52,12 @@ export function GlobalNav({ initialPathname = "/", initialSearch = "", featureSe
     }
     syncLocation();
     window.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("popstate", syncLocation);
     window.addEventListener("pageshow", syncLocation);
     return () => {
       window.removeEventListener("scroll", onScroll);
-      window.removeEventListener("popstate", syncLocation);
       window.removeEventListener("pageshow", syncLocation);
     };
-  }, []);
+  }, [pathname]);
 
   useEffect(() => {
     if (!menuOpen && !searchOpen) return;

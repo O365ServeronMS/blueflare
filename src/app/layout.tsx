@@ -14,6 +14,12 @@ const inter = Inter({
   display: "swap"
 });
 
+// GlobalNav reads usePathname() to render the active tab correctly on first
+// paint (no client-only flash). Every route already forces per-request
+// rendering via connection(), so there's no static shell here for instant
+// navigation to protect — this just opts the layout out of that validation.
+export const instant = false;
+
 export const viewport = { themeColor: "#000000" };
 
 export const metadata: Metadata = {

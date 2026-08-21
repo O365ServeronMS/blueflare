@@ -1,14 +1,6 @@
+# Access log intentionally omitted — see phim.bluesia.net.caddy for why.
 img.bluesia.net {
 	encode zstd gzip
-
-	log {
-		output file /var/log/caddy/img.bluesia.net.access.log {
-			roll_size 20MiB
-			roll_keep 10
-			roll_keep_for 720h
-		}
-		format json
-	}
 
 	reverse_proxy 127.0.0.1:3200
 }

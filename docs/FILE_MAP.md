@@ -35,7 +35,7 @@ archive documents.
 
 ## Docker backend and deployment
 
-Runtime sống ở `/opt/docker/stacks/blueflare`, không nằm trong repo — xem
+Runtime sống ở `/opt/stacks/blueflare`, không nằm trong repo — xem
 `docs/adr/ADR-001-tach-stack-runtime-khoi-codebase.md`. Các file dưới đây là **bản chuẩn**
 trong git; thư mục stack giữ bản copy, đồng bộ bằng `deploy/sync-stack.sh`.
 

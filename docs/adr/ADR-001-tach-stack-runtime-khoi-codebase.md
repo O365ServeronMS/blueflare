@@ -4,6 +4,13 @@
 **Date:** 2026-08-18
 **Deciders:** chủ VPS / maintainer Blueflare
 
+> **Cập nhật 2026-08-21:** thư mục runtime chuyển sang `/opt/stacks/blueflare` (thay
+> cho `/opt/docker/stacks/blueflare` đề xuất ban đầu) để dockhand — UI quản lý Docker —
+> quét thấy stack ở path mặc định của nó. Quyết định tách runtime khỏi codebase không
+> đổi; chỉ đổi đường dẫn đích. Các phần forward-looking dưới đây đã dùng path mới; phần
+> Context giữ nguyên vì mô tả trạng thái lúc ra quyết định. Bootstrap VPS mới:
+> `deploy/bootstrap-vps.sh` (mặc định `STACK_DIR=/opt/stacks/blueflare`).
+
 ## Context
 
 Hôm nay `/opt/docker/stacks/blueflare` **chính là** working tree của git repo
@@ -41,15 +48,15 @@ Các lực ràng buộc:
 
 ## Decision
 
-Chuyển `/opt/docker/stacks/blueflare` thành **thư mục runtime thuần** — chỉ chứa
+Chuyển thư mục stack thành **thư mục runtime thuần** — chỉ chứa
 compose file, `.env`, script vận hành và dữ liệu bind-mount. Mã nguồn dời hẳn về
 `/home/ubuntu/blueflare` và ở yên đó. Compose **build từ xa** bằng build context
 trỏ tới codebase qua biến môi trường, chưa cần registry.
 
-Layout đích của `/opt/docker/stacks/blueflare` (~114 M, gần như toàn bộ là cache ảnh):
+Layout đích của `/opt/stacks/blueflare` (~114 M, gần như toàn bộ là cache ảnh):
 
 ```
-/opt/docker/stacks/blueflare/
+/opt/stacks/blueflare/
 ├── compose.yml            # dời từ backend/compose.yml, sửa build context
 ├── .env                   # dời từ backend/.env (chmod 600)
 ├── .env.example           # bản tham chiếu, symlink hoặc copy từ repo
@@ -138,7 +145,7 @@ Chốt **Option B**, và coi Option A là đích đến khi nào có host thứ 
 - Secret trong `.env` không còn nằm trong cùng cây thư mục với git working tree.
 
 **Khó hơn:**
-- Deploy thành hai chỗ: `git pull` ở `/home/ubuntu/blueflare`, rồi `docker compose up -d --build` ở `/opt/docker/stacks/blueflare`.
+- Deploy thành hai chỗ: `git pull` ở `/home/ubuntu/blueflare`, rồi `docker compose up -d --build` ở `/opt/stacks/blueflare`.
 - `compose.yml` giờ tồn tại ở hai nơi (bản vận hành ở stack, bản tham chiếu trong repo) — phải chọn một bản là chính. Đề xuất: bản trong repo là nguồn, deploy bằng cách copy có chủ đích, ghi rõ trong README.
 - Đường dẫn build context tuyệt đối làm `compose.yml` bớt tính di động.
 
@@ -159,7 +166,7 @@ Chưa thực thi gì — đây là bản đề xuất. Thứ tự dưới đây 
 4. [ ] **Clone codebase** về `/home/ubuntu/blueflare` từ remote (không phải `mv`, để bản cũ nguyên vẹn làm phao).
 5. [ ] **Dựng layout runtime**: `mv backend/compose.yml` → gốc stack; `mv backend/.env` → gốc stack (`chmod 600`);
        `mv backend/deploy` → gốc stack; `mv backend/data` → gốc stack;
-       cập nhật `IMAGE_CACHE_HOST_DIR=/opt/docker/stacks/blueflare/data/images` trong `.env`.
+       cập nhật `IMAGE_CACHE_HOST_DIR=/opt/stacks/blueflare/data/images` trong `.env`.
 6. [ ] **Sửa `compose.yml`**: thêm `BLUEFLARE_SRC`, đổi `context` của `api`/`worker` thành `${BLUEFLARE_SRC}/backend`,
        của `frontend` thành `${BLUEFLARE_SRC}` với `dockerfile: Dockerfile.frontend`;
        đổi `image-cache-init` sang `image: alpine:3`.

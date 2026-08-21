@@ -45,8 +45,8 @@ npm run start      # serve the standalone build
 Want the full stack? 🐳
 
 ```bash
-cp backend/.env.example /opt/docker/stacks/blueflare/.env   # rồi điền secret
-cd /opt/docker/stacks/blueflare && docker compose up -d --build
+cp backend/.env.example /opt/stacks/blueflare/.env   # rồi điền secret
+cd /opt/stacks/blueflare && docker compose up -d --build
 ```
 
 ## 🚢 Deploy on the VPS
@@ -56,14 +56,30 @@ Codebase và runtime nằm ở hai chỗ (xem [ADR-001](docs/adr/ADR-001-tach-st
 | | Đường dẫn | Nội dung |
 |---|---|---|
 | Codebase | `/home/ubuntu/blueflare` | repo này — nguồn duy nhất của mọi thứ trong git |
-| Runtime | `/opt/docker/stacks/blueflare` | `compose.yml`, `.env`, `deploy/`, `data/images/` |
+| Runtime | `/opt/stacks/blueflare` | `compose.yml`, `.env`, `deploy/`, `data/images/` (path để dockhand quét thấy) |
+
+### 🌱 First boot — VPS Ubuntu mới
+
+Một VPS trắng (Ubuntu 24.04/26.04) dựng bằng một lệnh — cài Docker + Caddy, clone
+codebase qua SSH, dựng thư mục runtime, sinh `.env` với secret ngẫu nhiên, đặt Caddy
+edge cho `phim`/`img`. Script **không tự deploy container** để bạn xem lại `.env`
+(nhất là `TMDB_API_KEY`) rồi bấm deploy trong dockhand:
+
+```bash
+git clone git@github.com:O365ServeronMS/blueflare.git /home/ubuntu/blueflare
+/home/ubuntu/blueflare/deploy/bootstrap-vps.sh          # thêm --deploy để build+up luôn
+```
+
+Mặc định script đặt runtime ở `/opt/stacks/blueflare` (để dockhand quét thấy) và bật
+`SYNC_ENABLED=true`, `BACKFILL_ENABLED=false` — bạn bật backfill sau bằng cách sửa
+`.env` qua dockhand rồi redeploy. Đổi path bằng biến `STACK_DIR=…` khi chạy script.
 
 Compose build thẳng từ codebase qua `BLUEFLARE_SRC` (mặc định `/home/ubuntu/blueflare`),
 nên deploy code mới là hai bước:
 
 ```bash
 git pull
-cd /opt/docker/stacks/blueflare && docker compose up -d --build frontend
+cd /opt/stacks/blueflare && docker compose up -d --build frontend
 curl -fsS http://127.0.0.1:3100/healthz
 ```
 
@@ -75,7 +91,7 @@ stack rồi mới áp dụng:
 /home/ubuntu/blueflare/deploy/sync-stack.sh
 ```
 
-Đổi cấu hình mà không rebuild: `cd /opt/docker/stacks/blueflare && ./deploy/apply-env.sh`
+Đổi cấu hình mà không rebuild: `cd /opt/stacks/blueflare && ./deploy/apply-env.sh`
 (script validate `.env` theo `.env.example` rồi tạo lại container từ image sẵn có).
 
 ⚠️ Đừng bao giờ chạy `docker compose down -v` — cờ `-v` xóa named volume, tức là mất

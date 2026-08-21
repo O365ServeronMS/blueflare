@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-STACK_DIR=${BLUEFLARE_STACK_DIR:-/opt/docker/stacks/blueflare}
+STACK_DIR=${BLUEFLARE_STACK_DIR:-/opt/stacks/blueflare}
 BACKUP_DIR=${BLUEFLARE_BACKUP_DIR:-/opt/docker/backups/blueflare/postgres}
 COMPOSE_FILE=${BLUEFLARE_COMPOSE_FILE:-$STACK_DIR/compose.yml}
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)

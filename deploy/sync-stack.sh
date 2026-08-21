@@ -7,7 +7,7 @@
 set -euo pipefail
 
 SRC_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-STACK_DIR=${BLUEFLARE_STACK_DIR:-/opt/docker/stacks/blueflare}
+STACK_DIR=${BLUEFLARE_STACK_DIR:-/opt/stacks/blueflare}
 DRY=${1:-}
 
 copy() {

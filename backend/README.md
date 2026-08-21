@@ -34,7 +34,7 @@ The API is published only on 127.0.0.1:3200. Caddy is the public TLS boundary.
 
 Create the runtime environment:
 
-    cd /opt/docker/stacks/blueflare/backend
+    cd /opt/stacks/blueflare
     cp .env.example .env
 
 Replace POSTGRES_PASSWORD and IMAGE_SIGNING_SECRET with independent random
@@ -72,7 +72,7 @@ sharded by hash prefix. The two image variants remain `m` (480 x 720, q75) and
 
 Create a compact PostgreSQL backup with:
 
-    /opt/docker/stacks/blueflare/deploy/backup-postgres.sh
+    /opt/stacks/blueflare/deploy/backup-postgres.sh
 
 The script creates a custom-format `pg_dump`, verifies it with `pg_restore
 --list`, and deliberately excludes the regenerable image cache. Schedule it
@@ -89,8 +89,8 @@ Append deploy/img.bluesia.net.caddy to /etc/caddy/Caddyfile, format, validate,
 and reload:
 
 	# Run once; do not append a duplicate block on later deployments.
-	cd /opt/docker/stacks/blueflare
-	sudo tee -a /etc/caddy/Caddyfile < backend/deploy/img.bluesia.net.caddy
+	cd /opt/stacks/blueflare
+	sudo tee -a /etc/caddy/Caddyfile < deploy/img.bluesia.net.caddy
     sudo caddy fmt --overwrite /etc/caddy/Caddyfile
     sudo caddy validate --config /etc/caddy/Caddyfile
     sudo systemctl reload caddy
@@ -111,7 +111,7 @@ to that port; no static directory or rewrite file is used.
 
 Build and restart only the frontend service during a release:
 
-    cd /opt/docker/stacks/blueflare/backend
+    cd /opt/stacks/blueflare
     sudo docker compose --env-file .env -f compose.yml up -d --build frontend
     sudo docker compose --env-file .env -f compose.yml ps frontend
     curl -fsS http://127.0.0.1:3100/healthz
@@ -183,7 +183,7 @@ availability, raw metadata, streams, and success timestamps.
 
 ## Verification
 
-    cd /opt/docker/stacks/blueflare/backend
+    cd /opt/stacks/blueflare
     npm test
     sudo docker compose --env-file .env -f compose.yml logs --tail=100 worker
     curl -fsS http://127.0.0.1:3200/api/home-data

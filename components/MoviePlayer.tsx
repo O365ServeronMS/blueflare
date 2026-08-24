@@ -4,6 +4,7 @@ import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { HlsVideo } from "@/components/HlsVideo";
 import { IframePlayerFacade } from "@/components/IframePlayerFacade";
+import { NowPlayingMetadata } from "@/components/NowPlayingMetadata";
 import { WatchRecorder } from "@/components/WatchRecorder";
 import {
   normalizePlaybackUrl,
@@ -16,6 +17,7 @@ import type { MovieCard } from "@/lib/types";
 type MoviePlayerProps = {
   embedSrc?: string;
   episodeLabel: string;
+  episodeName?: string;
   hlsSrc?: string;
   initialOpen?: boolean;
   movie: MovieCard;
@@ -27,6 +29,7 @@ type MoviePlayerProps = {
 export function MoviePlayer({
   embedSrc,
   episodeLabel,
+  episodeName,
   hlsSrc,
   initialOpen = false,
   movie,
@@ -111,7 +114,10 @@ export function MoviePlayer({
             {playbackSource?.mode === "iframe" && playbackSource.iframeUrl ? (
               <IframePlayerFacade onError={handleIframeError} src={playbackSource.iframeUrl} poster={poster} title={title} />
             ) : (playbackSource?.mode === "native-hls" || playbackSource?.mode === "hls-js") && playbackSource.hlsUrl ? (
-              <HlsVideo mode={playbackSource.mode} onPlaybackFailure={handleHlsError} src={playbackSource.hlsUrl} poster={poster} />
+              <>
+                <NowPlayingMetadata name={movie.name} originName={movie.originName} type={movie.type} episodeName={episodeName} artworkSrc={poster} />
+                <HlsVideo mode={playbackSource.mode} onPlaybackFailure={handleHlsError} src={playbackSource.hlsUrl} poster={poster} />
+              </>
             ) : playbackSource === null ? (
               <div className="grid h-full place-items-center p-6 text-center text-[14px] text-silver">Đang chuẩn bị player…</div>
             ) : (

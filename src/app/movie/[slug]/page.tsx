@@ -116,6 +116,7 @@ export default async function MoviePage({ params, searchParams }: { params: Para
         <MoviePlayer
           embedSrc={episode?.linkEmbed}
           episodeLabel={`${server?.serverName || "Server"} · ${episode?.name || "Tập phim"}`}
+          episodeName={episode?.name}
           hlsSrc={episode?.linkM3u8}
           initialOpen={urlParams.get("play") === "1"}
           movie={movieCard}

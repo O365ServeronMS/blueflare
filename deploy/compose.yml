@@ -129,6 +129,13 @@ services:
         condition: service_healthy
       valkey:
         condition: service_healthy
+      image-cache-init:
+        condition: service_completed_successfully
+    volumes:
+      # Read-only on purpose: the image prewarmer only needs to see which cache
+      # entries already exist. Creating one stays the api service's job, over
+      # its /i/ path, so there is a single writer for this directory.
+      - ${IMAGE_CACHE_HOST_DIR:-./data/images}:/data/images:ro
     networks:
       - backend
 

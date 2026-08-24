@@ -65,10 +65,20 @@ because it was inserted today.
 PostgreSQL stores canonical metadata, provider provenance, streams, and image
 source URLs only. It does not store image bytes or raw provider payloads. The
 runtime image cache is a disposable SSD cache at
-`/opt/docker/data/blueflare/images` and is mounted at `/data/images` in the API
-and worker containers. Existing flat cache files remain readable; new files are
-sharded by hash prefix. The two image variants remain `m` (480 x 720, q75) and
-`d` (1280 x 720, q75).
+`/opt/stacks/blueflare/data/images`. The API mounts it read-write at
+`/data/images`; the worker mounts the same path read-only, because prewarming
+only needs to see which entries already exist. Existing flat cache files remain
+readable; new files are sharded by hash prefix. The two image variants remain
+`m` (480 x 720, q75) and `d` (1280 x 720, q75).
+
+Two background jobs keep that cache healthy. The worker prewarms it: after each
+sync cycle it reads the same home/list viewmodels the API serves, and asks the
+API over the Docker network for any referenced asset not on disk yet, so the
+first visitor does not pay the upstream fetch and transcode. The API sweeps it:
+hourly it removes orphan `.tmp` files and, only once the cache is over
+`IMAGE_CACHE_MAX_BYTES`, evicts least-recently-read entries back under the
+target. Eviction lives in the API because the API is the only writer of this
+directory.
 
 Create a compact PostgreSQL backup with:
 

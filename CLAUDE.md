@@ -16,7 +16,7 @@ npm run preview   # serve the standalone build
 npm run deploy    # build the frontend Docker image only
 ```
 
-Codebase and runtime are separate directories (ADR-001): the repo lives at `/home/ubuntu/blueflare`, while the Docker stack runs from `/opt/docker/stacks/blueflare` (`compose.yml`, `.env`, `deploy/`, `data/images/`). `deploy/compose.yml` and `deploy/*` in this repo are the source of truth; `deploy/sync-stack.sh` copies them to the stack directory. Compose builds straight from the codebase through `BLUEFLARE_SRC`. Do not run a production restart, a sync, or a Caddy reload unless explicitly requested.
+Codebase and runtime are separate directories (ADR-001): the repo lives at `/home/ubuntu/blueflare`, while the Docker stack runs from `/opt/stacks/blueflare` (`compose.yml`, `.env`, `deploy/`, `data/images/`). `deploy/compose.yml` and `deploy/*` in this repo are the source of truth; `deploy/sync-stack.sh` copies them to the stack directory. Compose builds straight from the codebase through `BLUEFLARE_SRC`. Do not run a production restart, a sync, or a Caddy reload unless explicitly requested.
 
 ## Source map
 

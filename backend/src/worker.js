@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { closeCache, getOrBuild, invalidateResponseKeys } from './cache.js';
 import { config } from './config.js';
+import { mapLimit } from './concurrency.js';
 import { closeDatabase, migrate } from './db.js';
 import { normalizeKkphim, normalizeNguonc } from './normalize.js';
 import { KkphimProvider } from './providers/KkphimProvider.js';
@@ -25,8 +26,9 @@ import {
   withHeroTrendingRefreshLock,
   getMovieInvalidationDimensions
 } from './repository.js';
+import { formatPrewarmStats, prewarmImages } from './prewarm.js';
 import { fetchTrendingMovieIds, fetchVerifiedTmdbImages, searchTmdbImagesByTitle } from './tmdb.js';
-import { buildHome } from './viewmodels.js';
+import { buildHome, buildList } from './viewmodels.js';
 
 async function revalidateFrontend(tags) {
   if (!config.frontendRevalidateSecret || !tags.length) return;
@@ -53,22 +55,6 @@ let lastBackfillRunAt = 0;
 function providersFor(names) {
   const allow = new Set(names.map((name) => String(name).toLowerCase()));
   return providers.filter((provider) => allow.has(provider.name.toLowerCase()));
-}
-
-async function mapLimit(items, limit, callback) {
-  const results = new Array(items.length);
-  let cursor = 0;
-  async function runner() {
-    while (cursor < items.length) {
-      const index = cursor;
-      cursor += 1;
-      results[index] = await callback(items[index], index);
-    }
-  }
-  await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, () => runner())
-  );
-  return results;
 }
 
 function summaryFallback(provider, item) {
@@ -326,6 +312,39 @@ async function refreshTmdbImageFallbacks() {
   return results.filter(Boolean).map((movie) => movie.canonical_slug);
 }
 
+/**
+ * Warm the image cache for the catalog surfaces users land on first.
+ *
+ * The payloads come from the same viewmodels the API serves, so the prewarmer
+ * asks for exactly the asset URLs the next visitor will request - no second
+ * copy of the thumb/poster precedence rules to drift out of sync. Reading them
+ * through `getOrBuild` also leaves the list responses warm in Valkey.
+ */
+async function prewarmHotImages() {
+  if (!config.imagePrewarmEnabled) return;
+  const payloads = [];
+  try {
+    payloads.push((await getOrBuild('home', buildHome, { ttl: config.responseCacheTtlSeconds })).data);
+    for (const type of config.invalidateListTypes) {
+      for (let currentPage = 1; currentPage <= config.imagePrewarmPageDepth; currentPage += 1) {
+        const key = 'list:' + type + ':' + currentPage;
+        const result = await getOrBuild(key, () => buildList(type, currentPage), {
+          ttl: config.responseCacheTtlSeconds
+        });
+        payloads.push(result.data);
+      }
+    }
+  } catch (error) {
+    console.warn('[worker] image prewarm could not read catalog payloads', error.message);
+    return;
+  }
+
+  const stats = await prewarmImages(payloads);
+  const line = '[worker] image prewarm ' + formatPrewarmStats(stats);
+  if (stats.declined || stats.failed) console.warn(line);
+  else console.log(line);
+}
+
 async function syncCycle() {
   const headResults = [];
   if (config.syncEnabled) {
@@ -392,6 +411,8 @@ async function syncCycle() {
   } else {
     console.warn('[worker] no canonical changes; existing cache remains active');
   }
+
+  if (!stopping) await prewarmHotImages();
 }
 
 await migrate();

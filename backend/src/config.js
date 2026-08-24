@@ -57,6 +57,36 @@ export const config = Object.freeze({
   imageSigningSecret,
   imageCacheDir: process.env.IMAGE_CACHE_DIR || '/data/images',
   imageAllowedHosts: csv('IMAGE_ALLOWED_HOSTS', 'phim.nguonc.com,phimimg.com,phimapi.com,image.tmdb.org'),
+  // Image prewarming: the worker asks the API to build the cache entries the
+  // home/list viewmodels are about to serve, so the first visitor after a sync
+  // does not pay the upstream fetch + sharp transcode. Reached over the Docker
+  // network; never a public URL.
+  imageOriginUrl: String(process.env.IMAGE_ORIGIN_URL || 'http://api:3200').replace(/\/$/, ''),
+  imagePrewarmEnabled: boolean('IMAGE_PREWARM_ENABLED', true),
+  // 0 warms the home viewmodel only; each extra level adds one page of every
+  // INVALIDATE_LIST_TYPES list.
+  imagePrewarmPageDepth: integer('IMAGE_PREWARM_PAGE_DEPTH', 1, 0),
+  imagePrewarmLimit: integer('IMAGE_PREWARM_LIMIT', 400, 1),
+  imagePrewarmConcurrency: integer('IMAGE_PREWARM_CONCURRENCY', 4, 1),
+  imagePrewarmTimeoutMs: integer('IMAGE_PREWARM_TIMEOUT_MS', 20000, 1000),
+  imagePrewarmRetries: integer('IMAGE_PREWARM_RETRIES', 2, 0),
+  imagePrewarmRetryBaseMs: integer('IMAGE_PREWARM_RETRY_BASE_MS', 500, 50),
+  // Hard floor on free space; the cache has no evictor, so prewarming stands
+  // down rather than being the thing that fills the disk.
+  imagePrewarmMinFreeBytes: integer('IMAGE_PREWARM_MIN_FREE_BYTES', 2 * 1024 * 1024 * 1024, 0),
+
+  // Image cache caretaker (api). The cache is disposable and had no ceiling at
+  // all; these bound it. Eviction lives in the api because the api is the only
+  // process that writes /data/images.
+  // 0 disables eviction (the orphan-.tmp pass still runs); 0 interval disables
+  // the sweep entirely.
+  imageCacheMaxBytes: integer('IMAGE_CACHE_MAX_BYTES', 8 * 1024 * 1024 * 1024, 0),
+  imageCacheEvictTargetPercent: Math.min(99, integer('IMAGE_CACHE_EVICT_TARGET_PERCENT', 90, 10)),
+  // Never evict something read this recently: it may be streaming right now.
+  imageCacheEvictMinAgeMs: integer('IMAGE_CACHE_EVICT_MIN_AGE_MS', 60 * 60 * 1000, 60 * 1000),
+  imageCacheTmpMaxAgeMs: integer('IMAGE_CACHE_TMP_MAX_AGE_MS', 60 * 60 * 1000, 60 * 1000),
+  imageCacheSweepIntervalMs: integer('IMAGE_CACHE_SWEEP_INTERVAL_MS', 60 * 60 * 1000, 0),
+  imageCacheSweepStartDelayMs: integer('IMAGE_CACHE_SWEEP_START_DELAY_MS', 60 * 1000, 1000),
   nguoncBaseUrl: String(process.env.NGUONC_BASE_URL || 'https://phim.nguonc.com').replace(/\/$/, ''),
   kkphimBaseUrl: String(process.env.KKPHIM_BASE_URL || 'https://phimapi.com').replace(/\/$/, ''),
   // Head sync: scans the newest N pages of each provider every cycle.

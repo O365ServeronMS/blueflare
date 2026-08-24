@@ -3,6 +3,7 @@ import http from 'node:http';
 import { cacheVersion, closeCache, getOrBuild } from './cache.js';
 import { config } from './config.js';
 import { closeDatabase, migrate, postgresHealth } from './db.js';
+import { formatSweepStats, sweepImageCache } from './imageCacheSweep.js';
 import { serveSignedImage } from './images.js';
 import { providerHealth } from './repository.js';
 import { metricsSnapshot, observeCache, observeRequest } from './observability.js';
@@ -296,6 +297,38 @@ const server = http.createServer((request, response) => {
 server.listen(config.port, '0.0.0.0', () => {
   console.log('[api] listening on 0.0.0.0:' + config.port);
 });
+
+/**
+ * Keep the disposable image cache under its ceiling.
+ *
+ * Chained timeouts rather than an interval, so a slow sweep can never overlap
+ * itself, and unref'd so the caretaker never holds the process open during a
+ * shutdown.
+ */
+function scheduleImageCacheSweep() {
+  if (!config.imageCacheSweepIntervalMs) return;
+
+  async function run() {
+    try {
+      const stats = await sweepImageCache(config.imageCacheDir, {
+        maxBytes: config.imageCacheMaxBytes,
+        targetPercent: config.imageCacheEvictTargetPercent,
+        minAgeMs: config.imageCacheEvictMinAgeMs,
+        tmpMaxAgeMs: config.imageCacheTmpMaxAgeMs
+      });
+      const line = '[api] image cache sweep ' + formatSweepStats(stats);
+      if (stats.evicted || stats.tmpRemoved) console.warn(line);
+      else console.log(line);
+    } catch (error) {
+      console.warn('[api] image cache sweep failed', error.message);
+    }
+    setTimeout(run, config.imageCacheSweepIntervalMs).unref();
+  }
+
+  setTimeout(run, config.imageCacheSweepStartDelayMs).unref();
+}
+
+scheduleImageCacheSweep();
 
 async function shutdown(signal) {
   console.log('[api] received ' + signal + ', shutting down');

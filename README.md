@@ -13,7 +13,7 @@ Vietnamese movie streaming, done fast 🚀 — browse, search, and watch at [phi
 
 Next.js 16 App Router, self-hosted — no Astro, no Workers, no edge magic. Runs in the `frontend` Docker service on `127.0.0.1:3100`, Caddy proxies it to the world.
 
-Same repo, same house: `backend/` owns provider sync, PostgreSQL, Valkey caching, and signed images at `img.bluesia.net`. Server Components talk to the API over the Docker network; browsers own playback + local state.
+Same repo, same house: `backend/` owns provider sync, PostgreSQL, Valkey caching, and the image cache at `img.bluesia.net`. Server Components talk to the API over the Docker network; browsers own playback + local state.
 
 ## 🧰 Stack
 
@@ -27,7 +27,8 @@ Same repo, same house: `backend/` owns provider sync, PostgreSQL, Valkey caching
 | 🎞️ Catalog/images | Blueflare API + `img.bluesia.net` |
 | 📡 Providers | NguonC primary, KKPhim fills the gaps |
 | 🗄️ Data/cache | PostgreSQL + Valkey + Next render cache |
-| 🖼️ Images | Pre-signed `m`/`d` variants only |
+| 🖼️ Images | Two variants only: `/i/m/` portrait, `/i/d/` landscape |
+| 💾 Backup | Nightly dump to R2 (any S3-compatible store) |
 | ▶️ Video | hls.js light (lazy) + provider embeds |
 
 ## 🏃 Run locally
@@ -108,7 +109,8 @@ lib/               # Catalog helpers (browser + cached server-side)
 public/            # Favicon, manifest, robots, sitemaps
 backend/           # VPS origin: API, worker, PostgreSQL, Valkey, images
 Dockerfile.frontend# Production standalone image
-docs/              # Architecture, cache, pagination, migration notes
+deploy/            # compose.yml, Caddy, Cloudflare rules, backup service
+docs/              # Live specs; docs/archive/ holds superseded plans
 ```
 
 🧭 Category context rides in `returnTo=<encoded path+search>` — page 2/3/etc. stays addressable and reload-safe.
@@ -116,5 +118,7 @@ docs/              # Architecture, cache, pagination, migration notes
 ## ✅ The gate
 
 ```bash
-npm run build
+npm run build                 # frontend build
+npm test                      # vitest
+cd backend && node --test     # backend suite
 ```

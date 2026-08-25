@@ -1,5 +1,9 @@
 # Thiết kế lại HeroSlider: TMDB Trending phim lẻ theo tuần
 
+> **ARCHIVED — đã triển khai.** HeroSlider TMDB Trending đã chạy thật
+> (`hero_trending_snapshot`, `refreshHeroTrendingIfDue()` trong worker). Header
+> bên dưới ghi "chưa thay đổi mã nguồn" là trạng thái lúc viết. Đừng cài lại.
+
 **Trạng thái:** Kế hoạch triển khai — chưa thay đổi mã nguồn  
 **Phạm vi:** HeroSlider ở trang `/`, Blueflare API/worker, PostgreSQL, Valkey và Next.js render cache  
 **Mục tiêu làm mới:** Mỗi 60 phút tại backend; người dùng nhận snapshot mới qua cache invalidation, không gọi TMDB từ trình duyệt.

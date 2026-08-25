@@ -33,9 +33,9 @@ docs/assets/
 # TypeScript incremental cache
 *.tsbuildinfo
 
-# Local assistant notes
-claude.md
-CLAUDE.md
+# Local assistant scratch notes. CLAUDE.md itself is tracked on purpose:
+# it is the onboarding document, so it must survive a fresh clone.
+claude.local.md
 
 # Local Blueflare signed-image cache
 backend/data/images/

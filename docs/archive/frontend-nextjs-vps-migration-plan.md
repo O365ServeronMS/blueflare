@@ -1,5 +1,9 @@
 # Kế hoạch chuyển Blueflare sang Next.js render trên VPS
 
+> **ARCHIVED — kế hoạch đã thực thi xong.** Next.js SSR trên VPS là kiến trúc
+> đang chạy từ 2026-08. Header bên dưới còn ghi "Đề xuất để duyệt" là trạng thái
+> tại thời điểm viết, không phải hiện tại. Nguồn sự thật: `CLAUDE.md`.
+
 **Trạng thái:** Đề xuất để duyệt
 **Ngày:** 2026-08-15
 **Phạm vi:** Thay Astro bằng frontend SSR mới; giữ catalog API, PostgreSQL, Valkey, image cache và playback contract hiện tại.

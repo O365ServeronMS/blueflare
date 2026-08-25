@@ -1,5 +1,8 @@
 # Blueflare UI Rebuild Audit
 
+> **ARCHIVED — ảnh chụp một thời điểm (2026-08-14).** Là bản audit lịch sử,
+> không phải mô tả UI hiện tại. Nguồn sự thật: `docs/blueflare-ui-v2.md`.
+
 Date: 2026-08-14
 
 ## Scope and source resolution

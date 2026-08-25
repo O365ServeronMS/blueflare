@@ -5,7 +5,32 @@
 - `https://img.bluesia.net/api/health`: PostgreSQL/Valkey latency, provider health and cache version. It is `no-store`.
 - `https://img.bluesia.net/api/metrics`: in-process request, error, latency and Valkey cache-status counters. Set `METRICS_TOKEN` and send it as `x-blueflare-metrics`; the endpoint stays `no-store` and is disabled when the token is empty.
 - API response header `x-blueflare-cache`: `VALKEY-HIT`, `VALKEY-STALE-SERVED`, `VALKEY-HIT-AFTER-LOCK`, `VALKEY-REFRESH`, or `POSTGRES`.
-- Cloudflare: track `CF-Cache-Status`/`Age` separately for Next static assets, public HTML, catalog JSON and signed images. Do not blend search, health, metrics or video traffic into cache-hit targets.
+- Cloudflare: track `CF-Cache-Status`/`Age` separately for Next static assets, public HTML, catalog JSON and images. Do not blend search, health, metrics or video traffic into cache-hit targets.
+
+## Background job signals
+
+These are log lines, not endpoints. All three are one line per run, so `docker logs`
+is the whole interface.
+
+- `[worker] image prewarm selected=… cached=… warmed=… failed=… bytes=… durationMs=…`
+  Steady state is `warmed=0` with everything `cached` in tens of milliseconds — that
+  means the hot set is already on disk and no request was made. A persistently high
+  `warmed` means the catalog is churning; a non-zero `failed` names the reason
+  (`errors=HTTP 404x3`). `declined=` means the run stood down on purpose: either the
+  cache directory was unreadable or free disk was under `IMAGE_PREWARM_MIN_FREE_BYTES`.
+- `[api] image cache sweep files=… bytes=… evicted=… freedBytes=… tmpRemoved=…`
+  Expected to be a no-op with `evicted=0`; it only acts once the cache passes
+  `IMAGE_CACHE_MAX_BYTES`. A non-zero `tmpRemoved` means image builds are crashing
+  between write and rename — worth investigating rather than ignoring.
+- `[backup] dump … / offsite s3://… / prune local … / prune remote …`
+  One cycle per `BACKUP_INTERVAL_SECONDS`. `upload failed` means the dump exists
+  only on the VPS, which is the failure mode that matters: the container exits
+  non-zero so it is visible in `docker ps -a`.
+
+`IMAGE-BUILD` versus `IMAGE-DISK-HIT` in `/api/metrics` is not a normal hit-rate:
+Cloudflare holds images for a year, so the origin mostly sees each asset once and
+`IMAGE-BUILD` legitimately dominates. Prewarming is what keeps that first request
+off a real user, so judge it by the prewarm log rather than by this ratio.
 
 ## Postgres diagnostics
 

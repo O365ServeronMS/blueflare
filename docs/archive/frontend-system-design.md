@@ -1,5 +1,8 @@
 # Blueflare Frontend System Design — Superseded
 
+> **ARCHIVED — phương án bị loại.** Đây là thiết kế static-SPA đã bị thay bằng
+> SSR trên VPS. Giữ lại để tra cứu lý do loại. Nguồn sự thật: `CLAUDE.md`.
+
 > **Superseded on 2026-08-15:** The deployment constraint changed from a static frontend to VPS server rendering. Use [`frontend-nextjs-vps-migration-plan.md`](./frontend-nextjs-vps-migration-plan.md) as the current proposal. This document is retained only as the rejected static-SPA alternative.
 
 **Status:** Proposed

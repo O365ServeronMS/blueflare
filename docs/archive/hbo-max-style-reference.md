@@ -1,4 +1,9 @@
 # HBO Max — Style Reference
+
+> **ARCHIVED — tài liệu tham khảo ngoài, KHÔNG phải thiết kế của Blueflare.**
+> Đây là style reference của HBO Max, accent `#3d6a99` (xanh thép). Blueflare
+> dùng accent đỏ `#e4312a` (xem `src/styles/globals.css`). Đừng áp màu trong
+> file này vào sản phẩm. Nguồn sự thật: `docs/blueflare-ui-v2.md`.
 > Cinema lobby at midnight. Pure black walls, one cool blue exit sign, and movie posters glowing from every surface.
 
 **Theme:** dark

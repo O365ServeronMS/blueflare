@@ -97,7 +97,7 @@ Horizontal page gutters are fluid from 16px mobile to 4vw desktop. The content c
 
 ## Image and LCP strategy
 
-- Use only pre-signed `catalog-api` `i/m` and `i/d` URLs; never create new variants or client signatures.
+- Use only the `i/m` and `i/d` URLs the catalog API emits; never create new variants, and never sign or re-key an image URL client-side.
 - Build-time Hero #1: present in initial HTML with `loading="eager"`, `fetchpriority="high"`, and `decoding="async"`.
 - Other hero candidates are not mounted as images until active.
 - All cards and recommendations: `loading="lazy"`, `decoding="async"`.

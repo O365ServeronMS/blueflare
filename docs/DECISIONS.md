@@ -1,11 +1,18 @@
 # Decisions And Anti-Regression Rules
 
-> **Architecture update (zero-Worker static + catalog-api).** The site is now a
-> static, no-Worker deployment that fetches all catalog data, TMDB metadata, and
-> pre-signed images from the VPS `catalog-api` (`img.bluesia.net/api/*`) client-side.
-> Decisions below about SSR, the data Worker, KV metadata cache, HTML Cache API,
-> image signing in-app, and metadata snapshots are historical. UI, navigation, and
-> playback decisions remain in force. `CLAUDE.md` is authoritative.
+> **Cách đọc file này.** Đây là nhật ký quyết định theo thứ tự thời gian, không
+> phải mô tả kiến trúc hiện tại. Nhiều mục bên dưới nói về các kiến trúc đã bị
+> thay: Cloudflare Worker, KV metadata cache, HTML Cache API, và giai đoạn
+> static client-side fetch. **Không mục nào trong số đó còn chạy.**
+>
+> Hiện trạng: Next.js SSR render trên VPS, Server Component gọi API qua Docker
+> network, Cloudflare chỉ là proxy/CDN thường. Nguồn sự thật duy nhất về kiến
+> trúc là `CLAUDE.md`.
+>
+> Giá trị còn lại của file này là các quyết định **UI, điều hướng và playback** —
+> phần lớn vẫn còn hiệu lực và giải thích *vì sao* code hiện tại như vậy. Trước
+> khi đảo ngược bất kỳ hành vi UI nào, tìm ở đây xem nó đã từng bị đảo ngược
+> chưa và vì lý do gì.
 
 ## 2026-06-24 Movie Detail Hero LCP Preload (reverses 2026-06-13 backdrop deprioritization)
 

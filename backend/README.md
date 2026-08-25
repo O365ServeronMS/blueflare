@@ -22,11 +22,16 @@ the browser connects to the selected provider.
 
 ## Services
 
-- api: HTTP API, response cache, signed image variants, health endpoint.
+- api: HTTP API, response cache, image cache origin and its hourly sweep, health endpoint.
 - worker: provider sync, normalization, deterministic deduplication, health
-  tracking, and home ViewModel precomputation.
+  tracking, home ViewModel precomputation, and image cache prewarming.
 - postgres: canonical movies and provider provenance.
 - valkey: final JSON responses and cache-version invalidation.
+- image-cache-init: one-shot `mkdir`+`chown` of the image cache directory. It
+  exits 0 and stays exited; `api` waits for that completion because it runs as
+  uid 1000 and cannot write a root-owned bind mount.
+- backup: scheduled dump to an S3-compatible store. Exits 0 and stays exited
+  when `BACKUP_ENABLED=false`.
 
 The API is published only on 127.0.0.1:3200. Caddy is the public TLS boundary.
 
@@ -42,9 +47,9 @@ values. DATABASE_URL must contain the same PostgreSQL password.
 
 Validate and start:
 
-    sudo docker compose --env-file .env -f compose.yml config
-    sudo docker compose --env-file .env -f compose.yml up -d --build
-    sudo docker compose --env-file .env -f compose.yml ps
+    docker compose --env-file .env -f compose.yml config
+    docker compose --env-file .env -f compose.yml up -d --build
+    docker compose --env-file .env -f compose.yml ps
     curl -fsS http://127.0.0.1:3200/api/health
 
 The worker imports the configured number of newest pages immediately, starting
@@ -153,8 +158,8 @@ to that port; no static directory or rewrite file is used.
 Build and restart only the frontend service during a release:
 
     cd /opt/stacks/blueflare
-    sudo docker compose --env-file .env -f compose.yml up -d --build frontend
-    sudo docker compose --env-file .env -f compose.yml ps frontend
+    docker compose --env-file .env -f compose.yml up -d --build frontend
+    docker compose --env-file .env -f compose.yml ps frontend
     curl -fsS http://127.0.0.1:3100/healthz
 
 The Next route `/movie/<slug>` is direct and server-rendered. List and search
@@ -226,7 +231,7 @@ availability, raw metadata, streams, and success timestamps.
 
     cd /opt/stacks/blueflare
     npm test
-    sudo docker compose --env-file .env -f compose.yml logs --tail=100 worker
+    docker compose --env-file .env -f compose.yml logs --tail=100 worker
     curl -fsS http://127.0.0.1:3200/api/home-data
     curl -fsS http://127.0.0.1:3200/api/list?type=phim-le&page=1
 

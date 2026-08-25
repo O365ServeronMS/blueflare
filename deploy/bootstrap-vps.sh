@@ -173,22 +173,55 @@ for grp in adm systemd-journal; do
   fi
 done
 
-inject_caddy_block() { # inject_caddy_block MARKER SRC_FILE
-  local marker="$1" src="$2"
+inject_caddy_block() { # inject_caddy_block MARKER  < nội-dung-khối
+  local marker="$1"
   if grep -q "^# BEGIN blueflare:${marker}\$" "$CADDYFILE" 2>/dev/null; then
     echo "Caddyfile: khối ${marker} đã có, bỏ qua."
     return
   fi
   {
     echo "# BEGIN blueflare:${marker}"
-    cat "$src"
+    cat
     echo "# END blueflare:${marker}"
   } >> "$CADDYFILE"
   echo "Caddyfile: đã thêm khối ${marker}."
 }
 
-inject_caddy_block "phim.bluesia.net" "$STACK_DIR/deploy/phim.bluesia.net.caddy"
-inject_caddy_block "img.bluesia.net"  "$STACK_DIR/deploy/img.bluesia.net.caddy"
+# Hai site block viết thẳng ở đây thay vì hai file .caddy riêng: chúng đủ ngắn,
+# và dù sao Caddyfile trên host vẫn phải sửa bằng tay hoặc bằng script này.
+# Access log cố tình bỏ: khối log ra file cần /var/log/caddy ghi được bởi user
+# `caddy`, biến reload thành hai bước sudo và từng làm reload hỏng im lặng.
+# journalctl -u caddy là đủ cho một VPS đơn.
+inject_caddy_block "phim.bluesia.net" <<'CADDY'
+# Next.js frontend chạy trong container VPS tại 127.0.0.1:3100.
+# Cloudflare chỉ là proxy/CDN thường; không Worker, không rewrite static.
+phim.bluesia.net {
+	encode zstd gzip
+
+	header {
+		-Server
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+	}
+
+	# Giữ endpoint invalidation nội bộ khỏi hostname công khai.
+	@internal_revalidate path /api/internal/revalidate
+	handle @internal_revalidate {
+		respond 404
+	}
+
+	reverse_proxy 127.0.0.1:3100
+}
+CADDY
+
+inject_caddy_block "img.bluesia.net" <<'CADDY'
+img.bluesia.net {
+	encode zstd gzip
+
+	reverse_proxy 127.0.0.1:3200
+}
+CADDY
 
 caddy fmt --overwrite "$CADDYFILE"
 if caddy validate --config "$CADDYFILE" --adapter caddyfile >/tmp/caddy-validate.$$ 2>&1; then

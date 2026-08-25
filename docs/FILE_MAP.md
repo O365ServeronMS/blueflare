@@ -47,8 +47,8 @@ trong git; thư mục stack giữ bản copy, đồng bộ bằng `deploy/sync-s
 - `deploy/backup/`: image + script của service backup (dump, verify, upload S3-compatible, prune).
 - `backend/src/`: provider sync, canonical merge, ViewModels, cache, image cache origin.
   Job nền: `prewarm.js` (worker làm ấm cache ảnh), `imageCacheSweep.js` (API dọn/evict cache).
-- `deploy/phim.bluesia.net.caddy`: public reverse proxy to frontend port 3100.
-- `deploy/img.bluesia.net.caddy`: public reverse proxy to API port 3200.
+- `deploy/bootstrap-vps.sh`: dựng VPS trắng; hai site block Caddy (`phim` → 3100,
+  `img` → 3200) nằm inline trong script, không còn file `.caddy` riêng.
 - `deploy/cloudflare-frontend-static-rule.json`: optional normal Cloudflare cache rule for immutable `/_next/static/` assets.
 
 Chỉ tồn tại ở thư mục stack, **không** trong git: `.env` (secret),

@@ -28,7 +28,7 @@ for f in "$SRC_DIR"/deploy/*.sh; do
   [[ "$(basename "$f")" == "sync-stack.sh" ]] && continue
   copy "$f" "$STACK_DIR/deploy/$(basename "$f")" 755
 done
-for f in "$SRC_DIR"/deploy/*.json "$SRC_DIR"/deploy/*.caddy; do
+for f in "$SRC_DIR"/deploy/*.json; do
   copy "$f" "$STACK_DIR/deploy/$(basename "$f")" 644
 done
 

@@ -59,7 +59,7 @@ Codebase and runtime are separate directories (ADR-001): the repo lives at `/hom
 - `lib/playback.ts`: device/source ordering; keep it centralized.
 - `src/styles/globals.css`: shared design tokens and Tailwind styles. Accent is red `#e4312a`.
 - `backend/src/`: `server.js` (API + sweep scheduler), `worker.js` (sync + prewarm), `images.js` + `imageStore.js` (cache origin), `prewarm.js`, `imageCacheSweep.js`, `concurrency.js`, `repository.js`, `viewmodels.js`, `cache.js`.
-- `deploy/`: canonical `compose.yml`, Caddy site files, Cloudflare rules, `backup/` (backup service image), and operational scripts (`sync-stack.sh`, `apply-env.sh`, `backup-postgres.sh`, `bootstrap-vps.sh`).
+- `deploy/`: canonical `compose.yml`, Cloudflare rules, `backup/` (backup service image), and operational scripts (`sync-stack.sh`, `apply-env.sh`, `backup-postgres.sh`, `bootstrap-vps.sh`). The two Caddy site blocks live inline in `bootstrap-vps.sh`, not as separate files.
 
 ## Data, cache, and navigation invariants
 

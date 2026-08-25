@@ -1,6 +1,0 @@
-# Access log intentionally omitted — see phim.bluesia.net.caddy for why.
-img.bluesia.net {
-	encode zstd gzip
-
-	reverse_proxy 127.0.0.1:3200
-}

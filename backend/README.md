@@ -131,15 +131,28 @@ every title the providers have dropped in the meantime.
 
 ## Caddy
 
-Append deploy/img.bluesia.net.caddy to /etc/caddy/Caddyfile, format, validate,
-and reload:
+The host `/etc/caddy/Caddyfile` is the only place these two site blocks live;
+the repository does not carry `.caddy` files. `deploy/bootstrap-vps.sh` appends
+both blocks once (marker-guarded, then `caddy fmt`/`validate`/`reload`), so on a
+fresh VPS there is nothing to do by hand. To edit or re-add one later, edit the
+Caddyfile directly, then format, validate, and reload:
 
-	# Run once; do not append a duplicate block on later deployments.
-	cd /opt/stacks/blueflare
-	sudo tee -a /etc/caddy/Caddyfile < deploy/img.bluesia.net.caddy
     sudo caddy fmt --overwrite /etc/caddy/Caddyfile
     sudo caddy validate --config /etc/caddy/Caddyfile
     sudo systemctl reload caddy
+
+Access logs are intentionally omitted from both blocks: a file-log block needs a
+writable `/var/log/caddy` owned by the `caddy` user, which turns reload into a
+two-step sudo dance and once caused a silent reload failure. `journalctl -u
+caddy` is enough for this single-VPS setup.
+
+The image site block is just a proxy to the API port:
+
+    img.bluesia.net {
+        encode zstd gzip
+
+        reverse_proxy 127.0.0.1:3200
+    }
 
 Caddy obtains and serves the origin certificate for img.bluesia.net. Once the
 route is active, Cloudflare Full (strict) can reach the origin without 525.
@@ -168,9 +181,29 @@ render-cache invalidation endpoint is reachable only from the Docker network
 and requires `FRONTEND_REVALIDATE_SECRET`; Caddy returns 404 for the public
 hostname path.
 
-Install `deploy/phim.bluesia.net.caddy` in `/etc/caddy/Caddyfile`, then format,
-validate, and reload Caddy using the same host procedure as the image site.
-Verify after reload:
+Its site block adds the security headers and the 404 for the internal
+revalidation path:
+
+    phim.bluesia.net {
+        encode zstd gzip
+
+        header {
+            -Server
+            X-Content-Type-Options "nosniff"
+            Referrer-Policy "strict-origin-when-cross-origin"
+            X-Frame-Options "DENY"
+        }
+
+        @internal_revalidate path /api/internal/revalidate
+        handle @internal_revalidate {
+            respond 404
+        }
+
+        reverse_proxy 127.0.0.1:3100
+    }
+
+Format, validate, and reload Caddy using the same host procedure as the image
+site. Verify after reload:
 
     curl -fsSI https://phim.bluesia.net/
     curl -fsSI 'https://phim.bluesia.net/list/phim-le?page=2'

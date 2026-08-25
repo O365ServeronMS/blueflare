@@ -21,6 +21,9 @@ copy() {
 }
 
 copy "$SRC_DIR/deploy/compose.yml" "$STACK_DIR/compose.yml" 644
+# apply-env.sh validates .env against this file, so a stale copy means new
+# required keys stop being checked. It is a template, never real secrets.
+copy "$SRC_DIR/backend/.env.example" "$STACK_DIR/.env.example" 644
 for f in "$SRC_DIR"/deploy/*.sh; do
   [[ "$(basename "$f")" == "sync-stack.sh" ]] && continue
   copy "$f" "$STACK_DIR/deploy/$(basename "$f")" 755

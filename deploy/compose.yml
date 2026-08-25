@@ -139,6 +139,26 @@ services:
     networks:
       - backend
 
+  backup:
+    build:
+      context: ${BLUEFLARE_SRC:-/home/ubuntu/blueflare}/deploy/backup
+    # on-failure, not unless-stopped: with BACKUP_ENABLED=false the script
+    # exits 0 and the container stays stopped instead of restart-looping.
+    restart: on-failure
+    user: "1000:1000"
+    # Every BACKUP_* knob is read straight from .env. Listing them under
+    # `environment:` as well would silently override the env_file with an empty
+    # string whenever compose's own interpolation could not resolve them.
+    # See backend/.env.example for the S3 endpoint/region of each provider.
+    env_file: ${BLUEFLARE_ENV_FILE:-.env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ${BACKUP_HOST_DIR:-./backups/postgres}:/backups
+    networks:
+      - backend
+
 networks:
   backend:
     driver: bridge

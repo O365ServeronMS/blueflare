@@ -1,21 +1,18 @@
 #!/usr/bin/env bash
+# Take one backup right now, outside the backup container's schedule.
+#
+# Thin wrapper on purpose: the dump/verify/upload/prune logic lives in
+# deploy/backup/backup.sh and runs in the backup service, so there is one
+# implementation rather than a scheduled one and a manual one that drift.
+#
+# BACKUP_ENABLED is forced on for this run, so an ad-hoc backup works even
+# while the scheduled service is switched off.
+#
+# Usage: deploy/backup-postgres.sh
 set -euo pipefail
 
 STACK_DIR=${BLUEFLARE_STACK_DIR:-/opt/stacks/blueflare}
-BACKUP_DIR=${BLUEFLARE_BACKUP_DIR:-/opt/docker/backups/blueflare/postgres}
 COMPOSE_FILE=${BLUEFLARE_COMPOSE_FILE:-$STACK_DIR/compose.yml}
-STAMP=$(date -u +%Y%m%dT%H%M%SZ)
-TARGET="$BACKUP_DIR/blueflare-$STAMP.dump"
-TEMPORARY="$TARGET.tmp"
 
-umask 077
-install -d -m 700 "$BACKUP_DIR"
-
-docker compose --env-file "$STACK_DIR/.env" -f "$COMPOSE_FILE" \
-  exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' \
-  > "$TEMPORARY"
-
-docker compose --env-file "$STACK_DIR/.env" -f "$COMPOSE_FILE" \
-  exec -T postgres pg_restore --list < "$TEMPORARY" >/dev/null
-mv "$TEMPORARY" "$TARGET"
-printf '%s\n' "$TARGET"
+exec docker compose --env-file "$STACK_DIR/.env" -f "$COMPOSE_FILE" \
+  run --rm --env BACKUP_ENABLED=true backup --once

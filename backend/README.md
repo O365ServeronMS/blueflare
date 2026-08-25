@@ -80,18 +80,49 @@ hourly it removes orphan `.tmp` files and, only once the cache is over
 target. Eviction lives in the API because the API is the only writer of this
 directory.
 
-Create a compact PostgreSQL backup with:
+A remote storage backend for the *image cache itself* is still future work. If
+one is added, keep its object keys aligned with the local cache identity,
+`images/v2/{variant}/{hash-prefix}/{sha256}.webp`, and do not change the public
+`img.bluesia.net/i/{m|d}/…` URL contract.
+
+## Backup and restore
+
+The `backup` service takes a scheduled offsite backup: `pg_dump -Fc`, verified
+with `pg_restore --list` before it counts as a backup, uploaded to an
+S3-compatible object store, then pruned on both ends (`BACKUP_KEEP_LOCAL` for
+fast local restores, `BACKUP_KEEP_REMOTE` for the actual backup). It is off
+unless `BACKUP_ENABLED=true`, and sits at `Exited (0)` when off rather than
+restart-looping. The image cache is deliberately excluded: it rebuilds itself
+from `image_assets` and the worker prewarms it.
+
+The target is any S3-compatible store, so changing provider is an env change
+rather than a code change — `BACKUP_S3_*` in `.env.example` lists the endpoint
+and region for R2, Backblaze B2, Wasabi, AWS S3 and MinIO.
+
+For a backup outside the schedule:
 
     /opt/stacks/blueflare/deploy/backup-postgres.sh
 
-The script creates a custom-format `pg_dump`, verifies it with `pg_restore
---list`, and deliberately excludes the regenerable image cache. Schedule it
-outside the request path and retain backups according to the VPS backup policy.
+### Rebuilding this VPS from nothing
 
-R2 and Backblaze B2 are future storage backends. Keep their object keys aligned
-with the local cache identity: `images/v2/{variant}/{hash-prefix}/{sha256}.webp`.
-Do not change the public `img.bluesia.net/i/{m|d}/…` URL contract when adding a
-remote backend.
+The repository carries everything except secrets and data:
+
+1. Clone the repository and run `deploy/bootstrap-vps.sh`. It regenerates
+   `POSTGRES_PASSWORD`, `IMAGE_SIGNING_SECRET`, `FRONTEND_REVALIDATE_SECRET`
+   and `METRICS_TOKEN`. `TMDB_API_KEY` is the one value it cannot regenerate,
+   so that key has to be kept somewhere off the machine.
+2. Fill in the `BACKUP_S3_*` credentials and download the newest object under
+   `s3://<bucket>/postgres/`.
+3. Bring up PostgreSQL alone, then restore into it:
+
+        pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists <dump>
+
+4. Start the rest of the stack and check `/api/health`, `/healthz`, and one
+   list and one detail page.
+
+Skipping the restore is not a shortcut: the site comes up empty and the worker
+re-crawls the providers from scratch, which takes weeks and silently loses
+every title the providers have dropped in the meantime.
 
 ## Caddy
 

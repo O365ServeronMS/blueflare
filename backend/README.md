@@ -237,17 +237,35 @@ Provider documentation verified during implementation:
 
 Representative response fixtures are stored under test/fixtures.
 
-## PostgreSQL 17 -> 18 cutover
+## PostgreSQL major upgrades
 
-Run this as a maintenance operation after testing the exact images on a copy of the backup. The former PostgreSQL 17 volume is removed only after all cutover checks pass; the dump remains the rollback source.
+The database lives in one volume, `postgres-data`. There is no standing
+rollback volume from a previous major: the retained dumps are the rollback
+source, so an upgrade is always dump-and-restore rather than in-place.
 
-1. Record the baseline: `/api/health`, row counts, migration names, database size, and Valkey health. Pull `postgres:18.6-alpine` and `valkey/valkey:9.1.1-alpine` before the window.
-2. Stop the worker so no catalog writes occur during the dump. Create and validate a custom-format dump using `deploy/backup-postgres.sh`.
-3. Start PostgreSQL 18 on the new `postgres18-data` volume. Restore the dump, then verify schema, row counts, indexes, and a scratch API smoke test.
-4. Stop the API, point the API and worker at PostgreSQL 18, and start the API alone. Require a healthy `/api/health` and successful home, list, detail, and search requests before starting the worker.
-5. Run one worker sync cycle and inspect logs for migration, constraint, pool, or serialization errors. Keep the old volume for the rollback window.
+`POSTGRES_MOUNT` is the parent directory, not `.../data`, because PostgreSQL
+18+ keeps `PGDATA` one level below it at `/var/lib/postgresql/<major>/docker`.
+A major that changes this layout again needs `POSTGRES_MOUNT` adjusted in the
+same window.
 
-Rollback is restore-based after the old volume is removed: stop API/worker, set `POSTGRES_IMAGE=postgres:17.11-alpine`, `POSTGRES_VOLUME=postgres-data`, and `POSTGRES_MOUNT=/var/lib/postgresql/data`, start only PostgreSQL 17, restore the retained custom-format dump into the fresh volume, then start API/worker. Do not roll back after accepting new writes without first deciding how to reconcile those writes.
+Run this as a maintenance operation, after testing the exact images against a
+copy of the backup:
+
+1. Record the baseline: `/api/health`, row counts, migration names, database
+   size, and Valkey health. Pull the new images before the window.
+2. Stop the worker so no catalog writes occur during the dump, then create and
+   validate a dump with `deploy/backup-postgres.sh`.
+3. Start the new major on a fresh volume, restore the dump into it, and verify
+   schema, row counts, indexes, and a scratch API smoke test.
+4. Stop the API, point API and worker at the new volume, and start the API
+   alone. Require a healthy `/api/health` plus working home, list, detail and
+   search requests before starting the worker.
+5. Run one worker sync cycle and inspect logs for migration, constraint, pool
+   or serialization errors. Keep the previous volume until those checks pass.
+
+To roll back, restore the retained dump into a volume running the previous
+image. Do not roll back after accepting new writes without first deciding how
+to reconcile them.
 
 ## Valkey 8 -> 9 cutover
 

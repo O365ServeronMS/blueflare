@@ -9,9 +9,10 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      # PostgreSQL 18+ stores PGDATA below the parent mount.
-      # A PostgreSQL 17 rollback uses a fresh volume restored from backup.
-      - ${POSTGRES_VOLUME:-postgres18-data}:${POSTGRES_MOUNT:-/var/lib/postgresql}
+      # PostgreSQL 18+ stores PGDATA below the parent mount, so POSTGRES_MOUNT
+      # is the parent rather than .../data. A major upgrade that changes this
+      # layout again is a dump-and-restore into a fresh volume.
+      - ${POSTGRES_VOLUME:-postgres-data}:${POSTGRES_MOUNT:-/var/lib/postgresql}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -164,7 +165,5 @@ networks:
     driver: bridge
 
 volumes:
-  # Reserved for a restore-based PostgreSQL 17 rollback.
   postgres-data:
-  postgres18-data:
   valkey-data:

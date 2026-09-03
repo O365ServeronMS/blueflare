@@ -70,7 +70,10 @@ export function SectionRow({
     });
     const start = track.scrollLeft;
 
-    if (Math.abs(target - start) <= 1 || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    // Cố ý animate kể cả khi prefers-reduced-motion: trượt trong carousel do
+    // người dùng chủ động bấm <> được coi là chấp nhận được, và nếu tôn trọng
+    // cài đặt này thì nút chỉ nhảy tức thì ("chớp") — không phải điều muốn ở đây.
+    if (Math.abs(target - start) <= 1) {
       track.scrollLeft = target;
       track.style.scrollSnapType = "";
       return;

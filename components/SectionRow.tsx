@@ -1,9 +1,16 @@
 "use client";
 
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { MovieCard as MovieCardType } from "@/lib/types";
+import { getRailSlideTarget, type RailDirection } from "@/lib/rail-motion";
 import { MovieCard } from "@/components/MovieCard";
+
+const RAIL_SLIDE_DURATION_MS = 300;
+
+function easeOutCubic(progress: number) {
+  return 1 - Math.pow(1 - progress, 3);
+}
 
 export function SectionRow({
   title,
@@ -23,12 +30,76 @@ export function SectionRow({
   ranked?: boolean;
 }) {
   const trackRef = useRef<HTMLDivElement>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const animationTargetRef = useRef<number | null>(null);
+  const animatedTrackRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => () => {
+    if (animationFrameRef.current !== null) window.cancelAnimationFrame(animationFrameRef.current);
+    if (animatedTrackRef.current) animatedTrackRef.current.style.scrollSnapType = "";
+  }, []);
+
   if (!items.length) return null;
 
-  function scroll(direction: -1 | 1) {
+  function cancelRailAnimation(restoreSnap = true) {
+    if (animationFrameRef.current !== null) window.cancelAnimationFrame(animationFrameRef.current);
+    if (restoreSnap && animatedTrackRef.current) animatedTrackRef.current.style.scrollSnapType = "";
+    animationFrameRef.current = null;
+    animationTargetRef.current = null;
+    animatedTrackRef.current = null;
+  }
+
+  function scroll(direction: RailDirection) {
     const track = trackRef.current;
     if (!track) return;
-    track.scrollBy({ left: direction * track.clientWidth * 0.82, behavior: "smooth" });
+
+    const queuedOrigin = animationTargetRef.current;
+    cancelRailAnimation(false);
+
+    const firstCard = track.firstElementChild as HTMLElement | null;
+    const firstCardLeft = firstCard?.offsetLeft ?? 0;
+    const snapPoints = Array.from(track.children, (child) => (
+      (child as HTMLElement).offsetLeft - firstCardLeft
+    ));
+    const target = getRailSlideTarget({
+      origin: queuedOrigin ?? track.scrollLeft,
+      direction,
+      viewportWidth: track.clientWidth,
+      maxScrollLeft: track.scrollWidth - track.clientWidth,
+      snapPoints
+    });
+    const start = track.scrollLeft;
+
+    if (Math.abs(target - start) <= 1 || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      track.scrollLeft = target;
+      track.style.scrollSnapType = "";
+      return;
+    }
+
+    track.style.scrollSnapType = "none";
+    animatedTrackRef.current = track;
+    animationTargetRef.current = target;
+    const animatedTrack: HTMLDivElement = track;
+    let startedAt: number | null = null;
+
+    function animate(timestamp: number) {
+      if (startedAt === null) startedAt = timestamp;
+      const progress = Math.min((timestamp - startedAt) / RAIL_SLIDE_DURATION_MS, 1);
+      animatedTrack.scrollLeft = start + (target - start) * easeOutCubic(progress);
+
+      if (progress < 1) {
+        animationFrameRef.current = window.requestAnimationFrame(animate);
+        return;
+      }
+
+      animatedTrack.scrollLeft = target;
+      animatedTrack.style.scrollSnapType = "";
+      animationFrameRef.current = null;
+      animationTargetRef.current = null;
+      animatedTrackRef.current = null;
+    }
+
+    animationFrameRef.current = window.requestAnimationFrame(animate);
   }
 
   return (
@@ -50,7 +121,13 @@ export function SectionRow({
           </button>
         </div>
       </div>
-      <div ref={trackRef} className="bf-rail-track flex snap-x snap-mandatory gap-1.5 overflow-x-auto px-[var(--bf-page-gutter)] pb-4 pt-1 sm:gap-2" tabIndex={0}>
+      <div
+        ref={trackRef}
+        className="bf-rail-track flex snap-x snap-mandatory gap-1.5 overflow-x-auto px-[var(--bf-page-gutter)] pb-4 pt-1 sm:gap-2"
+        tabIndex={0}
+        onPointerDown={() => cancelRailAnimation()}
+        onWheel={() => cancelRailAnimation()}
+      >
         {items.slice(0, itemLimit).map((movie, index) => (
           <div key={movie.slug} className="w-[32vw] min-w-[124px] max-w-[190px] shrink-0 snap-start sm:w-[22vw] lg:w-[13vw]">
             <MovieCard movie={movie} compact returnTo={returnTo} rank={ranked ? index + 1 : undefined} />

@@ -17,6 +17,7 @@ function boolean(name, fallback = false) {
 }
 
 const nodeEnv = process.env.NODE_ENV || 'development';
+const syncIntervalMs = integer('SYNC_INTERVAL_MS', 15 * 60 * 1000, 1000);
 const imageSigningSecret = process.env.IMAGE_SIGNING_SECRET || (
   nodeEnv === 'production' ? '' : 'blueflare-local-development-signing-secret'
 );
@@ -94,7 +95,11 @@ export const config = Object.freeze({
   syncProviders: csv('SYNC_PROVIDERS', 'nguonc,kkphim'),
   syncPagesPerRun: integer('SYNC_PAGES_PER_RUN', 3, 1),
   syncConcurrency: integer('SYNC_CONCURRENCY', 4, 1),
-  syncIntervalMs: integer('SYNC_INTERVAL_MS', 15 * 60 * 1000, 1000),
+  syncIntervalMs,
+  // The worker refreshes this lease at cycle start and completion. Two sync
+  // intervals plus a small allowance distinguishes a slow cycle from a dead
+  // worker without another hand-tuned deployment knob.
+  workerHeartbeatTtlSeconds: Math.max(60, Math.ceil(((syncIntervalMs * 2) + (5 * 60 * 1000)) / 1000)),
   // Backfill: walks older pages behind a persisted checkpoint. Runs on its own
   // cadence (backfillIntervalMs) independent of the head-sync interval above.
   backfillEnabled: boolean('BACKFILL_ENABLED', true),

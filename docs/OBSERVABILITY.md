@@ -2,15 +2,21 @@
 
 ## Runtime signals
 
-- `https://img.bluesia.net/api/health`: PostgreSQL/Valkey latency, provider health and cache version. It is `no-store`.
+- `https://img.bluesia.net/api/health`: PostgreSQL/Valkey latency, provider health, cache version and the sync-worker heartbeat. It is `no-store`. A missing, failed or stale worker heartbeat makes the endpoint return `503`; a fresh `degraded` heartbeat remains live but needs investigation.
 - `https://img.bluesia.net/api/metrics`: in-process request, error, latency and Valkey cache-status counters. Set `METRICS_TOKEN` and send it as `x-blueflare-metrics`; the endpoint stays `no-store` and is disabled when the token is empty.
 - API response header `x-blueflare-cache`: `VALKEY-HIT`, `VALKEY-STALE-SERVED`, `VALKEY-HIT-AFTER-LOCK`, `VALKEY-REFRESH`, or `POSTGRES`.
 - Cloudflare: track `CF-Cache-Status`/`Age` separately for Next static assets, public HTML, catalog JSON and images. Do not blend search, health, metrics or video traffic into cache-hit targets.
 
 ## Background job signals
 
-These are log lines, not endpoints. All three are one line per run, so `docker logs`
-is the whole interface.
+The worker publishes `catalog:worker:heartbeat` to Valkey after startup and every
+cycle. Its TTL is two sync intervals plus five minutes (35 minutes at the default
+15-minute interval), so a stopped or wedged worker becomes visible even when the
+container still exists. `/api/health` is the supported way to consume it; do not
+alert directly on the Valkey key.
+
+The remaining signals are log lines. All three are one line per run, so `docker
+logs` is the whole interface.
 
 - `[worker] image prewarm selected=… cached=… warmed=… failed=… bytes=… durationMs=…`
   Steady state is `warmed=0` with everything `cached` in tens of milliseconds — that
@@ -65,7 +71,38 @@ Use `EXPLAIN (ANALYZE, BUFFERS)` against representative home/list/genre/country/
 ## Suggested alerts
 
 - health status != `ok` for 2 consecutive checks.
+- worker heartbeat `status=degraded` for more than 5 minutes, or worker health reason `missing`, `failed`, `stale` or `invalid` on one check.
 - provider consecutive failures >= 3.
 - API 5xx rate > 1% over 5 minutes.
 - `POSTGRES` cache builds > 5% of catalog reads after warmup.
 - image cache responses returning 5xx or repeated source fetch failures.
+- host CPU steal > 10% for 5 minutes, disk await > 100 ms for 5 minutes, or any kernel `soft lockup`/Docker `restartmanger wait error` event. These need host/provider escalation, not an application restart.
+
+## Worker exit and host-stall response
+
+When the public health endpoint reports a stale worker, first preserve evidence
+before changing the host. Run the following on the VPS for the affected date
+(`DD` is the day-of-month used by sysstat):
+
+```bash
+cd /opt/stacks/blueflare
+docker compose ps -q worker | xargs docker inspect --format 'status={{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}} error={{json .State.Error}} restarts={{.RestartCount}}'
+docker compose logs --timestamps --since '2h' worker
+journalctl -u docker -u containerd --since '2 hours ago'
+journalctl -k --since '2 hours ago' | grep -Ei 'soft lockup|blocked for|oom|i/o error'
+sar -u ALL -d -q -f /var/log/sysstat/saDD
+```
+
+Classify `ECONNRESET`, connection timeout/refused and PostgreSQL startup/recovery
+codes as dependency-transient: the worker now retries these with capped
+exponential backoff and writes a `degraded` heartbeat. Any other failure is
+intentional fail-fast: it writes `failed`, exits non-zero and lets Compose expose
+the bad release. Do not add a blanket catch or an infinite crash loop.
+
+If CPU steal, block-device await, soft-lockups, `containerd-shim`/`runc` stalls, or
+Docker restart-manager task conflicts coincide with the exit, open a VPS-provider
+ticket with the preserved timestamps, `sar` output and kernel/Docker excerpts.
+Do not restart `containerd` automatically: it disrupts every workload and would
+erase useful evidence. Move the workload to a different physical host only after
+the provider supplies a root-cause statement or the symptoms recur under normal
+load; validate restore and the public health endpoint after the move.

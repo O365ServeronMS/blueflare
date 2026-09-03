@@ -25,6 +25,10 @@ their designed finished state, not a failure:
 | `image-cache-init` | one-shot `mkdir`+`chown` of the image cache dir, then `Exited (0)` |
 | `backup` | scheduled offsite dump; `Exited (0)` when `BACKUP_ENABLED=false` |
 
+Host-side container names are pinned to `blueflare-<service>` without Compose's
+replica suffix. Service-to-service traffic still uses the stable service DNS names
+(`frontend`, `api`, `postgres`, and `valkey`), never the host-side container names.
+
 `api` gates on `image-cache-init` completing successfully, because it runs as uid
 1000 and would otherwise fail to write a root-owned bind mount.
 

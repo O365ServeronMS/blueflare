@@ -1,6 +1,11 @@
 import { createClient } from 'redis';
 import { randomUUID } from 'node:crypto';
 import { config } from './config.js';
+import {
+  createWorkerHeartbeat,
+  parseWorkerHeartbeat,
+  workerHeartbeatKey
+} from './workerHealth.js';
 
 let client;
 let connecting;
@@ -119,6 +124,29 @@ export async function invalidateResponseKeys(keys = []) {
     return Number(result) || 0;
   } catch (error) { console.error('[valkey] invalidation failed', error.message); return 0; }
 }
+
+export async function writeWorkerHeartbeat(status, details = {}) {
+  const heartbeat = createWorkerHeartbeat(status, details);
+  try {
+    await (await redis()).set(workerHeartbeatKey, JSON.stringify(heartbeat), {
+      EX: config.workerHeartbeatTtlSeconds
+    });
+    return heartbeat;
+  } catch (error) {
+    console.error('[valkey] worker heartbeat write failed', error.message);
+    return null;
+  }
+}
+
+export async function readWorkerHeartbeat() {
+  try {
+    return parseWorkerHeartbeat(await (await redis()).get(workerHeartbeatKey));
+  } catch (error) {
+    console.error('[valkey] worker heartbeat read failed', error.message);
+    return null;
+  }
+}
+
 export async function redisHealth() {
   const started = Date.now();
   const result = await (await redis()).ping();

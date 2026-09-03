@@ -1,20 +1,18 @@
 import { pool } from './db.js';
 import { config } from './config.js';
 import {
+  normalizeAllowedImageSourceUrl,
+  sanitizeMovieImageSources
+} from './imageSourcePolicy.js';
+import {
   isControlledFuzzyMatch,
   normalizeTitle,
   slugify
 } from './identity.js';
 
 async function ensureImageAsset(client, sourceUrl) {
-  let normalized = sourceUrl ? String(sourceUrl).trim() : '';
+  const normalized = normalizeAllowedImageSourceUrl(sourceUrl);
   if (!normalized) return null;
-  const parsed = new URL(normalized);
-  if (parsed.protocol !== 'https:' || !config.imageAllowedHosts.some((allowed) => (
-    parsed.hostname === allowed || parsed.hostname.endsWith('.' + allowed)
-  ))) throw new Error('Image source host is not allowed');
-  parsed.hash = '';
-  normalized = parsed.toString();
   const result = await client.query(
     'INSERT INTO image_assets (source_url) VALUES ($1) ' +
     'ON CONFLICT (source_url) DO UPDATE SET updated_at=now() RETURNING id',
@@ -342,6 +340,16 @@ function sourceFingerprint(source) {
 export async function upsertCanonical(incoming) {
   if (!incoming.providerMovieId || !incoming.providerSlug) {
     throw new Error('Provider movie identity is incomplete');
+  }
+  const sanitizedImages = sanitizeMovieImageSources(incoming);
+  incoming = sanitizedImages.movie;
+  for (const rejected of sanitizedImages.rejected) {
+    console.warn(
+      '[repository] dropped untrusted image source provider=' + incoming.provider +
+      ' slug=' + incoming.providerSlug +
+      ' field=' + rejected.field +
+      ' host=' + rejected.host
+    );
   }
 
   const client = await pool.connect();

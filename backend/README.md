@@ -275,39 +275,42 @@ Provider documentation verified during implementation:
 
 Representative response fixtures are stored under test/fixtures.
 
-## PostgreSQL major upgrades
-
-The database lives in one volume, `postgres-data`. There is no standing
-rollback volume from a previous major: the retained dumps are the rollback
-source, so an upgrade is always dump-and-restore rather than in-place.
+## PostgreSQL container upgrades
 
 `POSTGRES_MOUNT` is the parent directory, not `.../data`, because PostgreSQL
 18+ keeps `PGDATA` one level below it at `/var/lib/postgresql/<major>/docker`.
-A major that changes this layout again needs `POSTGRES_MOUNT` adjusted in the
-same window.
+`POSTGRES_VOLUME` is the physical Docker volume name; Compose always mounts it
+through the logical `postgres-data` volume. An upgrade can therefore restore
+into a new physical volume and leave the prior one untouched for rollback.
 
-Run this as a maintenance operation, after testing the exact images against a
-copy of the backup:
+Run a major upgrade, or a base-OS change such as Alpine/musl to Trixie/glibc,
+as a dump-and-restore maintenance operation. Even when the PostgreSQL major
+does not change, the latter changes libc collation behavior, so do not mount an
+Alpine data directory directly into the Trixie image when the database uses a
+libc locale.
 
-1. Record the baseline: `/api/health`, row counts, migration names, database
-   size, and Valkey health. Pull the new images before the window.
-2. Stop the worker so no catalog writes occur during the dump, then create and
-   validate a dump with `deploy/backup-postgres.sh`.
-3. Start the new major on a fresh volume, restore the dump into it, and verify
-   schema, row counts, indexes, and a scratch API smoke test.
-4. Stop the API, point API and worker at the new volume, and start the API
-   alone. Require a healthy `/api/health` plus working home, list, detail and
-   search requests before starting the worker.
-5. Run one worker sync cycle and inspect logs for migration, constraint, pool
-   or serialization errors. Keep the previous volume until those checks pass.
+1. Record `/api/health`, row counts, migration names, database size and Valkey
+   health. Pull and rehearse the exact target images against a copy of a dump.
+2. Stop API and worker, create a final verified dump with
+   `deploy/backup-postgres.sh`, and record its checksum.
+3. Set `POSTGRES_VOLUME` to a new physical name, start the target image, then
+   restore the dump. Verify schema, row counts, indexes and API smoke tests.
+4. Start API and worker, run one sync cycle, then inspect migration,
+   constraint, pool and serialization errors. Keep the previous volume until a
+   successful post-cutover backup and observation window have completed.
 
-To roll back, restore the retained dump into a volume running the previous
-image. Do not roll back after accepting new writes without first deciding how
-to reconcile them.
+To roll back before accepting new writes, point `POSTGRES_IMAGE` and
+`POSTGRES_VOLUME` back at the previous pair and recreate PostgreSQL, API and
+worker. Do not delete the old volume during the upgrade window.
 
-## Valkey 8 -> 9 cutover
+## Valkey upgrades
 
-Valkey is a rebuildable response cache, but AOF is retained for stale-response availability. The Compose default caps it at `512mb` so `allkeys-lru` has an effective bound. Upgrade Valkey separately from PostgreSQL, verify AOF load, `PING`, key count, and API cache hit/miss behavior, then observe logs and memory for at least 15 minutes. If the existing AOF cannot be loaded, preserve the old volume and start Valkey 9 on a fresh cache volume; the API will repopulate it from PostgreSQL.
+Valkey is a rebuildable response cache, but AOF is retained for stale-response
+availability. The Compose default caps it at `512mb` so `allkeys-lru` has an
+effective bound. Upgrade Valkey separately from PostgreSQL, verify AOF load,
+`PING`, key count and API cache hit/miss behavior, then observe logs and memory
+for at least 15 minutes. If the existing AOF cannot be loaded, start Valkey on
+an empty cache volume; the API will repopulate it from PostgreSQL.
 
 ## PgBouncer decision
 

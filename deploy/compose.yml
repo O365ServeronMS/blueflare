@@ -2,7 +2,8 @@ name: blueflare
 
 services:
   postgres:
-    image: ${POSTGRES_IMAGE:-postgres:18.6-alpine}
+    container_name: blueflare-postgres
+    image: ${POSTGRES_IMAGE:-postgres:18.6-trixie}
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
@@ -12,7 +13,7 @@ services:
       # PostgreSQL 18+ stores PGDATA below the parent mount, so POSTGRES_MOUNT
       # is the parent rather than .../data. A major upgrade that changes this
       # layout again is a dump-and-restore into a fresh volume.
-      - ${POSTGRES_VOLUME:-postgres-data}:${POSTGRES_MOUNT:-/var/lib/postgresql}
+      - postgres-data:${POSTGRES_MOUNT:-/var/lib/postgresql}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -22,7 +23,8 @@ services:
       - backend
 
   valkey:
-    image: ${VALKEY_IMAGE:-valkey/valkey:9.1.1-alpine}
+    container_name: blueflare-valkey
+    image: ${VALKEY_IMAGE:-valkey/valkey:9.1.2-trixie}
     restart: unless-stopped
     command:
       - valkey-server
@@ -43,6 +45,7 @@ services:
       - backend
 
   image-cache-init:
+    container_name: blueflare-image-cache-init
     # alpine thay vì build image backend: service này chỉ mkdir + chown.
     # alpine không có user `node`, phải dùng uid:gid số — 1000:1000 là `node`
     # trong node:22-bookworm-slim mà api/worker chạy.
@@ -54,6 +57,7 @@ services:
       - ${IMAGE_CACHE_HOST_DIR:-./data/images}:/data/images
 
   api:
+    container_name: blueflare-api
     build:
       context: ${BLUEFLARE_SRC:-/home/ubuntu/blueflare}/backend
     restart: unless-stopped
@@ -83,6 +87,7 @@ services:
 
 
   frontend:
+    container_name: blueflare-frontend
     build:
       context: ${BLUEFLARE_SRC:-/home/ubuntu/blueflare}
       dockerfile: Dockerfile.frontend
@@ -115,6 +120,7 @@ services:
       - backend
 
   worker:
+    container_name: blueflare-worker
     build:
       context: ${BLUEFLARE_SRC:-/home/ubuntu/blueflare}/backend
     restart: unless-stopped
@@ -137,10 +143,20 @@ services:
       # entries already exist. Creating one stays the api service's job, over
       # its /i/ path, so there is a single writer for this directory.
       - ${IMAGE_CACHE_HOST_DIR:-./data/images}:/data/images:ro
+    # The worker reports a TTL-bound heartbeat through Valkey. Check it through
+    # the API so a running-but-stuck Node process cannot appear healthy merely
+    # because its PID still exists.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://api:3200/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 2m
     networks:
       - backend
 
   backup:
+    container_name: blueflare-backup
     build:
       context: ${BLUEFLARE_SRC:-/home/ubuntu/blueflare}/deploy/backup
     # on-failure, not unless-stopped: with BACKUP_ENABLED=false the script
@@ -166,4 +182,8 @@ networks:
 
 volumes:
   postgres-data:
+    # Compose keeps the logical volume name stable while POSTGRES_VOLUME lets
+    # an upgrade restore into a new physical volume and retain the old one for
+    # rollback. The default matches the existing production volume name.
+    name: ${POSTGRES_VOLUME:-blueflare_postgres-data}
   valkey-data:

@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto';
-import { closeCache, getOrBuild, invalidateResponseKeys } from './cache.js';
+import {
+  closeCache,
+  getOrBuild,
+  invalidateResponseKeys,
+  writeWorkerHeartbeat
+} from './cache.js';
 import { config } from './config.js';
 import { mapLimit } from './concurrency.js';
 import { closeDatabase, migrate } from './db.js';
@@ -29,6 +34,7 @@ import {
 import { formatPrewarmStats, prewarmImages } from './prewarm.js';
 import { fetchTrendingMovieIds, fetchVerifiedTmdbImages, searchTmdbImagesByTitle } from './tmdb.js';
 import { buildHome, buildList } from './viewmodels.js';
+import { runWorkerLoop } from './workerLoop.js';
 
 async function revalidateFrontend(tags) {
   if (!config.frontendRevalidateSecret || !tags.length) return;
@@ -415,24 +421,30 @@ async function syncCycle() {
   if (!stopping) await prewarmHotImages();
 }
 
-await migrate();
-
+const stopController = new AbortController();
 function stop(signal) {
   console.log('[worker] received ' + signal + ', stopping after current operation');
   stopping = true;
+  stopController.abort();
 }
 
 process.on('SIGTERM', () => stop('SIGTERM'));
 process.on('SIGINT', () => stop('SIGINT'));
 
-while (!stopping) {
-  const started = Date.now();
-  await refreshHeroTrendingIfDue();
-  if (!stopping) await syncCycle();
-  const elapsed = Date.now() - started;
-  const delay = Math.max(1000, config.syncIntervalMs - elapsed);
-  if (stopping) break;
-  await new Promise((resolve) => setTimeout(resolve, delay));
+try {
+  await runWorkerLoop({
+    initialize: migrate,
+    runCycle: async () => {
+      await refreshHeroTrendingIfDue();
+      if (!stopping) await syncCycle();
+    },
+    writeHeartbeat: writeWorkerHeartbeat,
+    intervalMs: config.syncIntervalMs,
+    signal: stopController.signal
+  });
+} catch (error) {
+  console.error('[worker] fatal worker failure', error);
+  process.exitCode = 1;
+} finally {
+  await Promise.allSettled([closeCache(), closeDatabase()]);
 }
-
-await Promise.allSettled([closeCache(), closeDatabase()]);

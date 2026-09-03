@@ -1,12 +1,19 @@
 import { timingSafeEqual } from 'node:crypto';
 import http from 'node:http';
-import { cacheVersion, closeCache, getOrBuild } from './cache.js';
+import {
+  cacheVersion,
+  closeCache,
+  getOrBuild,
+  readWorkerHeartbeat,
+  redisHealth
+} from './cache.js';
 import { config } from './config.js';
 import { closeDatabase, migrate, postgresHealth } from './db.js';
 import { formatSweepStats, sweepImageCache } from './imageCacheSweep.js';
 import { serveSignedImage } from './images.js';
 import { providerHealth } from './repository.js';
 import { metricsSnapshot, observeCache, observeRequest } from './observability.js';
+import { assessWorkerHeartbeat } from './workerHealth.js';
 import {
   buildCountry,
   buildGenre,
@@ -17,7 +24,6 @@ import {
   buildSearch,
   buildTaxonomy
 } from './viewmodels.js';
-import { redisHealth } from './cache.js';
 
 function page(value) {
   const parsed = Number(value);
@@ -94,17 +100,39 @@ function validMetricsToken(request) {
   return expected.length > 0 && expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 
+function publicWorkerHeartbeat(heartbeat) {
+  if (!heartbeat) return null;
+  return {
+    status: heartbeat.status,
+    updated_at: heartbeat.updated_at,
+    last_cycle_started_at: heartbeat.last_cycle_started_at,
+    last_success_at: heartbeat.last_success_at,
+    last_cycle_duration_ms: heartbeat.last_cycle_duration_ms,
+    failure_streak: heartbeat.failure_streak,
+    stage: heartbeat.stage
+  };
+}
+
 async function healthPayload() {
-  const [postgres, valkey, providers, version] = await Promise.all([
+  const [postgres, valkey, providers, version, heartbeat] = await Promise.all([
     postgresHealth().catch((error) => ({ ok: false, error: error.message })),
     redisHealth().catch((error) => ({ ok: false, error: error.message })),
     providerHealth().catch(() => []),
-    cacheVersion()
+    cacheVersion(),
+    readWorkerHeartbeat()
   ]);
+  const worker = {
+    heartbeat: publicWorkerHeartbeat(heartbeat),
+    ...assessWorkerHeartbeat(
+      heartbeat,
+      config.workerHeartbeatTtlSeconds * 1000
+    )
+  };
   return {
-    status: postgres.ok && valkey.ok ? 'ok' : 'degraded',
+    status: postgres.ok && valkey.ok && worker.ok ? 'ok' : 'degraded',
     postgres,
     valkey,
+    worker,
     cacheVersion: version,
     providers,
     timestamp: new Date().toISOString()

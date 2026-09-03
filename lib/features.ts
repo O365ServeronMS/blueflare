@@ -19,6 +19,7 @@ export function readFrontendFeatures() {
     heroSlider: flag("FEATURE_HERO_SLIDER"),
     searchSuggest: flag("FEATURE_SEARCH_SUGGEST"),
     localLibrary: flag("FEATURE_LOCAL_LIBRARY"),
-    homeSectionLimit: limit("HOME_SECTION_LIMIT", 16)
+    homeSectionLimit: limit("HOME_SECTION_LIMIT", 16),
+    railSlideDurationMs: limit("RAIL_SLIDE_DURATION_MS", 300)
   };
 }

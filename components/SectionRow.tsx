@@ -6,8 +6,6 @@ import type { MovieCard as MovieCardType } from "@/lib/types";
 import { getRailSlideTarget, type RailDirection } from "@/lib/rail-motion";
 import { MovieCard } from "@/components/MovieCard";
 
-const RAIL_SLIDE_DURATION_MS = 300;
-
 function easeOutCubic(progress: number) {
   return 1 - Math.pow(1 - progress, 3);
 }
@@ -19,7 +17,8 @@ export function SectionRow({
   returnTo = "",
   spotlight = false,
   itemLimit = 16,
-  ranked = false
+  ranked = false,
+  slideDurationMs = 300
 }: {
   title: string;
   href: string;
@@ -28,6 +27,7 @@ export function SectionRow({
   spotlight?: boolean;
   itemLimit?: number;
   ranked?: boolean;
+  slideDurationMs?: number;
 }) {
   const trackRef = useRef<HTMLDivElement>(null);
   const animationFrameRef = useRef<number | null>(null);
@@ -87,7 +87,7 @@ export function SectionRow({
 
     function animate(timestamp: number) {
       if (startedAt === null) startedAt = timestamp;
-      const progress = Math.min((timestamp - startedAt) / RAIL_SLIDE_DURATION_MS, 1);
+      const progress = Math.min((timestamp - startedAt) / slideDurationMs, 1);
       animatedTrack.scrollLeft = start + (target - start) * easeOutCubic(progress);
 
       if (progress < 1) {

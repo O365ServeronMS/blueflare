@@ -30,6 +30,7 @@ export default async function HomePage() {
             spotlight
             ranked
             itemLimit={heroItems.length}
+            slideDurationMs={features.railSlideDurationMs}
           />
         ) : null}
         {home.sections.map((section, index) => (
@@ -41,6 +42,7 @@ export default async function HomePage() {
             returnTo="/"
             spotlight={index === 0 && !heroItems.length}
             itemLimit={section.href === "/list/phim-moi-cap-nhat" ? 24 : features.homeSectionLimit}
+            slideDurationMs={features.railSlideDurationMs}
           />
         ))}
       </div>

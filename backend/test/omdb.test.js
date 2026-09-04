@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { OmdbQuotaError, fetchOmdbByImdbId, parseOmdbScores } from '../src/omdb.js';
+import { OmdbQuotaError, fetchOmdbByImdbId, omdbKeyId, parseOmdbScores } from '../src/omdb.js';
 import { collectRatingSlugs, formatOmdbStats, syncOmdbRatings } from '../src/ratingsSync.js';
 
 const KEY = 'test-key';
@@ -135,12 +135,16 @@ test('slugs are collected hero-first, de-duplicated, and filtered by bucket', ()
   assert.deepEqual(slugs, ['hero-a', 'hero-b', 'film-a']);
 });
 
+const KEY_1 = omdbKeyId('key-1');
+const KEY_2 = omdbKeyId('key-2');
+
 function harness(overrides = {}) {
   const calls = { omdb: [], scores: [], misses: [], reserved: [], released: [] };
   const deps = {
     enabled: true,
     tmdbEnabled: true,
     concurrency: 1,
+    apiKeys: ['key-1'],
     listCandidates: async (slugs) => slugs.map((slug, index) => ({
       id: 'id-' + index,
       canonical_slug: slug,
@@ -149,15 +153,15 @@ function harness(overrides = {}) {
       tmdb_id: null,
       tmdb_media_type: null
     })),
-    reserveBudget: async (requested) => {
-      calls.reserved.push(requested);
+    reserveBudget: async (keyId, requested) => {
+      calls.reserved.push([keyId, requested]);
       return { granted: requested, used: requested, ceiling: 950 };
     },
-    releaseBudget: async (count) => { calls.released.push(count); },
+    releaseBudget: async (keyId, count) => { calls.released.push([keyId, count]); },
     recordScores: async (id, scores) => { calls.scores.push([id, scores]); },
     recordMiss: async (id, status) => { calls.misses.push([id, status]); },
-    fetchOmdb: async (imdbId) => {
-      calls.omdb.push(imdbId);
+    fetchOmdb: async (imdbId, { apiKey } = {}) => {
+      calls.omdb.push([apiKey, imdbId]);
       return { status: 'matched', imdbId, tomatometer: 85, metascore: 67, imdbRating: 7.6 };
     },
     resolveExternalId: async () => null,
@@ -176,7 +180,8 @@ test('scores the visible rows and reports them as changed', async () => {
   assert.equal(stats.tomato, 2);
   assert.equal(stats.spent, 2);
   assert.deepEqual(stats.changedSlugs, ['a', 'b']);
-  assert.deepEqual(calls.released, [0]);
+  assert.equal(stats.keysTried, 1);
+  assert.deepEqual(calls.released, [[KEY_1, 0]]);
 });
 
 test('a match carrying no usable score is not pushed through invalidation', async () => {
@@ -199,8 +204,11 @@ test('the run is capped by whatever the budget grants, in visible order', async 
   const stats = await syncOmdbRatings(SOURCES, deps);
   assert.equal(stats.selected, 2);
   assert.equal(stats.reserved, 1);
-  assert.deepEqual(calls.omdb, ['tt0000001']);
+  assert.deepEqual(calls.omdb, [['key-1', 'tt0000001']]);
   assert.deepEqual(stats.changedSlugs, ['a']);
+  // The second row never got a request and no further key exists to pay for
+  // it, and that has to be visible in the log line rather than silent.
+  assert.equal(stats.declined, 'budget-exhausted');
 });
 
 test('an exhausted budget declines before issuing any request', async () => {
@@ -212,19 +220,69 @@ test('an exhausted budget declines before issuing any request', async () => {
   assert.deepEqual(calls.omdb, []);
 });
 
-test('hitting the quota mid-batch stops the rest and drains the day', async () => {
+test('hitting the quota on the last key stops the rest and drains its day', async () => {
   const { deps, calls } = harness({
     concurrency: 1,
     fetchOmdb: async () => { throw new OmdbQuotaError('Request limit reached!'); }
   });
   const stats = await syncOmdbRatings(SOURCES, deps);
   assert.match(stats.declined, /^quota:/);
-  // One attempt, then the second row is skipped rather than 401-ing too.
-  assert.equal(calls.omdb.length, 0);
-  // Nothing is refunded and the remaining allowance is claimed, so the next
-  // cycle does not walk straight back into another 401.
-  assert.deepEqual(calls.reserved, [2, 950]);
+  // Nothing is refunded and the key's remaining allowance is claimed, so the
+  // next cycle does not walk straight back into another 401.
+  assert.deepEqual(calls.reserved, [[KEY_1, 2], [KEY_1, 950]]);
   assert.deepEqual(calls.released, []);
+  assert.deepEqual(stats.changedSlugs, []);
+});
+
+test('a key that runs dry mid-batch hands its unfinished rows to the next key', async () => {
+  const { deps, calls } = harness({
+    apiKeys: ['key-1', 'key-2'],
+    fetchOmdb: async (imdbId, { apiKey } = {}) => {
+      calls.omdb.push([apiKey, imdbId]);
+      if (apiKey === 'key-1') throw new OmdbQuotaError('Request limit reached!');
+      return { status: 'matched', imdbId, tomatometer: 85, metascore: 67, imdbRating: 7.6 };
+    }
+  });
+  const stats = await syncOmdbRatings(SOURCES, deps);
+  // Both rows end up scored: the quota boundary cost them a retry, not the day.
+  assert.equal(stats.matched, 2);
+  assert.deepEqual(stats.changedSlugs, ['a', 'b']);
+  assert.equal(stats.declined, 'quota: Request limit reached!');
+  assert.equal(stats.keysTried, 2);
+  // key-1: one real attempt, then the carried row skips straight to key-2.
+  assert.deepEqual(calls.omdb, [
+    ['key-1', 'tt0000001'],
+    ['key-2', 'tt0000001'],
+    ['key-2', 'tt0000002']
+  ]);
+  // key-1 is drained; key-2 refunds nothing because it spent all it claimed.
+  assert.deepEqual(calls.reserved, [[KEY_1, 2], [KEY_1, 950], [KEY_2, 2]]);
+  assert.deepEqual(calls.released, [[KEY_2, 0]]);
+});
+
+test('a key with nothing left today is skipped without counting as tried', async () => {
+  const { deps, calls } = harness({
+    apiKeys: ['key-1', 'key-2'],
+    reserveBudget: async (keyId, requested) => {
+      calls.reserved.push([keyId, requested]);
+      return keyId === KEY_1
+        ? { granted: 0, used: 950, ceiling: 950 }
+        : { granted: requested, used: requested, ceiling: 950 };
+    }
+  });
+  const stats = await syncOmdbRatings(SOURCES, deps);
+  assert.equal(stats.matched, 2);
+  assert.equal(stats.keysTried, 1);
+  assert.equal(stats.declined, null);
+  assert.deepEqual(calls.omdb.map(([key]) => key), ['key-2', 'key-2']);
+});
+
+test('omdbKeyId is stable, short, and never the key itself', () => {
+  assert.equal(omdbKeyId('key-1'), omdbKeyId('key-1'));
+  assert.equal(omdbKeyId('key-1').length, 12);
+  assert.match(omdbKeyId('key-1'), /^[0-9a-f]{12}$/);
+  assert.notEqual(omdbKeyId('key-1'), omdbKeyId('key-2'));
+  assert.ok(!omdbKeyId('key-1').includes('key-1'));
 });
 
 test('unspent claims are handed back so a short batch does not waste the day', async () => {
@@ -236,7 +294,7 @@ test('unspent claims are handed back so a short batch does not waste the day', a
   const stats = await syncOmdbRatings(SOURCES, deps);
   assert.equal(stats.noId, 1);
   assert.equal(stats.spent, 0);
-  assert.deepEqual(calls.released, [1]);
+  assert.deepEqual(calls.released, [[KEY_1, 1]]);
   assert.deepEqual(calls.misses, [['id-0', 'no-tmdb-id']]);
 });
 
@@ -252,7 +310,7 @@ test('a missing imdb_id is resolved through TMDB without spending OMDb quota', a
   });
   const stats = await syncOmdbRatings(SOURCES, deps);
   assert.equal(stats.lifted, 1);
-  assert.deepEqual(calls.omdb, ['tt7654321']);
+  assert.deepEqual(calls.omdb, [['key-1', 'tt7654321']]);
 });
 
 test('a row TMDB cannot resolve is marked unreachable so it is never retried', async () => {
@@ -286,8 +344,10 @@ test('the pass stands down when OMDb is not configured', async () => {
 test('stats format as one greppable line', () => {
   const line = formatOmdbStats({
     visible: 40, selected: 12, reserved: 12, spent: 12, matched: 9, tomato: 3,
-    unmatched: 3, lifted: 1, noId: 0, errors: { timeout: 2 }, declined: null, durationMs: 812
+    unmatched: 3, lifted: 1, noId: 0, keysTried: 2, keysTotal: 3,
+    errors: { timeout: 2 }, declined: null, durationMs: 812
   });
   assert.match(line, /visible=40 selected=12 reserved=12 spent=12 matched=9 tomato=3/);
+  assert.match(line, /keys=2\/3/);
   assert.match(line, /errors=timeoutx2/);
 });

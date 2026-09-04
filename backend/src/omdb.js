@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { config } from './config.js';
 
 /**
@@ -59,7 +60,21 @@ export function parseOmdbScores(body) {
   };
 }
 
-/** Thrown to abort the whole batch: every further request today answers 401. */
+/**
+ * Stable, non-secret identity for one API key.
+ *
+ * Budget rows are keyed by this rather than the key itself because the
+ * `omdb_budget` table travels in the nightly dump to offsite storage, and a
+ * credential has no business riding along. Twelve hex chars of SHA-256 is
+ * plenty against collisions across a handful of keys, and being derived from
+ * the key value (not its position) means reordering OMDB_API_KEYS does not
+ * detach a key from its already-spent count.
+ */
+export function omdbKeyId(key) {
+  return createHash('sha256').update(String(key)).digest('hex').slice(0, 12);
+}
+
+/** Thrown to abort this key's batch: every further request today answers 401. */
 export class OmdbQuotaError extends Error {
   constructor(message) {
     super(message);
@@ -83,7 +98,7 @@ export async function fetchOmdbByImdbId(imdbId, options = {}) {
   const id = validImdbId(imdbId);
   if (!id) return { status: 'unmatched', detail: 'invalid imdb id' };
 
-  const apiKey = String(options.apiKey ?? config.omdbApiKey).trim();
+  const apiKey = String(options.apiKey ?? config.omdbApiKeys[0] ?? '').trim();
   const baseUrl = String(options.baseUrl ?? config.omdbBaseUrl).replace(/\/$/, '');
   const timeoutMs = Math.max(1000, Math.floor(options.timeoutMs ?? config.omdbRequestTimeoutMs));
   const fetchImpl = options.fetchImpl || fetch;

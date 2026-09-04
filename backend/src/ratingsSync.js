@@ -1,16 +1,22 @@
 import { config } from './config.js';
 import { mapLimit } from './concurrency.js';
-import { fetchOmdbByImdbId } from './omdb.js';
+import { fetchOmdbByImdbId, omdbKeyId } from './omdb.js';
 import { fetchTmdbExternalIds } from './tmdb.js';
 
 /**
  * OMDb score sync.
  *
- * OMDb's free tier allows 1000 requests per UTC day against a catalog of ~49k
- * rows, so this cannot be a crawl — a full pass would take ten days and spend
- * most of it on titles nobody opened. It is demand-driven instead, in the same
- * shape as `prewarm.js`: read the viewmodels the API is already serving, take
- * the rows a visitor is about to see, and spend the day's allowance on those.
+ * OMDb's free tier allows 1000 requests per key per UTC day against a catalog
+ * of ~49k rows, so this cannot be a crawl — a full pass would take days and
+ * spend most of it on titles nobody opened. It is demand-driven instead, in the
+ * same shape as `prewarm.js`: read the viewmodels the API is already serving,
+ * take the rows a visitor is about to see, and spend the allowance on those.
+ *
+ * The allowance itself is a *pool of keys* (OMDB_API_KEY + OMDB_API_KEYS),
+ * spent strictly in order. Each key has its own daily counter in Postgres, and
+ * a key that answers 401 mid-batch is drained locally while its unfinished rows
+ * roll over to the next key in the same pass — a quota boundary costs the rows
+ * nothing but a retry on the following key.
  *
  * The consequence is the same as prewarming's: the first day fills the visible
  * set and every cycle after it costs nothing, because the hot rows are already
@@ -87,13 +93,15 @@ async function resolveRepositoryDeps(options) {
 
 export async function syncOmdbRatings(sources, options = {}) {
   const startedAt = Date.now();
+  const apiKeys = (options.apiKeys ?? config.omdbApiKeys)
+    .map((key) => ({ key, id: omdbKeyId(key) }));
   const deps = {
     ...(await resolveRepositoryDeps(options)),
     fetchOmdb: options.fetchOmdb || fetchOmdbByImdbId,
     resolveExternalId: options.resolveExternalId || fetchTmdbExternalIds,
     batchLimit: options.batchLimit ?? config.omdbBatchLimit,
     concurrency: options.concurrency ?? config.omdbConcurrency,
-    enabled: options.enabled ?? (config.omdbEnabled && Boolean(config.omdbApiKey)),
+    enabled: options.enabled ?? (config.omdbEnabled && apiKeys.length > 0),
     tmdbEnabled: options.tmdbEnabled ?? (config.tmdbEnabled && Boolean(config.tmdbApiKey))
   };
 
@@ -107,6 +115,8 @@ export async function syncOmdbRatings(sources, options = {}) {
     tomato: 0,
     lifted: 0,
     noId: 0,
+    keysTotal: apiKeys.length,
+    keysTried: 0,
     errors: {},
     declined: null,
     durationMs: 0,
@@ -130,85 +140,110 @@ export async function syncOmdbRatings(sources, options = {}) {
   stats.selected = candidates.length;
   if (!candidates.length) return done();
 
-  // Claimed up front, before any request goes out, so two workers cannot read
-  // the same remaining count and jointly blow past the daily cap.
-  const budget = await deps.reserveBudget(candidates.length);
-  stats.reserved = budget.granted;
-  if (!budget.granted) {
-    stats.declined = 'budget-exhausted';
-    return done();
-  }
+  const changed = [];
+  // Rows still waiting for an OMDb request. A row leaves this queue by being
+  // resolved (scored, missed, errored) — never by a key running dry: those
+  // carry over to the next key in the same pass.
+  let pending = candidates;
 
-  const batch = candidates.slice(0, budget.granted);
-  let quotaHit = false;
+  for (const apiKey of apiKeys) {
+    if (!pending.length) break;
 
-  const results = await mapLimit(batch, deps.concurrency, async (movie) => {
-    if (quotaHit) return null;
+    // Claimed up front, before any request goes out, so two workers cannot
+    // read the same remaining count and jointly blow past this key's cap.
+    const budget = await deps.reserveBudget(apiKey.id, pending.length);
+    if (!budget.granted) continue;
+    stats.keysTried += 1;
+    stats.reserved += budget.granted;
 
-    let imdbId = movie.imdb_id || movie.omdb_imdb_id || null;
-    if (!imdbId) {
-      // Free of OMDb quota, so it is always worth trying before giving up.
-      if (!deps.tmdbEnabled || !movie.tmdb_id) {
-        stats.noId += 1;
-        await deps.recordMiss(movie.id, 'no-tmdb-id').catch(() => {});
+    const batch = pending.slice(0, budget.granted);
+    const rest = pending.slice(budget.granted);
+    const carried = [];
+    let localSpent = 0;
+    let quotaHit = false;
+
+    const results = await mapLimit(batch, deps.concurrency, async (movie) => {
+      if (quotaHit) {
+        carried.push(movie);
         return null;
       }
-      try {
-        imdbId = await deps.resolveExternalId({
-          tmdbId: movie.tmdb_id,
-          mediaType: tmdbMediaType(movie)
-        });
-      } catch (error) {
-        console.warn('[worker] TMDB external_ids failed for ' + movie.canonical_slug, error.message);
-        imdbId = null;
-      }
+
+      // `_resolvedImdbId` survives a carry-over, so a row that rode a quota
+      // boundary does not pay for (or double-count) a second TMDB lookup.
+      let imdbId = movie.imdb_id || movie.omdb_imdb_id || movie._resolvedImdbId || null;
       if (!imdbId) {
-        stats.noId += 1;
-        await deps.recordMiss(movie.id, 'no-imdb-id').catch(() => {});
-        return null;
+        // Free of OMDb quota, so it is always worth trying before giving up.
+        if (!deps.tmdbEnabled || !movie.tmdb_id) {
+          stats.noId += 1;
+          await deps.recordMiss(movie.id, 'no-tmdb-id').catch(() => {});
+          return null;
+        }
+        try {
+          imdbId = await deps.resolveExternalId({
+            tmdbId: movie.tmdb_id,
+            mediaType: tmdbMediaType(movie)
+          });
+        } catch (error) {
+          console.warn('[worker] TMDB external_ids failed for ' + movie.canonical_slug, error.message);
+          imdbId = null;
+        }
+        if (!imdbId) {
+          stats.noId += 1;
+          await deps.recordMiss(movie.id, 'no-imdb-id').catch(() => {});
+          return null;
+        }
+        movie._resolvedImdbId = imdbId;
+        stats.lifted += 1;
       }
-      stats.lifted += 1;
-    }
 
-    try {
-      const result = await deps.fetchOmdb(imdbId);
-      stats.spent += 1;
-      if (result.status !== 'matched') {
-        stats.unmatched += 1;
-        await deps.recordMiss(movie.id, 'unmatched', imdbId).catch(() => {});
+      try {
+        const result = await deps.fetchOmdb(imdbId, { apiKey: apiKey.key });
+        stats.spent += 1;
+        localSpent += 1;
+        if (result.status !== 'matched') {
+          stats.unmatched += 1;
+          await deps.recordMiss(movie.id, 'unmatched', imdbId).catch(() => {});
+          return null;
+        }
+        stats.matched += 1;
+        if (result.tomatometer !== null) stats.tomato += 1;
+        await deps.recordScores(movie.id, result);
+        // Only a row whose rendered output can actually change is worth pushing
+        // through cache invalidation; a match with no usable score is not.
+        return result.tomatometer !== null || result.imdbRating !== null
+          ? movie.canonical_slug
+          : null;
+      } catch (error) {
+        if (error?.code === 'OMDB_QUOTA') {
+          quotaHit = true;
+          stats.declined = 'quota: ' + error.message;
+          carried.push(movie);
+          return null;
+        }
+        stats.spent += 1;
+        localSpent += 1;
+        const reason = error?.name === 'TimeoutError' ? 'timeout' : String(error?.message || error);
+        stats.errors[reason] = (stats.errors[reason] || 0) + 1;
+        await deps.recordMiss(movie.id, 'error', imdbId).catch(() => {});
         return null;
       }
-      stats.matched += 1;
-      if (result.tomatometer !== null) stats.tomato += 1;
-      await deps.recordScores(movie.id, result);
-      // Only a row whose rendered output can actually change is worth pushing
-      // through cache invalidation; a match with no usable score is not.
-      return result.tomatometer !== null || result.imdbRating !== null
-        ? movie.canonical_slug
-        : null;
-    } catch (error) {
-      if (error?.code === 'OMDB_QUOTA') {
-        quotaHit = true;
-        stats.declined = 'quota: ' + error.message;
-        return null;
-      }
-      stats.spent += 1;
-      const reason = error?.name === 'TimeoutError' ? 'timeout' : String(error?.message || error);
-      stats.errors[reason] = (stats.errors[reason] || 0) + 1;
-      await deps.recordMiss(movie.id, 'error', imdbId).catch(() => {});
-      return null;
-    }
-  });
+    });
+    changed.push(...results.filter(Boolean));
 
-  if (quotaHit) {
-    // The key is spent for the rest of the UTC day. Drain the local allowance
-    // instead of refunding, so the next cycle does not walk into another 401.
-    await deps.reserveBudget(budget.ceiling).catch(() => {});
-  } else {
-    await deps.releaseBudget(budget.granted - stats.spent).catch(() => {});
+    if (quotaHit) {
+      // This key is spent for the rest of the UTC day. Drain its local
+      // allowance instead of refunding, so the next cycle does not walk into
+      // another 401 — and hand its unfinished rows to the next key.
+      await deps.reserveBudget(apiKey.id, budget.ceiling).catch(() => {});
+      pending = [...carried, ...rest];
+      continue;
+    }
+    await deps.releaseBudget(apiKey.id, budget.granted - localSpent).catch(() => {});
+    pending = rest;
   }
 
-  stats.changedSlugs = results.filter(Boolean);
+  if (pending.length && !stats.declined) stats.declined = 'budget-exhausted';
+  stats.changedSlugs = changed;
   return done();
 }
 
@@ -223,6 +258,7 @@ export function formatOmdbStats(stats) {
     'unmatched=' + stats.unmatched,
     'tmdbLift=' + stats.lifted,
     'noId=' + stats.noId,
+    'keys=' + stats.keysTried + '/' + stats.keysTotal,
     'durationMs=' + stats.durationMs
   ];
   if (stats.declined) parts.push('declined=' + stats.declined);

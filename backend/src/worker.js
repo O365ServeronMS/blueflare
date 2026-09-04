@@ -445,7 +445,7 @@ async function invalidateForSlugs(changedSlugs) {
  * prewarmer then re-reads, which leaves the prewarmer warming the newest data.
  */
 async function refreshOmdbRatings() {
-  if (!config.omdbEnabled || !config.omdbApiKey) return;
+  if (!config.omdbEnabled || !config.omdbApiKeys.length) return;
 
   const sources = [];
   try {

@@ -55,10 +55,16 @@ export const config = Object.freeze({
   tmdbImageFallbackConcurrency: integer('TMDB_IMAGE_FALLBACK_CONCURRENCY', 2, 1),
   tmdbImageFallbackRetryMs: integer('TMDB_IMAGE_FALLBACK_RETRY_MS', 7 * 24 * 60 * 60 * 1000, 60 * 1000),
 
-  // OMDb supplies the Tomatometer and Metascore shown on cards. Gated by
-  // omdbApiKey being non-empty, like TMDB above.
+  // OMDb supplies the Tomatometer and Metascore shown on cards. Gated by the
+  // key list being non-empty, like TMDB above.
   omdbEnabled: boolean('OMDB_ENABLED', true),
-  omdbApiKey: String(process.env.OMDB_API_KEY || ''),
+  // The free tier caps each *key* at 1000 requests per UTC day, so extra keys
+  // multiply the ceiling. OMDB_API_KEY is the primary; OMDB_API_KEYS appends
+  // comma-separated fallbacks, consumed in order as each key's quota runs out.
+  omdbApiKeys: [...new Set([
+    String(process.env.OMDB_API_KEY || '').trim(),
+    ...csv('OMDB_API_KEYS')
+  ].filter(Boolean))],
   omdbBaseUrl: String(process.env.OMDB_BASE_URL || 'https://www.omdbapi.com').replace(/\/$/, ''),
   omdbRequestTimeoutMs: integer('OMDB_REQUEST_TIMEOUT_MS', 5000, 1000),
   // 'trending' is the home hero; the rest are list slugs shared with

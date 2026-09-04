@@ -571,36 +571,44 @@ function utcDay() {
 }
 
 /**
- * Claim up to `requested` OMDb calls from today's allowance, atomically.
+ * Claim up to `requested` OMDb calls from one key's daily allowance, atomically.
  *
  * The counter is claimed *before* the requests are made, under a row lock, so
  * two workers running a cycle at the same time cannot both read the same
  * remaining count and jointly overshoot. Overshooting is not a soft failure:
- * OMDb answers 401 for every remaining request of the UTC day once the free
- * tier's 1000 are gone. Whatever is claimed but not spent goes back through
+ * OMDb answers 401 for every remaining request of the UTC day once a key's
+ * 1000 are gone. Whatever is claimed but not spent goes back through
  * `releaseOmdbBudget()`.
+ *
+ * The allowance is per key — that is OMDb's own accounting unit — which is why
+ * `keyId` is part of the row identity and OMDB_DAILY_BUDGET reads as
+ * "per key", not "per deployment".
  */
-export async function reserveOmdbBudget(requested) {
+export async function reserveOmdbBudget(keyId, requested) {
+  const key = String(keyId || '').trim();
   const want = Math.max(0, Math.floor(requested));
   const ceiling = Math.max(0, config.omdbDailyBudget - config.omdbBudgetReserve);
-  if (!want || !ceiling) return { granted: 0, used: 0, ceiling };
+  if (!key || !want || !ceiling) return { granted: 0, used: 0, ceiling };
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     await client.query(
-      'INSERT INTO omdb_budget (day, used) VALUES (' + utcDay() + ', 0) ' +
-      'ON CONFLICT (day) DO NOTHING'
+      'INSERT INTO omdb_budget (day, key_id, used) VALUES (' + utcDay() + ', $1, 0) ' +
+      'ON CONFLICT (day, key_id) DO NOTHING',
+      [key]
     );
     const locked = await client.query(
-      'SELECT used FROM omdb_budget WHERE day = ' + utcDay() + ' FOR UPDATE'
+      'SELECT used FROM omdb_budget WHERE day = ' + utcDay() + ' AND key_id = $1 FOR UPDATE',
+      [key]
     );
     const used = Number(locked.rows[0]?.used ?? 0);
     const granted = Math.max(0, Math.min(want, ceiling - used));
     if (granted > 0) {
       await client.query(
-        'UPDATE omdb_budget SET used = used + $1, updated_at = now() WHERE day = ' + utcDay(),
-        [granted]
+        'UPDATE omdb_budget SET used = used + $2, updated_at = now() ' +
+        'WHERE day = ' + utcDay() + ' AND key_id = $1',
+        [key, granted]
       );
     }
     await client.query('COMMIT');
@@ -613,14 +621,15 @@ export async function reserveOmdbBudget(requested) {
   }
 }
 
-/** Hand unspent claims back so a short batch does not waste the day. */
-export async function releaseOmdbBudget(count) {
+/** Hand unspent claims back so a short batch does not waste the key's day. */
+export async function releaseOmdbBudget(keyId, count) {
+  const key = String(keyId || '').trim();
   const give = Math.max(0, Math.floor(count));
-  if (!give) return;
+  if (!key || !give) return;
   await pool.query(
-    'UPDATE omdb_budget SET used = GREATEST(0, used - $1), updated_at = now() ' +
-    'WHERE day = ' + utcDay(),
-    [give]
+    'UPDATE omdb_budget SET used = GREATEST(0, used - $2), updated_at = now() ' +
+    'WHERE day = ' + utcDay() + ' AND key_id = $1',
+    [key, give]
   );
 }
 

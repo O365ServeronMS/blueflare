@@ -135,25 +135,6 @@ export async function searchTmdbImagesByTitle(candidate, options = {}) {
   };
 }
 
-/**
- * Resolve the IMDb id for a row that carries a tmdb_id but no imdb_id.
- *
- * Exists so the OMDb pass can reach rows the providers never gave an IMDb id
- * to. TMDB has no hard daily cap, so this widens OMDb's reachable set without
- * spending any of OMDb's 1000/day. The answer is authoritative rather than a
- * guess — it is TMDB's own recorded cross-reference for a specific id, not a
- * title search — but it is still written to a column outside identity
- * resolution, since `movies.imdb_id` merges rows.
- */
-export async function fetchTmdbExternalIds(identity, options = {}) {
-  const tmdbId = validMovieId(identity?.tmdbId);
-  const mediaType = validMediaType(identity?.mediaType);
-  if (!tmdbId || !mediaType) return null;
-  const body = await fetchTmdb('/' + mediaType + '/' + tmdbId + '/external_ids', options);
-  const imdbId = String(body?.imdb_id || '').trim();
-  return /^tt\d{7,}$/.test(imdbId) ? imdbId : null;
-}
-
 export async function fetchVerifiedTmdbImages(identity, options = {}) {
   const tmdbId = validMovieId(identity?.tmdbId);
   const mediaType = validMediaType(identity?.mediaType);

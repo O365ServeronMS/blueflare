@@ -11,13 +11,6 @@ import {
   taxonomy
 } from './repository.js';
 
-// node-pg hands back `numeric` columns as strings to preserve precision, which
-// would leak a "7.6" into a field every other producer fills with a number.
-function numeric(value) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-}
-
 function card(row) {
 function seasonTitle(row) {
   const season = row.tmdb_media_type === 'tv' ? row.tmdb_season_number : null;
@@ -51,10 +44,7 @@ function seasonTitle(row) {
     },
     imdb: {
       id: row.imdb_id,
-      // OMDb is a fallback, never an override. `lib/spotlight.ts` ranks the
-      // home hero on this value, so preferring OMDb would quietly reshuffle the
-      // front page for rows that already had a provider rating.
-      vote_average: ratings.imdb || numeric(row.omdb_imdb_rating),
+      vote_average: ratings.imdb || null,
       vote_count: ratings.imdb_count || null
     },
     // Both visible Rotten Tomatoes badges come exclusively from MDBList.

@@ -8,6 +8,7 @@ import {
 import { config } from './config.js';
 import { mapLimit } from './concurrency.js';
 import { closeDatabase, migrate } from './db.js';
+import { revalidateFrontend } from './frontendRevalidation.js';
 import { normalizeKkphim, normalizeNguonc } from './normalize.js';
 import { KkphimProvider } from './providers/KkphimProvider.js';
 import { NguoncProvider } from './providers/NguoncProvider.js';
@@ -33,28 +34,9 @@ import {
 } from './repository.js';
 import { formatPrewarmStats, prewarmImages } from './prewarm.js';
 import { formatMdblistStats, syncMdblistRatings } from './mdblistRatingsSync.js';
-import { formatOmdbStats, syncOmdbRatings } from './ratingsSync.js';
 import { fetchTrendingMovieIds, fetchVerifiedTmdbImages, searchTmdbImagesByTitle } from './tmdb.js';
 import { buildHome, buildList } from './viewmodels.js';
 import { runWorkerLoop } from './workerLoop.js';
-
-async function revalidateFrontend(tags) {
-  if (!config.frontendRevalidateSecret || !tags.length) return;
-  try {
-    const response = await fetch(config.frontendRevalidateUrl, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-blueflare-revalidate': config.frontendRevalidateSecret
-      },
-      body: JSON.stringify({ tags }),
-      signal: AbortSignal.timeout(config.revalidateTimeoutMs)
-    });
-    if (!response.ok) console.warn('[worker] frontend revalidation failed status=' + response.status);
-  } catch (error) {
-    console.warn('[worker] frontend revalidation unavailable', error.message);
-  }
-}
 
 const providers = [new NguoncProvider(), new KkphimProvider()];
 let stopping = false;
@@ -387,7 +369,6 @@ async function syncCycle() {
   }
 
   const ratingChangedSlugs = [];
-  if (!stopping) ratingChangedSlugs.push(...await refreshOmdbRatings());
   if (!stopping) ratingChangedSlugs.push(...await refreshMdblistRatings());
   if (ratingChangedSlugs.length) {
     await invalidateForSlugs([...new Set(ratingChangedSlugs)]).catch((error) => {
@@ -445,53 +426,13 @@ async function invalidateForSlugs(changedSlugs) {
 }
 
 /**
- * Attach Tomatometer scores to the rows a visitor is about to see.
+ * Attach MDBList critic/audience scores to the approved visible surfaces.
  *
  * Reads the same viewmodels the API serves, exactly like `prewarmHotImages()`
  * below, so there is no second copy of "what is on the home page" to drift.
  * Runs before the prewarm pass because it invalidates the list payloads the
  * prewarmer then re-reads, which leaves the prewarmer warming the newest data.
  */
-async function refreshOmdbRatings() {
-  if (!config.omdbEnabled || !config.omdbApiKeys.length) return [];
-
-  const sources = [];
-  try {
-    for (const bucket of config.omdbRatingTypes) {
-      if (bucket === 'trending') {
-        const home = await getOrBuild('home', buildHome, { ttl: config.responseCacheTtlSeconds });
-        sources.push({ bucket, payload: home.data });
-        continue;
-      }
-      for (let currentPage = 1; currentPage <= config.omdbPageDepth; currentPage += 1) {
-        const key = 'list:' + bucket + ':' + currentPage;
-        const result = await getOrBuild(key, () => buildList(bucket, currentPage), {
-          ttl: config.responseCacheTtlSeconds
-        });
-        sources.push({ bucket, payload: result.data });
-      }
-    }
-  } catch (error) {
-    console.warn('[worker] omdb ratings could not read catalog payloads', error.message);
-    return [];
-  }
-
-  let stats;
-  try {
-    stats = await syncOmdbRatings(sources);
-  } catch (error) {
-    console.error('[worker] omdb ratings pass failed', error);
-    return [];
-  }
-
-  const line = '[worker] omdb ratings ' + formatOmdbStats(stats);
-  if (stats.declined || Object.keys(stats.errors).length) console.warn(line);
-  else console.log(line);
-
-  return stats.changedSlugs;
-}
-
-/** Attach MDBList critic/audience scores to the approved visible surfaces. */
 async function refreshMdblistRatings() {
   if (!config.mdblistEnabled || !config.mdblistApiKeys.length) return [];
 

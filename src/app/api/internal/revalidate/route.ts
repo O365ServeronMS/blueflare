@@ -28,7 +28,10 @@ export async function POST(request: Request) {
     : [];
   if (!tags.length) return Response.json({ error: "No valid tags" }, { status: 400, headers: { "Cache-Control": "no-store" } });
 
-  for (const tag of tags) revalidateTag(tag, "max");
+  // This endpoint is called by the sync worker after canonical data changes.
+  // Expire immediately so the next detail request cannot receive an older
+  // score snapshot while a background refresh is attempted.
+  for (const tag of tags) revalidateTag(tag, { expire: 0 });
   return Response.json({ ok: true, tags }, { headers: { "Cache-Control": "no-store" } });
 }
 

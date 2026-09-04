@@ -58,8 +58,8 @@ describe("POST /api/internal/revalidate", () => {
     expect(body.ok).toBe(true);
     expect(body.tags).toEqual(["home", "movie:test-slug"]);
     expect(mockRevalidateTag).toHaveBeenCalledTimes(2);
-    expect(mockRevalidateTag).toHaveBeenCalledWith("home", "max");
-    expect(mockRevalidateTag).toHaveBeenCalledWith("movie:test-slug", "max");
+    expect(mockRevalidateTag).toHaveBeenCalledWith("home", { expire: 0 });
+    expect(mockRevalidateTag).toHaveBeenCalledWith("movie:test-slug", { expire: 0 });
   });
 
   test("returns 400 for invalid JSON", async () => {

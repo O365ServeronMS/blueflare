@@ -1,7 +1,7 @@
 import { config } from './config.js';
 import { mapLimit } from './concurrency.js';
 import { fetchMdblistRatings, mdblistKeyId } from './mdblist.js';
-import { collectRatingSlugs } from './ratingsSync.js';
+import { collectRatingSlugs } from './ratingSlugs.js';
 
 const SOURCES = ['tomatoes', 'audience'];
 const REPOSITORY_DEPS = [

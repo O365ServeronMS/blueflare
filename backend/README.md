@@ -182,7 +182,9 @@ The Next route `/movie/<slug>` is direct and server-rendered. List and search
 page parameters remain part of the URL, including page 2/3/etc. The internal
 render-cache invalidation endpoint is reachable only from the Docker network
 and requires `FRONTEND_REVALIDATE_SECRET`; Caddy returns 404 for the public
-hostname path.
+hostname path. The worker splits large invalidation sets into sequential
+32-tag requests, and the frontend hard-expires those tags before serving the
+next matching request.
 
 Its site block adds the security headers and the 404 for the internal
 revalidation path:

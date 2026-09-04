@@ -73,7 +73,7 @@ Codebase and runtime are separate directories (ADR-001): the repo lives at `/hom
 - Images are served as exactly two variants: `/i/m/` portrait (480x720) and `/i/d/` landscape (1280x720). Live URLs are **path-only and keyed by `image_assets.id`** (`/i/{m,d}/<uuid>.webp`). An older HMAC-signed `?url=&sig=` form still exists in `images.js` for backward compatibility, but nothing emits it — do not build new callers on it, and never create a third variant.
 - `/data/images` has exactly one writer: the `api` service. Anything else that needs it mounts read-only.
 - Next render-cache tags and Valkey/API cache keys must not vary by `returnTo`, cookies, authorization, user agent, or analytics parameters.
-- `/api/internal/revalidate` is POST-only, secret-protected, and not public through Caddy.
+- `/api/internal/revalidate` is POST-only, secret-protected, and not public through Caddy. The worker sends deduplicated tags in sequential batches of at most 32; the route hard-expires each tag so changed detail data cannot remain stale.
 
 ## Playback and loading
 

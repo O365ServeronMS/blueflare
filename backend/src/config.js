@@ -55,33 +55,8 @@ export const config = Object.freeze({
   tmdbImageFallbackConcurrency: integer('TMDB_IMAGE_FALLBACK_CONCURRENCY', 2, 1),
   tmdbImageFallbackRetryMs: integer('TMDB_IMAGE_FALLBACK_RETRY_MS', 7 * 24 * 60 * 60 * 1000, 60 * 1000),
 
-  // OMDb supplies the Tomatometer and Metascore shown on cards. Gated by the
-  // key list being non-empty, like TMDB above.
-  omdbEnabled: boolean('OMDB_ENABLED', true),
-  // The free tier caps each *key* at 1000 requests per UTC day, so extra keys
-  // multiply the ceiling. OMDB_API_KEY is the primary; OMDB_API_KEYS appends
-  // comma-separated fallbacks, consumed in order as each key's quota runs out.
-  omdbApiKeys: [...new Set([
-    String(process.env.OMDB_API_KEY || '').trim(),
-    ...csv('OMDB_API_KEYS')
-  ].filter(Boolean))],
-  omdbBaseUrl: String(process.env.OMDB_BASE_URL || 'https://www.omdbapi.com').replace(/\/$/, ''),
-  omdbRequestTimeoutMs: integer('OMDB_REQUEST_TIMEOUT_MS', 5000, 1000),
-  // 'trending' is the home hero; the rest are list slugs shared with
-  // invalidateListTypes. Default measured, see .env.example.
-  omdbRatingTypes: csv('OMDB_RATING_TYPES', 'trending,phim-le'),
-  omdbPageDepth: integer('OMDB_PAGE_DEPTH', 2, 1),
-  // Free tier is 1000/UTC-day and 401s for the remainder of the day once spent.
-  omdbDailyBudget: integer('OMDB_DAILY_BUDGET', 1000, 0),
-  omdbBudgetReserve: integer('OMDB_BUDGET_RESERVE', 50, 0),
-  omdbBatchLimit: integer('OMDB_BATCH_LIMIT', 60, 1),
-  omdbConcurrency: integer('OMDB_CONCURRENCY', 2, 1),
-  omdbRefreshMs: integer('OMDB_REFRESH_MS', 30 * 24 * 60 * 60 * 1000, 60 * 1000),
-  omdbMissRetryMs: integer('OMDB_MISS_RETRY_MS', 90 * 24 * 60 * 60 * 1000, 60 * 1000),
-
-  // MDBList supplies both Rotten Tomatoes critic and audience percentages.
-  // It is independent from OMDb so either provider can be enabled without
-  // changing the other's stored data or daily allowance.
+  // MDBList supplies both Rotten Tomatoes critic and audience percentages shown
+  // on cards. Gated by the key list being non-empty, like TMDB above.
   mdblistEnabled: boolean('MDBLIST_ENABLED', false),
   mdblistApiKeys: [...new Set([
     String(process.env.MDBLIST_API_KEY || '').trim(),

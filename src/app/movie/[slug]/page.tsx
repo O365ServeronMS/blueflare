@@ -38,6 +38,7 @@ function toMovieCard(movie: Awaited<ReturnType<typeof getMovieServer>>): MovieCa
     tmdb: movie.tmdb,
     imdb: movie.imdb,
     tomatometer: movie.tomatometer,
+    audienceScore: movie.audienceScore,
     country: movie.country,
     category: movie.category
   };

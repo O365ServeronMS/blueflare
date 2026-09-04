@@ -3,11 +3,9 @@ import { getScoreBadges } from "@/lib/utils";
 /**
  * The critic/audience percentage pair shown above a card's title.
  *
- * Both badges are optional and the tomato is missing far more often than not —
- * OMDb returns a Tomatometer for roughly a quarter of trending rows and none at
- * all for the series/animation catalogue. The row therefore reserves its height
- * unconditionally (`bf-score-row`) so a grid of mostly-unscored cards does not
- * shift when the occasional scored one renders.
+ * Both MDBList-backed Rotten Tomatoes badges are optional. The row reserves its
+ * height unconditionally (`bf-score-row`) so sparse score coverage cannot shift
+ * the card grid.
  */
 
 function TomatoIcon({ fresh }: { fresh: boolean }) {
@@ -83,7 +81,7 @@ export function ScoreBadges({
       {popcorn ? (
         <span className="bf-score">
           <PopcornIcon />
-          <span aria-label={`Điểm khán giả ${popcorn.score} phần trăm`}>{popcorn.score}%</span>
+          <span aria-label={`Điểm khán giả Rotten Tomatoes ${popcorn.score} phần trăm`}>{popcorn.score}%</span>
         </span>
       ) : null}
     </span>

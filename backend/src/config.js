@@ -79,6 +79,30 @@ export const config = Object.freeze({
   omdbRefreshMs: integer('OMDB_REFRESH_MS', 30 * 24 * 60 * 60 * 1000, 60 * 1000),
   omdbMissRetryMs: integer('OMDB_MISS_RETRY_MS', 90 * 24 * 60 * 60 * 1000, 60 * 1000),
 
+  // MDBList supplies both Rotten Tomatoes critic and audience percentages.
+  // It is independent from OMDb so either provider can be enabled without
+  // changing the other's stored data or daily allowance.
+  mdblistEnabled: boolean('MDBLIST_ENABLED', false),
+  mdblistApiKeys: [...new Set([
+    String(process.env.MDBLIST_API_KEY || '').trim(),
+    ...csv('MDBLIST_API_KEYS')
+  ].filter(Boolean))],
+  mdblistBaseUrl: String(process.env.MDBLIST_BASE_URL || 'https://api.mdblist.com').replace(/\/$/, ''),
+  mdblistRequestTimeoutMs: integer('MDBLIST_REQUEST_TIMEOUT_MS', 5000, 1000),
+  mdblistRatingTypes: csv('MDBLIST_RATING_TYPES', 'trending,phim-le,phim-bo'),
+  mdblistPageDepth: integer('MDBLIST_PAGE_DEPTH', 2, 1),
+  // Free accounts accept 10 ids in one rating request; supporter accounts can
+  // raise this manually as far as the documented maximum of 100.
+  mdblistIdsPerRequest: Math.min(100, integer('MDBLIST_IDS_PER_REQUEST', 10, 1)),
+  // The API quota is counted per HTTP request and resets at 00:00 UTC.
+  mdblistDailyBudget: integer('MDBLIST_DAILY_BUDGET', 1000, 0),
+  mdblistBudgetReserve: integer('MDBLIST_BUDGET_RESERVE', 50, 0),
+  mdblistBatchLimit: integer('MDBLIST_BATCH_LIMIT', 60, 1),
+  mdblistConcurrency: integer('MDBLIST_CONCURRENCY', 2, 1),
+  mdblistRefreshMs: integer('MDBLIST_REFRESH_MS', 30 * 24 * 60 * 60 * 1000, 60 * 1000),
+  mdblistMissRetryMs: integer('MDBLIST_MISS_RETRY_MS', 90 * 24 * 60 * 60 * 1000, 60 * 1000),
+  mdblistErrorRetryMs: integer('MDBLIST_ERROR_RETRY_MS', 60 * 60 * 1000, 60 * 1000),
+
   redisUrl: process.env.REDIS_URL || 'redis://valkey:6379',
   imageSigningSecret,
   imageCacheDir: process.env.IMAGE_CACHE_DIR || '/data/images',

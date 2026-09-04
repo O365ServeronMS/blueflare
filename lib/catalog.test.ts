@@ -132,4 +132,16 @@ describe("normalizeCard", () => {
     expect(result.tmdb?.vote_average).toBeUndefined();
     expect(result.imdb?.rating).toBeUndefined();
   });
+
+  test("maps MDBList critic and audience percentages including zero", () => {
+    const result = normalizeCard({ rotten: { tomatometer: 0, audience: "87" } });
+    expect(result.tomatometer).toBe(0);
+    expect(result.audienceScore).toBe(87);
+  });
+
+  test("rejects invalid MDBList percentages", () => {
+    const result = normalizeCard({ rotten: { tomatometer: 101, audience: "  " } });
+    expect(result.tomatometer).toBeUndefined();
+    expect(result.audienceScore).toBeUndefined();
+  });
 });

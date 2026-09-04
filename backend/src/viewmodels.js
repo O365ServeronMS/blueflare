@@ -57,9 +57,10 @@ function seasonTitle(row) {
       vote_average: ratings.imdb || numeric(row.omdb_imdb_rating),
       vote_count: ratings.imdb_count || null
     },
-    // Critic score from OMDb. Null for most rows by design, not by failure.
+    // Both visible Rotten Tomatoes badges come exclusively from MDBList.
     rotten: {
-      tomatometer: row.omdb_tomatometer ?? null
+      tomatometer: row.mdblist_tomatoes ?? null,
+      audience: row.mdblist_audience ?? null
     },
     modified: {
       time: row.catalog_sort_at || row.provider_updated_at || row.updated_at

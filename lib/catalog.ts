@@ -39,6 +39,13 @@ function num(value: unknown) {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
+function percentage(value: unknown) {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value === "string" && !value.trim()) return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 && n <= 100 ? n : undefined;
+}
+
 function labelText(value: unknown): string | undefined {
   if (Array.isArray(value)) {
     return value.map((label) => label?.name).filter(Boolean).join(", ") || undefined;
@@ -84,7 +91,8 @@ export function normalizeCard(raw: RawItem): MovieCard {
       rating: imdbRating,
       vote_count: num(raw?.imdb?.vote_count)
     },
-    tomatometer: num(raw?.rotten?.tomatometer),
+    tomatometer: percentage(raw?.rotten?.tomatometer),
+    audienceScore: percentage(raw?.rotten?.audience),
     country: labelText(raw?.country),
     category: labelText(raw?.category),
     content: typeof raw?.content === "string" && raw.content.trim() ? raw.content : undefined

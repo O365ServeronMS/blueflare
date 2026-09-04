@@ -633,6 +633,105 @@ export async function releaseOmdbBudget(keyId, count) {
   );
 }
 
+/** Visible catalog rows that are new or due for an MDBList re-check. */
+export async function listMdblistRatingCandidates(slugs = [], limit = config.mdblistBatchLimit) {
+  const ordered = [...new Set(slugs.filter(Boolean).map(String))];
+  if (!ordered.length) return [];
+  const result = await pool.query(
+    'SELECT id, canonical_slug, media_type, tmdb_id, tmdb_media_type, imdb_id, ' +
+    'mdblist_status, mdblist_tomatoes, mdblist_audience FROM movies ' +
+    "WHERE canonical_slug = ANY($1::text[]) AND catalog_state = 'ready' " +
+    'AND (mdblist_checked_at IS NULL ' +
+    "  OR (mdblist_status = 'matched' AND mdblist_checked_at < now() - ($2::bigint * interval '1 millisecond')) " +
+    "  OR (mdblist_status IN ('unmatched', 'no-id') AND mdblist_checked_at < now() - ($3::bigint * interval '1 millisecond')) " +
+    "  OR (mdblist_status IN ('partial', 'error') AND mdblist_checked_at < now() - ($4::bigint * interval '1 millisecond'))) " +
+    'ORDER BY array_position($1::text[], canonical_slug) LIMIT $5',
+    [
+      ordered,
+      config.mdblistRefreshMs,
+      config.mdblistMissRetryMs,
+      config.mdblistErrorRetryMs,
+      Math.max(1, Math.floor(limit))
+    ]
+  );
+  return result.rows;
+}
+
+/**
+ * Persist whichever MDBList sources completed. A failed source leaves its old
+ * score untouched, while a successful response with no rating clears it.
+ */
+export async function recordMdblistResult(movieId, result) {
+  const allowed = ['matched', 'partial', 'unmatched', 'error'].includes(result?.status)
+    ? result.status : 'error';
+  const updated = await pool.query(
+    'UPDATE movies SET mdblist_status=$2, ' +
+    'mdblist_tomatoes=CASE WHEN $3 THEN $4 ELSE mdblist_tomatoes END, ' +
+    'mdblist_audience=CASE WHEN $5 THEN $6 ELSE mdblist_audience END, ' +
+    'mdblist_checked_at=now(), ' +
+    'updated_at=CASE WHEN $7 THEN now() ELSE updated_at END ' +
+    'WHERE id=$1 RETURNING canonical_slug',
+    [
+      movieId,
+      allowed,
+      Boolean(result?.tomatoesAttempted),
+      result?.tomatoes ?? null,
+      Boolean(result?.audienceAttempted),
+      result?.audience ?? null,
+      Boolean(result?.changed)
+    ]
+  );
+  return updated.rows[0] || null;
+}
+
+export async function recordMdblistMiss(movieId, status = 'no-id') {
+  const allowed = status === 'no-id' ? status : 'error';
+  const result = await pool.query(
+    'UPDATE movies SET mdblist_status=$2, mdblist_checked_at=now() ' +
+    'WHERE id=$1 RETURNING canonical_slug',
+    [movieId, allowed]
+  );
+  return result.rows[0] || null;
+}
+
+/** Claim one or more MDBList HTTP requests from this key's UTC-day budget. */
+export async function reserveMdblistBudget(keyId, requested) {
+  const key = String(keyId || '').trim();
+  const want = Math.max(0, Math.floor(requested));
+  const ceiling = Math.max(0, config.mdblistDailyBudget - config.mdblistBudgetReserve);
+  if (!key || !want || !ceiling) return { granted: 0, used: 0, ceiling };
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      'INSERT INTO mdblist_budget (day, key_id, used) VALUES (' + utcDay() + ', $1, 0) ' +
+      'ON CONFLICT (day, key_id) DO NOTHING',
+      [key]
+    );
+    const locked = await client.query(
+      'SELECT used FROM mdblist_budget WHERE day = ' + utcDay() + ' AND key_id = $1 FOR UPDATE',
+      [key]
+    );
+    const used = Number(locked.rows[0]?.used ?? 0);
+    const granted = Math.max(0, Math.min(want, ceiling - used));
+    if (granted > 0) {
+      await client.query(
+        'UPDATE mdblist_budget SET used=used+$2, updated_at=now() ' +
+        'WHERE day = ' + utcDay() + ' AND key_id=$1',
+        [key, granted]
+      );
+    }
+    await client.query('COMMIT');
+    return { granted, used: used + granted, ceiling };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function getMovieInvalidationDimensions(slugs = []) {
   const normalized = [...new Set(slugs.filter(Boolean).map(String))];
   if (!normalized.length) return [];

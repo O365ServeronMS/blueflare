@@ -17,8 +17,10 @@ export type MovieCard = {
   tmdbRating?: number;
   tmdb?: { id?: number | string; type?: string; vote_average?: number; vote_count?: number };
   imdb?: { id?: string; rating?: number; vote_count?: number };
-  /** Rotten Tomatoes critic score (0-100) from OMDb; absent for most rows. */
+  /** Rotten Tomatoes critic score (0-100) from MDBList. */
   tomatometer?: number;
+  /** Rotten Tomatoes audience score (0-100) from MDBList. */
+  audienceScore?: number;
   rating?: { imdb?: number | string; tmdb?: number | string } | number | string;
   ratings?: { imdb?: number | string; tmdb?: number | string };
   country?: string;
@@ -116,7 +118,10 @@ export type SourceMovie = {
   ratings?: { imdb?: number | string; tmdb?: number | string };
   tmdb_id?: number | string;
   imdb?: SourceRating;
-  rotten?: { tomatometer?: number | string | null };
+  rotten?: {
+    tomatometer?: number | string | null;
+    audience?: number | string | null;
+  };
   imdb_rating?: SourceRating | number | string;
   imdbRating?: number | string;
   imdb_score?: number | string;

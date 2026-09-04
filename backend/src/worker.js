@@ -32,6 +32,7 @@ import {
   getMovieInvalidationDimensions
 } from './repository.js';
 import { formatPrewarmStats, prewarmImages } from './prewarm.js';
+import { formatMdblistStats, syncMdblistRatings } from './mdblistRatingsSync.js';
 import { formatOmdbStats, syncOmdbRatings } from './ratingsSync.js';
 import { fetchTrendingMovieIds, fetchVerifiedTmdbImages, searchTmdbImagesByTitle } from './tmdb.js';
 import { buildHome, buildList } from './viewmodels.js';
@@ -385,7 +386,14 @@ async function syncCycle() {
     console.warn('[worker] no canonical changes; existing cache remains active');
   }
 
-  if (!stopping) await refreshOmdbRatings();
+  const ratingChangedSlugs = [];
+  if (!stopping) ratingChangedSlugs.push(...await refreshOmdbRatings());
+  if (!stopping) ratingChangedSlugs.push(...await refreshMdblistRatings());
+  if (ratingChangedSlugs.length) {
+    await invalidateForSlugs([...new Set(ratingChangedSlugs)]).catch((error) => {
+      console.warn('[worker] rating invalidation failed', error.message);
+    });
+  }
   if (!stopping) await prewarmHotImages();
 }
 
@@ -393,7 +401,7 @@ async function syncCycle() {
  * Drop every cached response and render tag a set of changed movies can appear
  * in, then rebuild the home payload.
  *
- * Shared by the provider sync pass and the OMDb score pass so there is one
+ * Shared by provider sync and both rating passes so there is one
  * definition of that fan-out. Note the key set is intentionally not keyed by
  * which slugs changed: list, genre and country pages are paginated windows over
  * the whole catalog, so a single changed row can move any of them.
@@ -445,7 +453,7 @@ async function invalidateForSlugs(changedSlugs) {
  * prewarmer then re-reads, which leaves the prewarmer warming the newest data.
  */
 async function refreshOmdbRatings() {
-  if (!config.omdbEnabled || !config.omdbApiKeys.length) return;
+  if (!config.omdbEnabled || !config.omdbApiKeys.length) return [];
 
   const sources = [];
   try {
@@ -465,7 +473,7 @@ async function refreshOmdbRatings() {
     }
   } catch (error) {
     console.warn('[worker] omdb ratings could not read catalog payloads', error.message);
-    return;
+    return [];
   }
 
   let stats;
@@ -473,18 +481,53 @@ async function refreshOmdbRatings() {
     stats = await syncOmdbRatings(sources);
   } catch (error) {
     console.error('[worker] omdb ratings pass failed', error);
-    return;
+    return [];
   }
 
   const line = '[worker] omdb ratings ' + formatOmdbStats(stats);
   if (stats.declined || Object.keys(stats.errors).length) console.warn(line);
   else console.log(line);
 
-  if (stats.changedSlugs.length) {
-    await invalidateForSlugs(stats.changedSlugs).catch((error) => {
-      console.warn('[worker] omdb ratings invalidation failed', error.message);
-    });
+  return stats.changedSlugs;
+}
+
+/** Attach MDBList critic/audience scores to the approved visible surfaces. */
+async function refreshMdblistRatings() {
+  if (!config.mdblistEnabled || !config.mdblistApiKeys.length) return [];
+
+  const sources = [];
+  try {
+    for (const bucket of config.mdblistRatingTypes) {
+      if (bucket === 'trending') {
+        const home = await getOrBuild('home', buildHome, { ttl: config.responseCacheTtlSeconds });
+        sources.push({ bucket, payload: home.data });
+        continue;
+      }
+      for (let currentPage = 1; currentPage <= config.mdblistPageDepth; currentPage += 1) {
+        const key = 'list:' + bucket + ':' + currentPage;
+        const result = await getOrBuild(key, () => buildList(bucket, currentPage), {
+          ttl: config.responseCacheTtlSeconds
+        });
+        sources.push({ bucket, payload: result.data });
+      }
+    }
+  } catch (error) {
+    console.warn('[worker] mdblist ratings could not read catalog payloads', error.message);
+    return [];
   }
+
+  let stats;
+  try {
+    stats = await syncMdblistRatings(sources);
+  } catch (error) {
+    console.error('[worker] mdblist ratings pass failed', error);
+    return [];
+  }
+
+  const line = '[worker] mdblist ratings ' + formatMdblistStats(stats);
+  if (stats.declined || Object.keys(stats.errors).length) console.warn(line);
+  else console.log(line);
+  return stats.changedSlugs;
 }
 
 const stopController = new AbortController();

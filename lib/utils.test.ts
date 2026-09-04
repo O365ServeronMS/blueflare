@@ -168,8 +168,8 @@ describe("normalizeEpisodeName (legacy utils version)", () => {
 });
 
 describe("getScoreBadges", () => {
-  test("reads the tomatometer from OMDb and the popcorn score from TMDB", () => {
-    expect(getScoreBadges({ tomatometer: 92, tmdbRating: 7.9 })).toEqual({
+  test("reads both Rotten Tomatoes percentages from MDBList fields", () => {
+    expect(getScoreBadges({ tomatometer: 92, audienceScore: 79 })).toEqual({
       tomato: { score: 92, fresh: true },
       popcorn: { score: 79 },
     });
@@ -180,9 +180,8 @@ describe("getScoreBadges", () => {
     expect(getScoreBadges({ tomatometer: 60 }).tomato).toEqual({ score: 60, fresh: true });
   });
 
-  test("omits the tomato for the rows OMDb has no critic score for", () => {
-    // The common case on this catalog, so the badge row has to render without it.
-    expect(getScoreBadges({ tmdbRating: 6.5 })).toEqual({
+  test("keeps either MDBList score independently optional", () => {
+    expect(getScoreBadges({ audienceScore: 65 })).toEqual({
       tomato: undefined,
       popcorn: { score: 65 },
     });
@@ -192,13 +191,17 @@ describe("getScoreBadges", () => {
     expect(getScoreBadges({})).toEqual({ tomato: undefined, popcorn: undefined });
   });
 
-  test("falls back through the other TMDB rating shapes", () => {
-    expect(getScoreBadges({ tmdb: { vote_average: 8.25 } }).popcorn).toEqual({ score: 83 });
-    expect(getScoreBadges({ vote_average: "7.1" }).popcorn).toEqual({ score: 71 });
+  test("does not use TMDB as a popcorn fallback", () => {
+    expect(getScoreBadges({ tmdbRating: 8.25 }).popcorn).toBeUndefined();
+    expect(getScoreBadges({ tmdb: { vote_average: 8.25 } }).popcorn).toBeUndefined();
   });
 
-  test("rejects out-of-range values instead of rendering an absurd percentage", () => {
+  test("accepts zero and rejects out-of-range percentages", () => {
+    expect(getScoreBadges({ tomatometer: 0, audienceScore: 0 })).toEqual({
+      tomato: { score: 0, fresh: false },
+      popcorn: { score: 0 },
+    });
     expect(getScoreBadges({ tomatometer: 850 }).tomato).toBeUndefined();
-    expect(getScoreBadges({ tmdbRating: 79 }).popcorn).toBeUndefined();
+    expect(getScoreBadges({ audienceScore: 101 }).popcorn).toBeUndefined();
   });
 });

@@ -11,11 +11,13 @@ phim.bluesia.net. The runtime path is:
         -> Valkey final-response cache
         -> canonical catalog in PostgreSQL
 
-Provider traffic is never on a browser request path:
+Provider and rating-enrichment traffic is never on a browser request path:
 
     NguonC (primary) ----\
                           -> sync worker -> canonical movies -> ViewModels
     KKPhim (fallback) ---/
+
+    MDBList (tomatoes + audience) -> worker -> dedicated movie score columns
 
 Video bytes are never proxied. The API returns provider embed/HLS metadata and
 the browser connects to the selected provider.
@@ -23,8 +25,9 @@ the browser connects to the selected provider.
 ## Services
 
 - api: HTTP API, response cache, image cache origin and its hourly sweep, health endpoint.
-- worker: provider sync, normalization, deterministic deduplication, health
-  tracking, home ViewModel precomputation, and image cache prewarming.
+- worker: provider sync, normalization, deterministic deduplication, MDBList
+  rating enrichment, health tracking, home ViewModel precomputation, and image
+  cache prewarming.
 - postgres: canonical movies and provider provenance.
 - valkey: final JSON responses and cache-version invalidation.
 - image-cache-init: one-shot `mkdir`+`chown` of the image cache directory. It

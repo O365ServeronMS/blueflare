@@ -569,7 +569,7 @@ export async function listMdblistBackfillCandidates(cursor = '', limit = config.
 /** Read the MDBList backfill checkpoint, creating an empty one on first run. */
 export async function getMdblistBackfillCursor() {
   const result = await pool.query(
-    "INSERT INTO crawl_checkpoints (provider, lane, next_page, next_cursor) VALUES ('mdblist','backfill',0,NULL) " +
+    "INSERT INTO crawl_checkpoints (provider, lane, next_page, next_cursor) VALUES ('mdblist','backfill',1,NULL) " +
     'ON CONFLICT (provider, lane) DO UPDATE SET provider = EXCLUDED.provider ' +
     'RETURNING next_cursor, completed_at',
     []

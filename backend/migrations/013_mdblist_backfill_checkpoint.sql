@@ -1,6 +1,7 @@
 -- MDBList full-catalog backfill: a uuid cursor on the movies walk, stored on
 -- the existing crawl_checkpoints table under provider='mdblist', lane='backfill'.
--- next_page stays 0/unused for this lane; next_cursor holds the last processed
+-- next_page stays 1/unused for this lane (its CHECK requires >= 1); next_cursor
+-- holds the last processed
 -- movies.id so the walk resumes across cycles and restarts.
 ALTER TABLE crawl_checkpoints ADD COLUMN IF NOT EXISTS next_cursor text;
 

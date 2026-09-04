@@ -76,6 +76,40 @@ export function getDisplayRating(movie: RatingSource) {
   return null;
 }
 
+/** Below this the Tomatometer is "rotten"; Rotten Tomatoes' own threshold. */
+const FRESH_THRESHOLD = 60;
+
+type ScoreSource = RatingSource & { tomatometer?: number | string | null };
+
+/**
+ * The two percentage badges shown above a card's title.
+ *
+ * The tomato is the Rotten Tomatoes critic score OMDb supplies, and is absent
+ * for most of this catalog — a 60-title probe of the live site found one for
+ * 25% of trending rows and 15% of phim-le rows. The popcorn slot is *not* the
+ * Rotten Tomatoes audience score: OMDb stopped returning it in 2017 and every
+ * `tomatoUser*` field now answers "N/A". It is the TMDB user score instead,
+ * which is the same kind of measure (a public vote) on a 0-10 scale.
+ */
+export function getScoreBadges(movie: ScoreSource) {
+  const tomatometer = normalizedRating(movie.tomatometer);
+  const tmdb =
+    normalizedRating(movie.tmdbRating) ||
+    normalizedRating(movie.tmdb_rating) ||
+    normalizedRating(movie.tmdb_vote_average) ||
+    normalizedRating(movie.vote_average) ||
+    normalizedRating(movie.tmdb?.vote_average);
+
+  return {
+    tomato: tomatometer !== undefined && tomatometer <= 100
+      ? { score: Math.round(tomatometer), fresh: tomatometer >= FRESH_THRESHOLD }
+      : undefined,
+    popcorn: tmdb !== undefined && tmdb <= 10
+      ? { score: Math.round(tmdb * 10) }
+      : undefined
+  };
+}
+
 export function ratingLabel(movie: RatingSource) {
   return getDisplayRating(movie)?.text || "";
 }

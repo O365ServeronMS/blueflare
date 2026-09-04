@@ -2,6 +2,7 @@ import { Play } from "lucide-react";
 import type { MovieCard as MovieCardType } from "@/lib/types";
 import { hrefWithReturnTo } from "@/lib/navigation";
 import { getDisplayRating } from "@/lib/utils";
+import { ScoreBadges } from "@/components/ScoreBadges";
 
 const LOCAL_IMAGE_PLACEHOLDER = "/image-placeholder.svg";
 
@@ -76,9 +77,10 @@ export function MovieCard({
             <div className="min-w-0">
               <Title className="line-clamp-1 text-[14px] font-bold leading-tight text-chalk-white sm:text-[15px]">{movie.name}</Title>
               <p className="mt-1 flex items-center gap-2 text-[11px] text-silver">
+                <ScoreBadges movie={movie} className="!text-[11px]" reserveSpace={false} />
                 {movie.year ? <span>{movie.year}</span> : null}
                 {status ? <span>{status}</span> : null}
-                {displayRating ? <span>{displayRating.score.toFixed(1)}</span> : null}
+                {displayRating ? <span className="font-bold text-luxury-gold">{displayRating.score.toFixed(1)}</span> : null}
               </p>
             </div>
             <span className="hidden h-9 w-9 shrink-0 place-items-center rounded-full bg-netflix-red text-chalk-white transition group-hover:grid group-focus-visible:grid">
@@ -116,10 +118,11 @@ export function MovieCard({
             <span className="bf-tag bf-tag-accent absolute left-2 top-2">{status}</span>
           ) : null}
           {displayRating ? (
-            <span className="bf-tag bf-tag-accent absolute right-2 top-2">{displayRating.score.toFixed(1)}</span>
+            <span className="bf-tag bf-tag-gold absolute right-2 top-2">{displayRating.score.toFixed(1)}</span>
           ) : null}
         </div>
-        <Title className={compact ? "mt-2 line-clamp-1 text-[13px] font-medium text-chalk-white" : "mt-2.5 line-clamp-1 text-[14px] font-medium text-chalk-white sm:text-[15px]"}>{movie.name}</Title>
+        <ScoreBadges movie={movie} className="mt-2" />
+        <Title className={compact ? "mt-1 line-clamp-1 text-[13px] font-medium text-chalk-white" : "mt-1 line-clamp-1 text-[14px] font-medium text-chalk-white sm:text-[15px]"}>{movie.name}</Title>
         {!compact ? (
           <p className="mt-1 line-clamp-1 text-[12px] text-silver">{[movie.year, movie.country].filter(Boolean).join(" · ")}</p>
         ) : null}

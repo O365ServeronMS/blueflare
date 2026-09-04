@@ -4,6 +4,7 @@ import {
   getDisplayRatings,
   getDisplayRating,
   ratingLabel,
+  getScoreBadges,
   normalizeEpisodeName,
 } from "./utils";
 
@@ -163,5 +164,41 @@ describe("normalizeEpisodeName (legacy utils version)", () => {
 
   test("returns indexed fallback for undefined", () => {
     expect(normalizeEpisodeName(undefined, 2)).toBe("Tập 3");
+  });
+});
+
+describe("getScoreBadges", () => {
+  test("reads the tomatometer from OMDb and the popcorn score from TMDB", () => {
+    expect(getScoreBadges({ tomatometer: 92, tmdbRating: 7.9 })).toEqual({
+      tomato: { score: 92, fresh: true },
+      popcorn: { score: 79 },
+    });
+  });
+
+  test("marks a tomatometer below 60 as rotten", () => {
+    expect(getScoreBadges({ tomatometer: 59 }).tomato).toEqual({ score: 59, fresh: false });
+    expect(getScoreBadges({ tomatometer: 60 }).tomato).toEqual({ score: 60, fresh: true });
+  });
+
+  test("omits the tomato for the rows OMDb has no critic score for", () => {
+    // The common case on this catalog, so the badge row has to render without it.
+    expect(getScoreBadges({ tmdbRating: 6.5 })).toEqual({
+      tomato: undefined,
+      popcorn: { score: 65 },
+    });
+  });
+
+  test("omits both badges when neither source has a score", () => {
+    expect(getScoreBadges({})).toEqual({ tomato: undefined, popcorn: undefined });
+  });
+
+  test("falls back through the other TMDB rating shapes", () => {
+    expect(getScoreBadges({ tmdb: { vote_average: 8.25 } }).popcorn).toEqual({ score: 83 });
+    expect(getScoreBadges({ vote_average: "7.1" }).popcorn).toEqual({ score: 71 });
+  });
+
+  test("rejects out-of-range values instead of rendering an absurd percentage", () => {
+    expect(getScoreBadges({ tomatometer: 850 }).tomato).toBeUndefined();
+    expect(getScoreBadges({ tmdbRating: 79 }).popcorn).toBeUndefined();
   });
 });

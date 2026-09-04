@@ -7,6 +7,7 @@ import { useFavoriteToggle } from "@/components/LocalMovieActions";
 import type { MovieCard } from "@/lib/types";
 import { hrefWithReturnTo } from "@/lib/navigation";
 import { getDisplayRating } from "@/lib/utils";
+import { ScoreBadges } from "@/components/ScoreBadges";
 
 const SLIDE_INTERVAL_MS = 7000;
 const EMPTY_MOVIE: MovieCard = { name: "", slug: "", poster: "", thumb: "" };
@@ -116,7 +117,8 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
             {heroTitle}
           </h1>
           <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 text-[13px] font-medium text-chalk-white">
-            {displayRating ? <span>{displayRating.text}</span> : null}
+            <ScoreBadges movie={active} className="!text-[13px]" reserveSpace={false} />
+            {displayRating ? <span className="font-bold text-luxury-gold">{displayRating.text}</span> : null}
             {active.year ? <span>{active.year}</span> : null}
             {active.quality ? <span>{active.quality}</span> : null}
             {active.episodeCurrent ? <span className="text-silver">{active.episodeCurrent}</span> : null}

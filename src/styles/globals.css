@@ -247,6 +247,25 @@ button, a { -webkit-tap-highlight-color: transparent; }
   line-height: 1.5;
 }
 .bf-tag-accent { background: var(--color-netflix-red); color: #fff; }
+/* Ink, not white: #d4af37 against #fff is ~2.0:1 and fails AA outright, while
+   against near-black it clears 8:1. */
+.bf-tag-gold { background: var(--color-luxury-gold); color: #100c02; }
+
+/* The row of 🍅/🍿 percentages between a poster and its title. The height is
+   reserved whether or not either badge is present: most rows carry no critic
+   score, so an unreserved row would shift the grid on the few that do. */
+.bf-score-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 18px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--color-chalk-white);
+}
+.bf-score { display: inline-flex; align-items: center; gap: 4px; }
+.bf-score-icon { width: 15px; height: 15px; flex: none; }
 .bf-tag-outline { border: 1px solid var(--color-netflix-red); color: var(--color-netflix-red); background: transparent; }
 .bf-tag-outline[aria-current="true"] { background: var(--color-netflix-red); color: #fff; }
 

@@ -84,6 +84,7 @@ export function normalizeCard(raw: RawItem): MovieCard {
       rating: imdbRating,
       vote_count: num(raw?.imdb?.vote_count)
     },
+    tomatometer: num(raw?.rotten?.tomatometer),
     country: labelText(raw?.country),
     category: labelText(raw?.category),
     content: typeof raw?.content === "string" && raw.content.trim() ? raw.content : undefined

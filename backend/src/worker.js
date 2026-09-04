@@ -32,6 +32,7 @@ import {
   getMovieInvalidationDimensions
 } from './repository.js';
 import { formatPrewarmStats, prewarmImages } from './prewarm.js';
+import { formatOmdbStats, syncOmdbRatings } from './ratingsSync.js';
 import { fetchTrendingMovieIds, fetchVerifiedTmdbImages, searchTmdbImagesByTitle } from './tmdb.js';
 import { buildHome, buildList } from './viewmodels.js';
 import { runWorkerLoop } from './workerLoop.js';
@@ -378,47 +379,112 @@ async function syncCycle() {
     ...tmdbFallbackSlugs
   ])];
   if (changedSlugs.length > 0) {
-    const changedMovies = await getMovieInvalidationDimensions(changedSlugs).catch((error) => {
-      console.warn("[worker] taxonomy invalidation lookup failed", error.message);
-      return [];
-    });
-    const keys = ['home'];
-    for (const type of config.invalidateListTypes) {
-      for (let currentPage = 1; currentPage <= config.invalidatePageDepth; currentPage += 1) keys.push('list:' + type + ':' + currentPage);
-    }
-    for (const movieSlug of changedSlugs) keys.push('movie:' + movieSlug);
-    for (const movie of changedMovies) {
-      for (const field of [movie.genres, movie.countries]) {
-        for (const item of Array.isArray(field) ? field : []) {
-          const slug = String(item?.slug || "").trim().toLowerCase();
-          if (!slug) continue;
-          const prefix = field === movie.genres ? 'genre:' : 'country:';
-          for (let currentPage = 1; currentPage <= config.invalidatePageDepth; currentPage += 1) keys.push(prefix + slug + ':' + currentPage);
-        }
-      }
-    }
-    await invalidateResponseKeys(keys);
-    const tags = ['home', 'list'];
-    for (const type of config.invalidateListTypes) tags.push('list:' + type);
-    for (let currentPage = 1; currentPage <= config.invalidatePageDepth; currentPage += 1) tags.push('page:' + currentPage);
-    tags.push(...changedSlugs.map((movieSlug) => 'movie:' + movieSlug));
-    for (const movie of changedMovies) {
-      for (const field of [movie.genres, movie.countries]) {
-        for (const item of Array.isArray(field) ? field : []) {
-          const slug = String(item?.slug || "").trim().toLowerCase();
-          if (!slug) continue;
-          tags.push((field === movie.genres ? 'category:' : 'country:') + slug);
-        }
-      }
-    }
-    await revalidateFrontend([...new Set(tags)]);
-    await getOrBuild('home', buildHome, { ttl: config.responseCacheTtlSeconds });
+    await invalidateForSlugs(changedSlugs);
     console.log('[worker] resource invalidation changed=' + changedSlugs.length + ' home precomputed');
   } else {
     console.warn('[worker] no canonical changes; existing cache remains active');
   }
 
+  if (!stopping) await refreshOmdbRatings();
   if (!stopping) await prewarmHotImages();
+}
+
+/**
+ * Drop every cached response and render tag a set of changed movies can appear
+ * in, then rebuild the home payload.
+ *
+ * Shared by the provider sync pass and the OMDb score pass so there is one
+ * definition of that fan-out. Note the key set is intentionally not keyed by
+ * which slugs changed: list, genre and country pages are paginated windows over
+ * the whole catalog, so a single changed row can move any of them.
+ */
+async function invalidateForSlugs(changedSlugs) {
+  const changedMovies = await getMovieInvalidationDimensions(changedSlugs).catch((error) => {
+    console.warn("[worker] taxonomy invalidation lookup failed", error.message);
+    return [];
+  });
+  const keys = ['home'];
+  for (const type of config.invalidateListTypes) {
+    for (let currentPage = 1; currentPage <= config.invalidatePageDepth; currentPage += 1) keys.push('list:' + type + ':' + currentPage);
+  }
+  for (const movieSlug of changedSlugs) keys.push('movie:' + movieSlug);
+  for (const movie of changedMovies) {
+    for (const field of [movie.genres, movie.countries]) {
+      for (const item of Array.isArray(field) ? field : []) {
+        const slug = String(item?.slug || "").trim().toLowerCase();
+        if (!slug) continue;
+        const prefix = field === movie.genres ? 'genre:' : 'country:';
+        for (let currentPage = 1; currentPage <= config.invalidatePageDepth; currentPage += 1) keys.push(prefix + slug + ':' + currentPage);
+      }
+    }
+  }
+  await invalidateResponseKeys(keys);
+  const tags = ['home', 'list'];
+  for (const type of config.invalidateListTypes) tags.push('list:' + type);
+  for (let currentPage = 1; currentPage <= config.invalidatePageDepth; currentPage += 1) tags.push('page:' + currentPage);
+  tags.push(...changedSlugs.map((movieSlug) => 'movie:' + movieSlug));
+  for (const movie of changedMovies) {
+    for (const field of [movie.genres, movie.countries]) {
+      for (const item of Array.isArray(field) ? field : []) {
+        const slug = String(item?.slug || "").trim().toLowerCase();
+        if (!slug) continue;
+        tags.push((field === movie.genres ? 'category:' : 'country:') + slug);
+      }
+    }
+  }
+  await revalidateFrontend([...new Set(tags)]);
+  await getOrBuild('home', buildHome, { ttl: config.responseCacheTtlSeconds });
+}
+
+/**
+ * Attach Tomatometer scores to the rows a visitor is about to see.
+ *
+ * Reads the same viewmodels the API serves, exactly like `prewarmHotImages()`
+ * below, so there is no second copy of "what is on the home page" to drift.
+ * Runs before the prewarm pass because it invalidates the list payloads the
+ * prewarmer then re-reads, which leaves the prewarmer warming the newest data.
+ */
+async function refreshOmdbRatings() {
+  if (!config.omdbEnabled || !config.omdbApiKey) return;
+
+  const sources = [];
+  try {
+    for (const bucket of config.omdbRatingTypes) {
+      if (bucket === 'trending') {
+        const home = await getOrBuild('home', buildHome, { ttl: config.responseCacheTtlSeconds });
+        sources.push({ bucket, payload: home.data });
+        continue;
+      }
+      for (let currentPage = 1; currentPage <= config.omdbPageDepth; currentPage += 1) {
+        const key = 'list:' + bucket + ':' + currentPage;
+        const result = await getOrBuild(key, () => buildList(bucket, currentPage), {
+          ttl: config.responseCacheTtlSeconds
+        });
+        sources.push({ bucket, payload: result.data });
+      }
+    }
+  } catch (error) {
+    console.warn('[worker] omdb ratings could not read catalog payloads', error.message);
+    return;
+  }
+
+  let stats;
+  try {
+    stats = await syncOmdbRatings(sources);
+  } catch (error) {
+    console.error('[worker] omdb ratings pass failed', error);
+    return;
+  }
+
+  const line = '[worker] omdb ratings ' + formatOmdbStats(stats);
+  if (stats.declined || Object.keys(stats.errors).length) console.warn(line);
+  else console.log(line);
+
+  if (stats.changedSlugs.length) {
+    await invalidateForSlugs(stats.changedSlugs).catch((error) => {
+      console.warn('[worker] omdb ratings invalidation failed', error.message);
+    });
+  }
 }
 
 const stopController = new AbortController();

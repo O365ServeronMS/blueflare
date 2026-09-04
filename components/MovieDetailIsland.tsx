@@ -19,6 +19,7 @@ import {
 import { normalizePlaybackUrl } from "@/lib/playback";
 import type { MovieCard, MovieDetail } from "@/lib/types";
 import { getDisplayRating } from "@/lib/utils";
+import { ScoreBadges } from "@/components/ScoreBadges";
 
 function slugFromPath() {
   const match = window.location.pathname.match(/^\/movie\/([^/?#]+)/);
@@ -48,6 +49,7 @@ function toMovieCard(movie: MovieDetail): MovieCard {
     tmdbRating: movie.tmdbRating,
     tmdb: movie.tmdb,
     imdb: movie.imdb,
+    tomatometer: movie.tomatometer,
     country: movie.country,
     category: movie.category
   };
@@ -196,7 +198,8 @@ export function MovieDetailIsland() {
             <h1 className="mt-3 max-w-[13ch] text-[38px] font-black leading-[0.98] tracking-[-0.035em] text-white sm:text-[52px] lg:text-[64px]">{movie.name}</h1>
             {movie.originName && movie.originName !== movie.name ? <p className="mt-3 text-[14px] font-medium text-silver md:text-[16px]">{movie.originName}</p> : null}
             <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 text-[13px] font-medium text-white">
-              {displayRating ? <span>{displayRating.text}</span> : null}
+              <ScoreBadges movie={movieCard} className="!text-[13px]" reserveSpace={false} />
+              {displayRating ? <span className="font-bold text-luxury-gold">{displayRating.text}</span> : null}
               {movie.year ? <span>{movie.year}</span> : null}
               {movie.quality ? <span>{movie.quality}</span> : null}
               {movie.time ? <span>{movie.time}</span> : null}

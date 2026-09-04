@@ -9,6 +9,7 @@ import { getMovieServer } from "@/lib/catalog-server";
 import { episodeWatchKey, findEpisodeByWatchKey } from "@/lib/episodes";
 import { fallbackReturnToForSource, getBackHref, hrefWithReturnTo, inferNavSourceFromMovie, returnToFromSearchParams } from "@/lib/navigation";
 import { getDisplayRating, stripHtml } from "@/lib/utils";
+import { ScoreBadges } from "@/components/ScoreBadges";
 import type { MovieCard } from "@/lib/types";
 
 type Params = Promise<{ slug: string }>;
@@ -36,6 +37,7 @@ function toMovieCard(movie: Awaited<ReturnType<typeof getMovieServer>>): MovieCa
     tmdbRating: movie.tmdbRating,
     tmdb: movie.tmdb,
     imdb: movie.imdb,
+    tomatometer: movie.tomatometer,
     country: movie.country,
     category: movie.category
   };
@@ -93,7 +95,8 @@ export default async function MoviePage({ params, searchParams }: { params: Para
             <h1 className="mt-3 max-w-[13ch] text-[38px] font-black leading-[0.98] tracking-[-0.035em] text-white sm:text-[52px] lg:text-[64px]">{movie.name}</h1>
             {movie.originName && movie.originName !== movie.name ? <p className="mt-3 text-[14px] font-medium text-silver md:text-[16px]">{movie.originName}</p> : null}
             <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 text-[13px] font-medium text-white">
-              {displayRating ? <span>{displayRating.text}</span> : null}
+              <ScoreBadges movie={movie} className="!text-[13px]" reserveSpace={false} />
+              {displayRating ? <span className="font-bold text-luxury-gold">{displayRating.text}</span> : null}
               {movie.year ? <span>{movie.year}</span> : null}
               {movie.quality ? <span>{movie.quality}</span> : null}
               {movie.time ? <span>{movie.time}</span> : null}

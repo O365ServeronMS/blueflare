@@ -6,7 +6,7 @@ import {
   mdblistKeyId,
   parseMdblistRatings
 } from '../src/mdblist.js';
-import { formatMdblistStats, syncMdblistRatings } from '../src/mdblistRatingsSync.js';
+import { backfillMdblistRatings, formatMdblistStats, syncMdblistRatings } from '../src/mdblistRatingsSync.js';
 
 const BASE = 'https://api.mdblist.com';
 const SOURCES = [{
@@ -123,6 +123,7 @@ function harness(overrides = {}) {
     idsPerRequest: 10,
     batchLimit: 60,
     listCandidates: async () => candidates,
+    listBackfill: async () => [],
     reserveBudget: async (keyId, requested) => {
       calls.budgets.push([keyId, requested]);
       return { granted: requested, used: requested, ceiling: 950 };
@@ -229,6 +230,60 @@ test('key identities are stable and never contain the key', () => {
   assert.equal(mdblistKeyId('key-1').length, 12);
   assert.notEqual(mdblistKeyId('key-1'), mdblistKeyId('key-2'));
   assert.ok(!mdblistKeyId('key-1').includes('key-1'));
+});
+
+function backfillHarness(overrides = {}) {
+  const calls = { results: [], misses: [] };
+  const rows = overrides.rows || [
+    { id: 'm1', canonical_slug: 'm1', media_type: 'movie', tmdb_id: 1, tmdb_media_type: 'movie', imdb_id: null, mdblist_tomatoes: null, mdblist_audience: null },
+    { id: 'm2', canonical_slug: 'm2', media_type: 'movie', tmdb_id: 2, tmdb_media_type: 'movie', imdb_id: null, mdblist_tomatoes: null, mdblist_audience: null }
+  ];
+  const deps = {
+    enabled: true,
+    apiKeys: ['key-1'],
+    concurrency: 1,
+    idsPerRequest: 1,
+    batchLimit: 10,
+    listBackfill: async () => rows,
+    listCandidates: async () => [],
+    recordResult: async (id, result) => { calls.results.push([id, result]); },
+    recordMiss: async (id, status) => { calls.misses.push([id, status]); },
+    reserveBudget: async (keyId, requested) => ({ granted: requested, used: requested, ceiling: 950 }),
+    fetchRatings: async (request) => ({ ...request, ratings: request.ids.map((id) => ({ id, rating: 50 })) }),
+    ...overrides
+  };
+  return { deps, calls, rows };
+}
+
+test('backfill advances the cursor to the last id and completes at the end of the catalog', async () => {
+  const { deps } = backfillHarness();
+  const stats = await backfillMdblistRatings(deps);
+  assert.equal(stats.selected, 2);
+  assert.equal(stats.matched, 2);
+  assert.deepEqual(stats.cursor, { next: 'm2', completed: true });
+});
+
+test('backfill stops the cursor at the last attempted row when budget runs out', async () => {
+  let grants = 0;
+  const { deps } = backfillHarness({
+    // Enough budget for m1's two sources, then nothing: m2 is never attempted.
+    reserveBudget: async (keyId, requested) => {
+      if (grants >= 2) return { granted: 0, used: 0, ceiling: 950 };
+      grants += 1;
+      return { granted: requested, used: requested, ceiling: 950 };
+    }
+  });
+  const stats = await backfillMdblistRatings(deps);
+  assert.equal(stats.declined, 'budget-exhausted');
+  assert.equal(stats.cursor.completed, false);
+  assert.equal(stats.cursor.next, 'm1');
+});
+
+test('backfill completes without spending when the walk is already at the end', async () => {
+  const { deps } = backfillHarness({ rows: [], cursor: 'zzz' });
+  const stats = await backfillMdblistRatings(deps);
+  assert.equal(stats.spent, 0);
+  assert.deepEqual(stats.cursor, { next: 'zzz', completed: true });
 });
 
 test('stats format as a single greppable line', () => {

@@ -8,7 +8,8 @@ const REPOSITORY_DEPS = [
   ['listCandidates', 'listMdblistRatingCandidates'],
   ['recordResult', 'recordMdblistResult'],
   ['recordMiss', 'recordMdblistMiss'],
-  ['reserveBudget', 'reserveMdblistBudget']
+  ['reserveBudget', 'reserveMdblistBudget'],
+  ['listBackfill', 'listMdblistBackfillCandidates']
 ];
 
 async function resolveRepositoryDeps(options) {
@@ -87,8 +88,22 @@ function changedScore(previous, next) {
   return oldValue !== next;
 }
 
-export async function syncMdblistRatings(sources, options = {}) {
-  const startedAt = Date.now();
+function newStats(keysTotal) {
+  return {
+    visible: 0, selected: 0, batches: 0, reserved: 0, spent: 0,
+    matched: 0, partial: 0, unmatched: 0, tomatoes: 0, audience: 0, noId: 0,
+    keysTotal, keysTried: 0, keysDrained: 0,
+    errors: {}, declined: null, durationMs: 0, changedSlugs: [], cursor: null
+  };
+}
+
+/**
+ * Shared run context: the resolved key pool, repository deps, and a mutable
+ * stats object. Both the demand-driven pass and the backfill walk build one of
+ * these and then hand candidates to `processCandidates`, so there is a single
+ * definition of budget spending and result recording.
+ */
+async function prepareRun(options = {}) {
   const keys = [...new Set(options.apiKeys ?? config.mdblistApiKeys)]
     .map((key) => String(key).trim())
     .filter(Boolean)
@@ -101,48 +116,26 @@ export async function syncMdblistRatings(sources, options = {}) {
     concurrency: options.concurrency ?? config.mdblistConcurrency,
     enabled: options.enabled ?? (config.mdblistEnabled && keys.length > 0)
   };
-
-  const stats = {
-    visible: 0,
-    selected: 0,
-    batches: 0,
-    reserved: 0,
-    spent: 0,
-    matched: 0,
-    partial: 0,
-    unmatched: 0,
-    tomatoes: 0,
-    audience: 0,
-    noId: 0,
-    keysTotal: keys.length,
-    keysTried: 0,
-    keysDrained: 0,
-    errors: {},
-    declined: null,
-    durationMs: 0,
-    changedSlugs: []
-  };
+  const stats = newStats(keys.length);
   const triedKeys = new Set();
+  const startedAt = Date.now();
   const done = () => {
     stats.keysTried = triedKeys.size;
     stats.durationMs = Date.now() - startedAt;
     return stats;
   };
+  return { keys, deps, stats, triedKeys, done };
+}
 
-  if (!deps.enabled) {
-    stats.declined = 'disabled';
-    return done();
-  }
-
-  const slugs = collectRatingSlugs(sources);
-  stats.visible = slugs.length;
-  if (!slugs.length) return done();
-  const candidates = await deps.listCandidates(slugs, deps.batchLimit);
-  stats.selected = candidates.length;
-  if (!candidates.length) return done();
-
+/**
+ * Fetch scores for a set of candidate rows and persist them. Returns the state
+ * map so callers (the backfill) can see which rows were actually attempted
+ * before budget ran out — the cursor must not skip un-attempted rows.
+ */
+async function processCandidates(candidates, ctx) {
+  const { keys, deps, stats, triedKeys } = ctx;
   const { states, tasks } = buildWork(candidates, Math.max(1, Math.floor(deps.idsPerRequest)));
-  stats.batches = tasks.length;
+  stats.batches += tasks.length;
 
   async function fetchWithKeys(task) {
     for (const apiKey of keys) {
@@ -200,15 +193,19 @@ export async function syncMdblistRatings(sources, options = {}) {
     const { movie, lookup, tomatoes, audience } = state;
     if (!lookup) {
       stats.noId += 1;
+      state.attempted = true;
       await deps.recordMiss(movie.id, 'no-id').catch(() => {});
       continue;
     }
 
     const completed = Number(tomatoes.attempted) + Number(audience.attempted);
+    state.attempted = completed > 0;
+    if (completed === 0) continue;
+
     const values = [tomatoes.value, audience.value].filter((value) => value !== null);
     const status = completed === 2
       ? (values.length ? 'matched' : 'unmatched')
-      : completed === 1 ? 'partial' : 'error';
+      : 'partial';
     const changedResult = (
       (tomatoes.attempted && changedScore(movie.mdblist_tomatoes, tomatoes.value)) ||
       (audience.attempted && changedScore(movie.mdblist_audience, audience.value))
@@ -229,8 +226,71 @@ export async function syncMdblistRatings(sources, options = {}) {
     if (audience.attempted && audience.value !== null) stats.audience += 1;
     if (changedResult) changed.push(movie.canonical_slug);
   }
+  stats.changedSlugs = [...new Set([...stats.changedSlugs, ...changed])];
+  return states;
+}
 
-  stats.changedSlugs = [...new Set(changed)];
+export async function syncMdblistRatings(sources, options = {}) {
+  const ctx = await prepareRun(options);
+  const { deps, stats, done } = ctx;
+  if (!deps.enabled) {
+    stats.declined = 'disabled';
+    return done();
+  }
+
+  const slugs = collectRatingSlugs(sources);
+  stats.visible = slugs.length;
+  if (!slugs.length) return done();
+  const candidates = await deps.listCandidates(slugs, deps.batchLimit);
+  stats.selected = candidates.length;
+  if (!candidates.length) return done();
+
+  await processCandidates(candidates, ctx);
+  return done();
+}
+
+/**
+ * One backfill pass: walk the catalog by id past the stored cursor and score
+ * whatever the daily budget allows. The cursor only advances past rows that
+ * were actually attempted, so a pass cut short by budget resumes exactly where
+ * it stopped rather than skipping un-scored rows.
+ */
+export async function backfillMdblistRatings(options = {}) {
+  const ctx = await prepareRun(options);
+  const { deps, stats, done } = ctx;
+  const listBackfill = options.listBackfill ?? deps.listBackfill;
+  if (!deps.enabled) {
+    stats.declined = 'disabled';
+    return done();
+  }
+
+  const cursor = String(options.cursor ?? '');
+  const limit = Math.max(1, Math.floor(options.batchLimit ?? config.mdblistBackfillBatchLimit));
+  const candidates = await listBackfill(cursor, limit);
+  stats.selected = candidates.length;
+  if (!candidates.length) {
+    stats.cursor = { next: cursor, completed: true };
+    return done();
+  }
+
+  const states = await processCandidates(candidates, ctx);
+
+  // Advance only to the last id that was attempted; leave budget-declined rows
+  // (and everything after them) for the next pass by keeping the cursor there.
+  let lastAttempted = cursor;
+  let attemptedCount = 0;
+  for (const movie of candidates) {
+    const state = states.get(movie.id);
+    if (state?.attempted) {
+      lastAttempted = movie.id;
+      attemptedCount += 1;
+    } else {
+      break;
+    }
+  }
+  const exhausted = stats.declined === 'budget-exhausted';
+  const completed = !exhausted && candidates.length < limit && attemptedCount === candidates.length;
+  stats.cursor = { next: lastAttempted, completed };
   return done();
 }
 
@@ -251,6 +311,7 @@ export function formatMdblistStats(stats) {
     'drained=' + stats.keysDrained,
     'durationMs=' + stats.durationMs
   ];
+  if (stats.cursor) parts.push('completed=' + Boolean(stats.cursor.completed));
   if (stats.declined) parts.push('declined=' + stats.declined);
   const errors = Object.entries(stats.errors);
   if (errors.length) parts.push('errors=' + errors.map(([reason, count]) => reason + 'x' + count).join(','));

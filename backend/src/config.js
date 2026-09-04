@@ -77,6 +77,12 @@ export const config = Object.freeze({
   mdblistRefreshMs: integer('MDBLIST_REFRESH_MS', 30 * 24 * 60 * 60 * 1000, 60 * 1000),
   mdblistMissRetryMs: integer('MDBLIST_MISS_RETRY_MS', 90 * 24 * 60 * 60 * 1000, 60 * 1000),
   mdblistErrorRetryMs: integer('MDBLIST_ERROR_RETRY_MS', 60 * 60 * 1000, 60 * 1000),
+  // Full-catalog backfill: walks the movies table by id cursor to reach rows the
+  // demand-driven pass never sees. On by default; reset re-walks from the start.
+  mdblistBackfillEnabled: boolean('MDBLIST_BACKFILL_ENABLED', true),
+  mdblistBackfillBatchLimit: integer('MDBLIST_BACKFILL_BATCH_LIMIT', 300, 1),
+  mdblistBackfillIntervalMs: integer('MDBLIST_BACKFILL_INTERVAL_MS', syncIntervalMs, 60 * 1000),
+  mdblistBackfillReset: boolean('MDBLIST_BACKFILL_RESET', false),
 
   redisUrl: process.env.REDIS_URL || 'redis://valkey:6379',
   imageSigningSecret,

@@ -539,6 +539,62 @@ export async function listMdblistRatingCandidates(slugs = [], limit = config.mdb
 }
 
 /**
+ * Catalog walk for the MDBList backfill: ordered by `id` past a cursor, only
+ * ready rows that carry a tmdb/imdb id and are new or due for a re-check.
+ * Independent of the visible surfaces so it can reach the deep catalog.
+ */
+export async function listMdblistBackfillCandidates(cursor = '', limit = config.mdblistBackfillBatchLimit) {
+  const after = String(cursor || '').trim();
+  const result = await pool.query(
+    'SELECT id, canonical_slug, media_type, tmdb_id, tmdb_media_type, imdb_id, ' +
+    'mdblist_status, mdblist_tomatoes, mdblist_audience FROM movies ' +
+    "WHERE catalog_state = 'ready' AND (tmdb_id IS NOT NULL OR imdb_id IS NOT NULL) " +
+    'AND ($1 = \'\' OR id > $1::uuid) ' +
+    'AND (mdblist_checked_at IS NULL ' +
+    "  OR (mdblist_status = 'matched' AND mdblist_checked_at < now() - ($2::bigint * interval '1 millisecond')) " +
+    "  OR (mdblist_status IN ('unmatched', 'no-id') AND mdblist_checked_at < now() - ($3::bigint * interval '1 millisecond')) " +
+    "  OR (mdblist_status IN ('partial', 'error') AND mdblist_checked_at < now() - ($4::bigint * interval '1 millisecond'))) " +
+    'ORDER BY id LIMIT $5',
+    [
+      after,
+      config.mdblistRefreshMs,
+      config.mdblistMissRetryMs,
+      config.mdblistErrorRetryMs,
+      Math.max(1, Math.floor(limit))
+    ]
+  );
+  return result.rows;
+}
+
+/** Read the MDBList backfill checkpoint, creating an empty one on first run. */
+export async function getMdblistBackfillCursor() {
+  const result = await pool.query(
+    "INSERT INTO crawl_checkpoints (provider, lane, next_page, next_cursor) VALUES ('mdblist','backfill',0,NULL) " +
+    'ON CONFLICT (provider, lane) DO UPDATE SET provider = EXCLUDED.provider ' +
+    'RETURNING next_cursor, completed_at',
+    []
+  );
+  const row = result.rows[0] || {};
+  return { cursor: row.next_cursor || '', completed: Boolean(row.completed_at) };
+}
+
+/** Advance (or complete, or reset) the MDBList backfill checkpoint. */
+export async function saveMdblistBackfillCursor({ cursor, completed = false, reset = false } = {}) {
+  if (reset) {
+    await pool.query(
+      "UPDATE crawl_checkpoints SET next_cursor=NULL, completed_at=NULL, last_error=NULL, updated_at=now() " +
+      "WHERE provider='mdblist' AND lane='backfill'"
+    );
+    return;
+  }
+  await pool.query(
+    'UPDATE crawl_checkpoints SET next_cursor=$1, completed_at=$2, last_success_at=now(), updated_at=now() ' +
+    "WHERE provider='mdblist' AND lane='backfill'",
+    [cursor || null, completed ? new Date() : null]
+  );
+}
+
+/**
  * Persist whichever MDBList sources completed. A failed source leaves its old
  * score untouched, while a successful response with no rating clears it.
  */

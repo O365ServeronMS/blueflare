@@ -30,10 +30,12 @@ import {
   saveCrawlCheckpoint,
   upsertCanonical,
   withHeroTrendingRefreshLock,
-  getMovieInvalidationDimensions
+  getMovieInvalidationDimensions,
+  getMdblistBackfillCursor,
+  saveMdblistBackfillCursor
 } from './repository.js';
 import { formatPrewarmStats, prewarmImages } from './prewarm.js';
-import { formatMdblistStats, syncMdblistRatings } from './mdblistRatingsSync.js';
+import { backfillMdblistRatings, formatMdblistStats, syncMdblistRatings } from './mdblistRatingsSync.js';
 import { fetchTrendingMovieIds, fetchVerifiedTmdbImages, searchTmdbImagesByTitle } from './tmdb.js';
 import { buildHome, buildList } from './viewmodels.js';
 import { runWorkerLoop } from './workerLoop.js';
@@ -41,6 +43,8 @@ import { runWorkerLoop } from './workerLoop.js';
 const providers = [new NguoncProvider(), new KkphimProvider()];
 let stopping = false;
 let lastBackfillRunAt = 0;
+let lastMdblistBackfillRunAt = 0;
+let mdblistBackfillResetDone = false;
 
 function providersFor(names) {
   const allow = new Set(names.map((name) => String(name).toLowerCase()));
@@ -370,6 +374,7 @@ async function syncCycle() {
 
   const ratingChangedSlugs = [];
   if (!stopping) ratingChangedSlugs.push(...await refreshMdblistRatings());
+  if (!stopping) ratingChangedSlugs.push(...await refreshMdblistBackfill());
   if (ratingChangedSlugs.length) {
     await invalidateForSlugs([...new Set(ratingChangedSlugs)]).catch((error) => {
       console.warn('[worker] rating invalidation failed', error.message);
@@ -466,6 +471,52 @@ async function refreshMdblistRatings() {
   }
 
   const line = '[worker] mdblist ratings ' + formatMdblistStats(stats);
+  if (stats.declined || Object.keys(stats.errors).length) console.warn(line);
+  else console.log(line);
+  return stats.changedSlugs;
+}
+
+/**
+ * Walk the whole catalog for MDBList scores, one budget-limited slice per run,
+ * resuming from a persisted id cursor. Idle once the walk completes; a
+ * MDBLIST_BACKFILL_RESET=true env re-arms it from the start once per process.
+ */
+async function refreshMdblistBackfill() {
+  if (!config.mdblistBackfillEnabled || !config.mdblistApiKeys.length) return [];
+  if (Date.now() - lastMdblistBackfillRunAt < config.mdblistBackfillIntervalMs) return [];
+  lastMdblistBackfillRunAt = Date.now();
+
+  if (config.mdblistBackfillReset && !mdblistBackfillResetDone) {
+    await saveMdblistBackfillCursor({ reset: true }).catch(() => {});
+    mdblistBackfillResetDone = true;
+    console.log('[worker] mdblist backfill checkpoint reset');
+  }
+
+  let checkpoint;
+  try {
+    checkpoint = await getMdblistBackfillCursor();
+  } catch (error) {
+    console.warn('[worker] mdblist backfill checkpoint unavailable', error.message);
+    return [];
+  }
+  if (checkpoint.completed) return [];
+
+  let stats;
+  try {
+    stats = await backfillMdblistRatings({ cursor: checkpoint.cursor });
+  } catch (error) {
+    console.error('[worker] mdblist backfill pass failed', error);
+    return [];
+  }
+
+  if (stats.cursor) {
+    await saveMdblistBackfillCursor({
+      cursor: stats.cursor.next,
+      completed: stats.cursor.completed
+    }).catch((error) => console.warn('[worker] mdblist backfill cursor save failed', error.message));
+  }
+
+  const line = '[worker] mdblist backfill ' + formatMdblistStats(stats);
   if (stats.declined || Object.keys(stats.errors).length) console.warn(line);
   else console.log(line);
   return stats.changedSlugs;

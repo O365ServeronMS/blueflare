@@ -39,7 +39,11 @@ function lookupIdentity(movie) {
   const tmdbId = validTmdbId(movie.tmdb_id);
   if (tmdbId) return { provider: 'tmdb', mediaType, id: tmdbId };
   const imdbId = validImdbId(movie.imdb_id);
-  return imdbId ? { provider: 'imdb', mediaType, id: imdbId } : null;
+  if (imdbId) return { provider: 'imdb', mediaType, id: imdbId };
+  // Last resort: an id guessed from the title. Good enough to look a rating up
+  // by, never good enough to identify the row with.
+  const guessed = validTmdbId(movie.tmdb_lookup_id);
+  return guessed ? { provider: 'tmdb', mediaType, id: guessed } : null;
 }
 
 function chunks(items, size) {

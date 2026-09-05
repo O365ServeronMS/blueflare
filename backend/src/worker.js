@@ -17,6 +17,8 @@ import {
   getHeroTrendingRefreshState,
   listTmdbImageCandidates,
   listTmdbImageFallbackCandidates,
+  listTmdbLookupCandidates,
+  recordTmdbLookup,
   recordTmdbImageFailure,
   recordTmdbImageFallback,
   recordTmdbImageFallbackMiss,
@@ -36,7 +38,12 @@ import {
 } from './repository.js';
 import { formatPrewarmStats, prewarmImages } from './prewarm.js';
 import { backfillMdblistRatings, formatMdblistStats, syncMdblistRatings } from './mdblistRatingsSync.js';
-import { fetchTrendingMovieIds, fetchVerifiedTmdbImages, searchTmdbImagesByTitle } from './tmdb.js';
+import {
+  fetchTrendingMovieIds,
+  fetchVerifiedTmdbImages,
+  searchTmdbIdByTitle,
+  searchTmdbImagesByTitle
+} from './tmdb.js';
 import { buildHome, buildList } from './viewmodels.js';
 import { runWorkerLoop } from './workerLoop.js';
 
@@ -307,6 +314,43 @@ async function refreshTmdbImageFallbacks() {
 }
 
 /**
+ * Give rows with no tmdb_id and no imdb_id a guessed TMDB id, so the MDBList
+ * passes have something to look a rating up by.
+ *
+ * Writes only `tmdb_lookup_id`, never `tmdb_id`: the same unambiguous
+ * exact-title rule as the artwork fallback still lets a wrong title through
+ * occasionally, and that must cost one row a wrong score rather than merge two
+ * unrelated titles. Returns nothing, because no visitor-visible field changed —
+ * the score arrives later, on the MDBList pass, which does its own invalidation.
+ */
+async function refreshTmdbLookups() {
+  if (!config.tmdbEnabled || !config.tmdbLookupEnabled || !config.tmdbApiKey) return;
+  const candidates = await listTmdbLookupCandidates();
+  if (!candidates.length) return;
+
+  const counts = { matched: 0, unmatched: 0, ambiguous: 0, error: 0 };
+  await mapLimit(candidates, config.tmdbLookupConcurrency, async (movie) => {
+    try {
+      const { tmdbId, status } = await searchTmdbIdByTitle({
+        title: movie.original_title,
+        mediaType: movie.media_type,
+        year: movie.year
+      });
+      const settled = status === 'matched' && tmdbId ? 'matched' : status;
+      counts[settled] = (counts[settled] || 0) + 1;
+      await recordTmdbLookup(movie.id, settled, tmdbId);
+    } catch (error) {
+      counts.error += 1;
+      await recordTmdbLookup(movie.id, 'error').catch(() => {});
+    }
+  });
+
+  console.log('[worker] tmdb lookup checked=' + candidates.length +
+    ' matched=' + counts.matched + ' unmatched=' + counts.unmatched +
+    ' ambiguous=' + counts.ambiguous + ' error=' + counts.error);
+}
+
+/**
  * Warm the image cache for the catalog surfaces users land on first.
  *
  * The payloads come from the same viewmodels the API serves, so the prewarmer
@@ -374,6 +418,7 @@ async function syncCycle() {
 
   const ratingChangedSlugs = [];
   if (!stopping) ratingChangedSlugs.push(...await refreshMdblistRatings());
+  if (!stopping) await refreshTmdbLookups();
   if (!stopping) ratingChangedSlugs.push(...await refreshMdblistBackfill());
   if (ratingChangedSlugs.length) {
     await invalidateForSlugs([...new Set(ratingChangedSlugs)]).catch((error) => {

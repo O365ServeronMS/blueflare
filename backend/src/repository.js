@@ -476,6 +476,37 @@ export async function listTmdbImageFallbackCandidates(limit = config.tmdbImageFa
   return result.rows;
 }
 
+/**
+ * Rows with no tmdb_id and no imdb_id, which therefore need an id guessed from
+ * their title before MDBList can be asked for a rating. A 'matched' row is
+ * never revisited; the rest are retried on the configured cadence.
+ */
+export async function listTmdbLookupCandidates(limit = config.tmdbLookupLimit) {
+  const result = await pool.query(
+    'SELECT id, canonical_slug, original_title, title, media_type, year FROM movies ' +
+    "WHERE catalog_state = 'ready' AND tmdb_id IS NULL AND imdb_id IS NULL " +
+    "AND original_title IS NOT NULL AND original_title <> '' " +
+    'AND (tmdb_lookup_checked_at IS NULL ' +
+    "  OR (tmdb_lookup_status <> 'matched' " +
+    "      AND tmdb_lookup_checked_at < now() - ($1::bigint * interval '1 millisecond'))) " +
+    'ORDER BY tmdb_lookup_checked_at NULLS FIRST, updated_at ASC LIMIT $2',
+    [config.tmdbLookupRetryMs, Math.max(1, Math.floor(limit))]
+  );
+  return result.rows;
+}
+
+/**
+ * Record the guess. `updated_at` is left alone on purpose: nothing a visitor
+ * can see changed yet, so this must not look like a content change.
+ */
+export async function recordTmdbLookup(movieId, status, tmdbId = null) {
+  const allowed = ['matched', 'unmatched', 'ambiguous', 'error'].includes(status) ? status : 'error';
+  await pool.query(
+    'UPDATE movies SET tmdb_lookup_status=$2, tmdb_lookup_id=$3, tmdb_lookup_checked_at=now() WHERE id=$1',
+    [movieId, allowed, allowed === 'matched' ? tmdbId : null]
+  );
+}
+
 export async function recordTmdbImageFallback(movieId, match) {
   const client = await pool.connect();
   try {
@@ -520,7 +551,7 @@ export async function listMdblistRatingCandidates(slugs = [], limit = config.mdb
   if (!ordered.length) return [];
   const result = await pool.query(
     'SELECT id, canonical_slug, media_type, tmdb_id, tmdb_media_type, imdb_id, ' +
-    'mdblist_status, mdblist_tomatoes, mdblist_audience FROM movies ' +
+    'tmdb_lookup_id, mdblist_status, mdblist_tomatoes, mdblist_audience FROM movies ' +
     "WHERE canonical_slug = ANY($1::text[]) AND catalog_state = 'ready' " +
     'AND (mdblist_checked_at IS NULL ' +
     "  OR (mdblist_status = 'matched' AND mdblist_checked_at < now() - ($2::bigint * interval '1 millisecond')) " +
@@ -547,8 +578,9 @@ export async function listMdblistBackfillCandidates(cursor = '', limit = config.
   const after = String(cursor || '').trim();
   const result = await pool.query(
     'SELECT id, canonical_slug, media_type, tmdb_id, tmdb_media_type, imdb_id, ' +
-    'mdblist_status, mdblist_tomatoes, mdblist_audience FROM movies ' +
-    "WHERE catalog_state = 'ready' AND (tmdb_id IS NOT NULL OR imdb_id IS NOT NULL) " +
+    'tmdb_lookup_id, mdblist_status, mdblist_tomatoes, mdblist_audience FROM movies ' +
+    "WHERE catalog_state = 'ready' " +
+    'AND (tmdb_id IS NOT NULL OR imdb_id IS NOT NULL OR tmdb_lookup_id IS NOT NULL) ' +
     'AND ($1 = \'\' OR id > $1::uuid) ' +
     'AND (mdblist_checked_at IS NULL ' +
     "  OR (mdblist_status = 'matched' AND mdblist_checked_at < now() - ($2::bigint * interval '1 millisecond')) " +

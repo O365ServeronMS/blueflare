@@ -54,6 +54,13 @@ export const config = Object.freeze({
   tmdbImageFallbackLimit: integer('TMDB_IMAGE_FALLBACK_LIMIT', 16, 1),
   tmdbImageFallbackConcurrency: integer('TMDB_IMAGE_FALLBACK_CONCURRENCY', 2, 1),
   tmdbImageFallbackRetryMs: integer('TMDB_IMAGE_FALLBACK_RETRY_MS', 7 * 24 * 60 * 60 * 1000, 60 * 1000),
+  // Guesses a TMDB id from the title for rows with no tmdb_id and no imdb_id,
+  // purely as an MDBList lookup key. TMDB has no hard daily cap, so this can run
+  // far wider than the image fallback beside it.
+  tmdbLookupEnabled: boolean('TMDB_LOOKUP_ENABLED', true),
+  tmdbLookupLimit: integer('TMDB_LOOKUP_LIMIT', 500, 1),
+  tmdbLookupConcurrency: integer('TMDB_LOOKUP_CONCURRENCY', 4, 1),
+  tmdbLookupRetryMs: integer('TMDB_LOOKUP_RETRY_MS', 30 * 24 * 60 * 60 * 1000, 60 * 1000),
 
   // MDBList supplies both Rotten Tomatoes critic and audience percentages shown
   // on cards. Gated by the key list being non-empty, like TMDB above.

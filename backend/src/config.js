@@ -81,7 +81,10 @@ export const config = Object.freeze({
   // demand-driven pass never sees. On by default; reset re-walks from the start.
   mdblistBackfillEnabled: boolean('MDBLIST_BACKFILL_ENABLED', true),
   mdblistBackfillBatchLimit: integer('MDBLIST_BACKFILL_BATCH_LIMIT', 300, 1),
-  mdblistBackfillIntervalMs: integer('MDBLIST_BACKFILL_INTERVAL_MS', syncIntervalMs, 60 * 1000),
+  // Must stay below SYNC_INTERVAL_MS. The pass runs a few seconds into each
+  // cycle, after the demand-driven pass, so an interval equal to the cycle
+  // period makes consecutive runs land ~893s apart and silently skip a cycle.
+  mdblistBackfillIntervalMs: integer('MDBLIST_BACKFILL_INTERVAL_MS', Math.floor(syncIntervalMs / 2), 60 * 1000),
   mdblistBackfillReset: boolean('MDBLIST_BACKFILL_RESET', false),
 
   redisUrl: process.env.REDIS_URL || 'redis://valkey:6379',

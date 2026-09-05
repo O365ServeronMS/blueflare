@@ -94,6 +94,13 @@ function releaseYear(result) {
   return Number.isInteger(year) && year > 1800 ? year : null;
 }
 
+// Release years drift by a year between a catalog and TMDB often enough that
+// equality would reject correct matches, so agreement is within one year.
+function yearAgrees(result, year) {
+  const found = releaseYear(result);
+  return Boolean(year && found && Math.abs(found - year) <= 1);
+}
+
 /**
  * Pick a search hit confident enough to act on.
  *
@@ -172,15 +179,45 @@ export async function searchTmdbIdByTitle(candidate, options = {}) {
   if (!title) return { tmdbId: null, status: 'unmatched' };
 
   const endpoint = MOVIE_MEDIA_TYPES.has(candidate?.mediaType) ? 'movie' : 'tv';
-  const body = await fetchTmdb(
-    '/search/' + endpoint + '?query=' + encodeURIComponent(title),
-    options
-  );
-  const { match, status } = selectUniqueTmdbMatch(body?.results, title, {
-    requirePoster: false,
-    year: candidate?.year
-  });
-  return { tmdbId: match ? validMovieId(match.id) : null, status };
+  const year = Number(candidate?.year) || null;
+
+  const attempt = async (query, requireYear) => {
+    const body = await fetchTmdb(
+      '/search/' + endpoint + '?query=' + encodeURIComponent(query),
+      options
+    );
+    const { match, status } = selectUniqueTmdbMatch(body?.results, query, {
+      requirePoster: false,
+      year
+    });
+    if (!match) return { tmdbId: null, status };
+    if (requireYear && !yearAgrees(match, year)) return { tmdbId: null, status: 'unmatched' };
+    return { tmdbId: validMovieId(match.id), status };
+  };
+
+  const first = await attempt(title, false);
+  if (first.tmdbId) return first;
+
+  // '(Season 2)' is the catalog's own suffix, not part of the name TMDB indexes.
+  // Every season row resolving to the same series id is correct here: Rotten
+  // Tomatoes scores a series, not a season.
+  const seriesTitle = title.replace(/\s*\((?:Season|Phần)\s*\d+\)\s*$/iu, '').trim();
+  if (seriesTitle && comparableTitle(seriesTitle) !== comparableTitle(title)) {
+    const bySeries = await attempt(seriesTitle, false);
+    if (bySeries.tmdbId) return bySeries;
+  }
+
+  // Some rows pack alternate titles into one comma-separated string. Truncating
+  // at the comma is weak evidence on its own — 'Go For It, Nakamura!' becomes
+  // the unrelated 1984 'Go For It' — so this variant only counts when the year
+  // agrees as well.
+  const firstAlias = title.split(',')[0].trim();
+  if (year && firstAlias && comparableTitle(firstAlias) !== comparableTitle(title)) {
+    const byAlias = await attempt(firstAlias, true);
+    if (byAlias.tmdbId) return byAlias;
+  }
+
+  return first;
 }
 
 export async function fetchVerifiedTmdbImages(identity, options = {}) {

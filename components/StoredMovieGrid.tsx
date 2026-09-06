@@ -7,7 +7,14 @@ export function StoredMovieGrid({ type }: { type: "favorites" | "history" }) {
   const { items } = useLocalMovies(type);
 
   if (!items.length) {
-    return <EmptyState title={type === "favorites" ? "Chưa có phim yêu thích" : "Chưa có lịch sử xem"} description="Dữ liệu này được lưu cục bộ trong trình duyệt của bạn, không gửi lên máy chủ." />;
+    return (
+      <EmptyState
+        title={type === "favorites" ? "Chưa có phim yêu thích" : "Chưa có lịch sử xem"}
+        description={type === "favorites"
+          ? "Bấm biểu tượng trái tim ở bất kỳ phim nào để lưu vào đây."
+          : "Phim bạn mở trình phát sẽ được ghi lại ở đây."}
+      />
+    );
   }
 
   return (

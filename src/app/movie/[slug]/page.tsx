@@ -92,10 +92,10 @@ export default async function MoviePage({ params, searchParams }: { params: Para
         <div className="bf-detail-content bf-content-width bf-page-gutter relative z-10 flex min-h-[74vh] flex-col justify-end pb-16 pt-24 md:min-h-[78vh] md:pb-24">
           <a href={backHref} data-nav-back aria-label="Quay lại danh sách phim" className="absolute left-[var(--bf-page-gutter)] top-20 grid h-11 w-11 place-items-center rounded bg-black/55 text-white transition hover:bg-graphite md:top-24"><ArrowLeft className="h-5 w-5" /></a>
           <div className="max-w-[42rem]">
-            <h1 className="max-w-[13ch] text-[38px] font-black leading-[0.98] tracking-[-0.035em] text-white sm:text-[52px] lg:text-[64px]">{movie.name}</h1>
-            {movie.originName && movie.originName !== movie.name ? <p className="mt-3 text-[14px] font-medium text-silver md:text-[16px]">{movie.originName}</p> : null}
-            <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 text-[13px] font-medium text-white">
-              <ScoreBadges movie={movie} className="!text-[13px]" reserveSpace={false} />
+            <h1 className="max-w-[13ch] text-[34px] font-black leading-[0.98] tracking-[-0.035em] text-white sm:text-[46px] md:text-[56px] lg:text-[64px]">{movie.name}</h1>
+            {movie.originName && movie.originName !== movie.name ? <p className="mt-3 text-body font-medium text-silver">{movie.originName}</p> : null}
+            <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 text-control font-medium text-white">
+              <ScoreBadges movie={movie} className="!text-control" reserveSpace={false} />
               {displayRating ? <span className="font-bold text-luxury-gold">{displayRating.text}</span> : null}
               {movie.year ? <span>{movie.year}</span> : null}
               {movie.quality ? <span>{movie.quality}</span> : null}
@@ -105,7 +105,7 @@ export default async function MoviePage({ params, searchParams }: { params: Para
             <ExpandableSynopsis
               text={movie.content || "Thông tin nội dung đang được cập nhật."}
               className="mt-4 max-w-2xl"
-              copyClassName="text-[14px] leading-6 text-silver md:text-[16px]"
+              copyClassName="text-body leading-6 text-silver"
             />
             <div className="bf-hero-actions mt-6 flex flex-wrap items-center gap-3">
               <a href={playerHref} className="bf-play-cta"><Play className="h-5 w-5 fill-current" aria-hidden="true" />Phát</a>
@@ -131,9 +131,9 @@ export default async function MoviePage({ params, searchParams }: { params: Para
       <div className="bf-content-width bf-page-gutter">
         {movie.episodes.length ? (
           <section className="mt-10" aria-labelledby="episodes-heading">
-            <h2 id="episodes-heading" className="text-[24px] font-bold text-white">Chọn nguồn Phát</h2>
+            <h2 id="episodes-heading" className="text-heading font-bold text-white">Chọn nguồn Phát</h2>
             <div className="mt-5 space-y-5">
-              {movie.episodes.map((episodeServer, episodeServerIndex) => <div key={`srv-${episodeServerIndex}`}><h3 className="mb-2 text-[13px] font-bold text-silver">{episodeServer.serverName}</h3><div className="no-scrollbar flex gap-2 overflow-x-auto pb-2">{episodeServer.serverData.map((item, itemIndex) => { const itemKey = episodeWatchKey(item, itemIndex); const active = episodeServerIndex === serverIndex && itemKey === activeEpisodeKey; const href = hrefWithReturnTo(`/movie/${movie.slug}?server=${episodeServerIndex}&ep=${encodeURIComponent(itemKey)}&play=1#player`, returnTo, navSource); return <a key={`${episodeServerIndex}-${itemKey}`} href={href} aria-current={active ? "true" : undefined} className={active ? "min-w-12 shrink-0 rounded bg-netflix-red px-3 py-2.5 text-center text-[13px] font-bold text-white" : "min-w-12 shrink-0 rounded bg-graphite px-3 py-2.5 text-center text-[13px] font-bold text-silver transition hover:bg-charcoal hover:text-white"}>{item.name || itemIndex + 1}</a>; })}</div></div>)}
+              {movie.episodes.map((episodeServer, episodeServerIndex) => <div key={`srv-${episodeServerIndex}`}><h3 className="mb-2 text-control font-bold text-silver">{episodeServer.serverName}</h3><div className="no-scrollbar flex gap-2 overflow-x-auto pb-2">{episodeServer.serverData.map((item, itemIndex) => { const itemKey = episodeWatchKey(item, itemIndex); const active = episodeServerIndex === serverIndex && itemKey === activeEpisodeKey; const href = hrefWithReturnTo(`/movie/${movie.slug}?server=${episodeServerIndex}&ep=${encodeURIComponent(itemKey)}&play=1#player`, returnTo, navSource); return <a key={`${episodeServerIndex}-${itemKey}`} href={href} aria-current={active ? "true" : undefined} className={active ? "min-w-12 shrink-0 rounded bg-netflix-red px-3 py-2.5 text-center text-control font-bold text-white" : "min-w-12 shrink-0 rounded bg-graphite px-3 py-2.5 text-center text-control font-bold text-silver transition hover:bg-charcoal hover:text-white"}>{item.name || itemIndex + 1}</a>; })}</div></div>)}
             </div>
           </section>
         ) : null}

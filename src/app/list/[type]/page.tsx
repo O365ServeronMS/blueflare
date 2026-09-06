@@ -69,7 +69,7 @@ export default async function ListPage({ params, searchParams }: { params: Param
         {activeFilter ? (
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <span className="bf-tag bf-tag-outline" aria-current="true">{activeFilterLabel}</span>
-            <a href={listHref(1, "", "")} className="text-[12px] font-bold text-chalk-white transition-colors hover:text-netflix-red">Xóa bộ lọc</a>
+            <a href={listHref(1, "", "")} className="text-caption font-bold text-chalk-white transition-colors hover:text-netflix-red">Xóa bộ lọc</a>
           </div>
         ) : null}
       </header>
@@ -78,7 +78,7 @@ export default async function ListPage({ params, searchParams }: { params: Param
         {data.items.map((movie) => <MovieCard key={movie.slug} movie={movie} headingLevel={2} navSourceKey={type} returnTo={returnTo} />)}
       </section>
 
-      {!data.items.length ? <p className="bf-page-gutter mt-12 text-[15px] text-silver">Chưa có dữ liệu cho danh mục này.</p> : null}
+      {!data.items.length ? <p className="bf-page-gutter mt-12 text-body text-silver">Chưa có dữ liệu cho danh mục này.</p> : null}
       <Pagination currentPage={Math.min(data.page || page, data.totalPages || page)} totalPages={data.totalPages} buildUrl={(nextPage) => listHref(nextPage)} />
     </div>
   );

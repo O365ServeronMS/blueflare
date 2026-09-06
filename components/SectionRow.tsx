@@ -109,10 +109,10 @@ export function SectionRow({
     <section className={spotlight ? "relative z-20 mt-6 pb-3 md:-mt-20" : "relative mt-7 pb-3 md:mt-10"} aria-labelledby={`rail-${title.replace(/\s+/g, "-").toLowerCase()}`}>
       <div className="bf-content-width bf-page-gutter mb-3 flex items-end justify-between gap-4">
         <a href={href} className="group inline-flex min-w-0 items-center gap-2">
-          <h2 id={`rail-${title.replace(/\s+/g, "-").toLowerCase()}`} className="line-clamp-1 text-[17px] font-bold leading-tight text-chalk-white md:text-[20px]">
+          <h2 id={`rail-${title.replace(/\s+/g, "-").toLowerCase()}`} className="line-clamp-1 text-subheading font-bold leading-tight text-chalk-white md:text-heading-sm">
             {title}
           </h2>
-          <span className="hidden text-[12px] font-medium text-silver transition group-hover:text-chalk-white sm:inline">Khám phá</span>
+          <span className="hidden text-caption font-medium text-silver transition group-hover:text-chalk-white sm:inline">Khám phá</span>
           <ChevronRight className="h-4 w-4 shrink-0 text-silver transition-transform group-hover:translate-x-0.5 group-hover:text-chalk-white" />
         </a>
         <div className="hidden items-center gap-1 md:flex">

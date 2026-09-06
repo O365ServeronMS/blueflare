@@ -75,9 +75,9 @@ export function MovieCard({
           <span className="bf-card-vignette absolute inset-0 opacity-80 transition-opacity group-hover:opacity-100" aria-hidden="true" />
           <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 p-3">
             <div className="min-w-0">
-              <Title className="line-clamp-1 text-[14px] font-bold leading-tight text-chalk-white sm:text-[15px]">{movie.name}</Title>
-              <p className="mt-1 flex items-center gap-2 text-[11px] text-silver">
-                <ScoreBadges movie={movie} className="!text-[11px]" reserveSpace={false} />
+              <Title className="line-clamp-1 text-body font-bold leading-tight text-chalk-white">{movie.name}</Title>
+              <p className="mt-1 flex items-center gap-2 text-micro text-silver">
+                <ScoreBadges movie={movie} className="!text-micro" reserveSpace={false} />
                 {movie.year ? <span>{movie.year}</span> : null}
                 {status ? <span>{status}</span> : null}
                 {displayRating ? <span className="font-bold text-luxury-gold">{displayRating.score.toFixed(1)}</span> : null}
@@ -121,9 +121,9 @@ export function MovieCard({
           ) : null}
         </div>
         <ScoreBadges movie={movie} className="mt-2" />
-        <Title className={compact ? "mt-1 line-clamp-1 text-[13px] font-medium text-chalk-white" : "mt-1 line-clamp-1 text-[14px] font-medium text-chalk-white sm:text-[15px]"}>{movie.name}</Title>
+        <Title className={compact ? "mt-1 line-clamp-1 text-control font-medium text-chalk-white" : "mt-1 line-clamp-1 text-body font-medium text-chalk-white"}>{movie.name}</Title>
         {!compact ? (
-          <p className="mt-1 line-clamp-1 text-[12px] text-silver">{[movie.year, movie.country].filter(Boolean).join(" · ")}</p>
+          <p className="mt-1 line-clamp-1 text-caption text-silver">{[movie.year, movie.country].filter(Boolean).join(" · ")}</p>
         ) : null}
       </article>
     </a>

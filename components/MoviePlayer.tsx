@@ -98,8 +98,8 @@ export function MoviePlayer({
           <WatchRecorder movie={movie} />
           <div className="watch-header flex items-center justify-between gap-3 border-b border-white/10 bg-black px-4 py-3">
             <div className="min-w-0">
-              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-netflix-red">Đang chọn</p>
-              <p className="truncate text-[14px] font-bold text-white">{episodeLabel}</p>
+              <p className="text-micro font-bold uppercase tracking-[0.14em] text-netflix-red">Đang chọn</p>
+              <p className="truncate text-body font-bold text-white">{episodeLabel}</p>
             </div>
             <button
               type="button"
@@ -119,9 +119,9 @@ export function MoviePlayer({
                 <HlsVideo mode={playbackSource.mode} onPlaybackFailure={handleHlsError} src={playbackSource.hlsUrl} poster={poster} />
               </>
             ) : playbackSource === null ? (
-              <div className="grid h-full place-items-center p-6 text-center text-[14px] text-silver">Đang chuẩn bị player…</div>
+              <div className="grid h-full place-items-center p-6 text-center text-body text-silver">Đang chuẩn bị player…</div>
             ) : (
-              <div className="grid h-full place-items-center p-6 text-center text-[14px] text-silver">No playable source.</div>
+              <div className="grid h-full place-items-center p-6 text-center text-body text-silver">No playable source.</div>
             )}
           </div>
         </div>

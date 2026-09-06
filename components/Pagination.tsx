@@ -32,7 +32,7 @@ export function Pagination({ currentPage, totalPages, buildUrl, className = "" }
             <MoreHorizontal className="h-4 w-4" />
           </span>
         ) : item === currentPage ? (
-          <span key={item} aria-current="page" aria-label={`Trang ${item}`} className="grid h-11 min-w-11 place-items-center rounded-sm bg-netflix-red px-2 text-[13px] font-bold text-white">
+          <span key={item} aria-current="page" aria-label={`Trang ${item}`} className="grid h-11 min-w-11 place-items-center rounded-sm bg-netflix-red px-2 text-control font-bold text-white">
             {item}
           </span>
         ) : (
@@ -40,7 +40,7 @@ export function Pagination({ currentPage, totalPages, buildUrl, className = "" }
             key={item}
             href={buildUrl(item)}
             aria-label={`Trang ${item}`}
-            className="grid h-11 min-w-11 place-items-center rounded-sm px-2 text-[13px] font-medium text-silver transition hover:bg-graphite hover:text-white"
+            className="grid h-11 min-w-11 place-items-center rounded-sm px-2 text-control font-medium text-silver transition hover:bg-graphite hover:text-white"
           >
             {item}
           </a>

@@ -43,8 +43,8 @@ export default async function SearchPage({ searchParams }: { searchParams: Searc
         <section className="bf-page-gutter mt-7 grid grid-cols-2 gap-x-3 gap-y-7 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7" aria-label="Kết quả tìm kiếm">
           {data.items.map((movie) => <MovieCard key={movie.slug} movie={movie} headingLevel={2} returnTo={returnTo} />)}
         </section>
-      ) : <p className="bf-page-gutter mt-8 text-[15px] text-silver">Nhập tên phim để bắt đầu tìm kiếm.</p>}
-      {keyword && !data.items.length ? <p className="bf-page-gutter mt-12 text-[15px] text-silver">Không tìm thấy kết quả phù hợp.</p> : null}
+      ) : <p className="bf-page-gutter mt-8 text-body text-silver">Nhập tên phim để bắt đầu tìm kiếm.</p>}
+      {keyword && !data.items.length ? <p className="bf-page-gutter mt-12 text-body text-silver">Không tìm thấy kết quả phù hợp.</p> : null}
       <Pagination currentPage={data.page || page} totalPages={data.totalPages} buildUrl={pageHref} />
     </div>
   );

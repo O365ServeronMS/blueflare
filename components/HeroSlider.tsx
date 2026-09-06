@@ -27,6 +27,15 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
   // its arrow-key handler) covers the keyboard, so both routes can hold a
   // slide still without a separate pause control competing with the CTAs.
   const [interactionPaused, setInteractionPaused] = useState(false);
+  // Khởi tạo lười từ slides[0]: đó luôn là slide hiển thị ở lần render đầu
+  // (activeSlug bắt đầu là null nên visibleIndex rơi về 0). Nếu để mảng rỗng
+  // và chỉ nạp qua effect, SSR sẽ không in ảnh nào — mất hẳn ảnh eager cho LCP.
+  const [imageStack, setImageStack] = useState<string[]>(() => {
+    const first = slides[0];
+    if (!first) return [];
+    const src = first.poster || first.thumb;
+    return src ? [src] : [];
+  });
   const touchStart = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
@@ -52,10 +61,24 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
   }, [slides, interactionTick, synopsisExpanded, interactionPaused]);
 
   const active = slides[visibleIndex];
+  // `active` là undefined khi slides rỗng, nên phải guard: dòng này chạy trước
+  // early return để effect crossfade bên dưới đọc được.
+  const heroImage = active ? active.poster || active.thumb : "";
+
+  // Giữ ảnh đang đi ra thêm một nhịp để lần đổi slide đọc ra là hoà hình chứ
+  // không phải nháy đen. Tối đa 2 lớp cùng lúc.
+  useEffect(() => {
+    if (!heroImage) return;
+    setImageStack((current) => {
+      const top = current[current.length - 1];
+      if (top === heroImage) return current;
+      return top ? [top, heroImage] : [heroImage];
+    });
+  }, [heroImage]);
+
   const { isFavorite, toggle: toggleFavorite } = useFavoriteToggle(active || EMPTY_MOVIE);
 
   if (!slides.length) return null;
-  const heroImage = active.poster || active.thumb;
   const displayRating = getDisplayRating(active);
   const detailHref = hrefWithReturnTo(`/movie/${active.slug}`, "/", "home");
   const playHref = hrefWithReturnTo(`/movie/${active.slug}?play=1#player`, "/", "home");
@@ -102,21 +125,23 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
       aria-roledescription="carousel"
       aria-label="Nội dung nổi bật"
     >
-      <img
-        key={active.slug}
-        src={heroImage}
-        alt=""
-        width={1280}
-        height={720}
-        loading={visibleIndex === 0 ? "eager" : "lazy"}
-        fetchPriority={visibleIndex === 0 ? "high" : "auto"}
-        decoding="async"
-        className="absolute inset-0 h-full w-full object-cover object-center bf-reveal"
-        data-movie-poster
-        data-fallback-src={active.thumb || undefined}
-        data-original-src={heroImage || undefined}
-        data-placeholder-src="/image-placeholder.svg"
-      />
+      {imageStack.map((src, index) => (
+        <img
+          key={src}
+          src={src}
+          alt=""
+          width={1280}
+          height={720}
+          loading={imageStack.length === 1 ? "eager" : "lazy"}
+          fetchPriority={imageStack.length === 1 ? "high" : "auto"}
+          decoding="async"
+          className={index === imageStack.length - 1 ? "bf-hero-layer is-active" : "bf-hero-layer"}
+          data-movie-poster
+          data-fallback-src={active.thumb || undefined}
+          data-original-src={src}
+          data-placeholder-src="/image-placeholder.svg"
+        />
+      ))}
       <div className="bf-hero-overlay absolute inset-0" />
 
       <div className="bf-content-width bf-page-gutter relative z-10 flex h-full flex-col items-start justify-end pb-8 md:justify-center md:pb-14 md:pt-16">
@@ -124,8 +149,8 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
           <h1 className="max-w-[12ch] text-[34px] font-black leading-[0.98] tracking-[-0.035em] text-chalk-white sm:text-[46px] md:text-[56px] lg:text-[64px]">
             {heroTitle}
           </h1>
-          <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 text-[13px] font-medium text-chalk-white">
-            <ScoreBadges movie={active} className="!text-[13px]" reserveSpace={false} />
+          <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 text-control font-medium text-chalk-white">
+            <ScoreBadges movie={active} className="!text-control" reserveSpace={false} />
             {displayRating ? <span className="font-bold text-luxury-gold">{displayRating.text}</span> : null}
             {active.year ? <span>{active.year}</span> : null}
             {active.quality ? <span>{active.quality}</span> : null}
@@ -134,7 +159,7 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
           <ExpandableSynopsis
             text={active.content}
             className="mt-4 max-w-[32rem]"
-            copyClassName="text-[14px] leading-6 text-silver md:text-[15px]"
+            copyClassName="text-body leading-6 text-silver"
             resetKey={active.slug}
             onExpandedChange={setSynopsisExpanded}
           />
@@ -163,7 +188,7 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
 
       {slides.length > 1 ? (
         <>
-          <div className="absolute bottom-24 right-[var(--bf-page-gutter)] z-20 hidden items-center gap-3 text-[11px] font-bold tracking-[0.14em] text-chalk-white md:flex" aria-label="Vị trí nội dung nổi bật">
+          <div className="absolute bottom-24 right-[var(--bf-page-gutter)] z-20 hidden items-center gap-3 text-micro font-bold tracking-[0.14em] text-chalk-white md:flex" aria-label="Vị trí nội dung nổi bật">
             <span className="h-px w-10 bg-white/35" aria-hidden="true" />
             <span>{String(visibleIndex + 1).padStart(2, "0")} / {String(slides.length).padStart(2, "0")}</span>
           </div>

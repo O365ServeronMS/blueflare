@@ -10,18 +10,17 @@
   --color-chalk-white: #ffffff;
   --color-luxury-gold: #d4af37;
   --font-sans: var(--font-inter), Inter, Roboto, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --text-caption: 13px;
-  --leading-caption: 1.5;
-  --text-body: 16px;
-  --leading-body: 1.5;
-  --text-subheading: 20px;
-  --leading-subheading: 1.25;
-  --text-heading-sm: 24px;
-  --leading-heading-sm: 1.2;
-  --text-heading: 56px;
-  --leading-heading: 1.17;
-  --text-display: 100px;
-  --leading-display: 1;
+  /* Thang chữ đặt tên theo vai trò, không theo cỡ, để đổi giá trị mà không phải
+     đụng call site. Cố ý không đè lên text-xs/sm/base của Tailwind. Tầng display
+     (32-64px) không nằm ở đây: nó chỉ có hai vai trò và được viết thẳng trong
+     lớp của thẻ tiêu đề. */
+  --text-micro: 11px;
+  --text-caption: 12px;
+  --text-control: 13px;
+  --text-body: 15px;
+  --text-subheading: 17px;
+  --text-heading-sm: 20px;
+  --text-heading: 24px;
   --radius-sm: 2px;
   --radius-lg: 8px;
   --radius-2xl: 16px;
@@ -146,7 +145,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
   justify-content: center;
   gap: 0.5rem;
   border-radius: 4px;
-  font-size: 13px;
+  font-size: var(--text-control);
   font-weight: 700;
   letter-spacing: 0.01em;
   white-space: nowrap;
@@ -167,7 +166,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 @media (min-width: 768px) {
   .bf-play-cta,
   .bf-secondary-cta,
-  .bf-icon-cta { font-size: 14px; }
+  .bf-icon-cta { font-size: var(--text-body); }
   .bf-play-cta { padding: 0.75rem 1.75rem; }
   .bf-secondary-cta { padding: 0.75rem 1.25rem; }
 }
@@ -241,7 +240,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .bf-tag {
   display: inline-flex;
   align-items: center;
-  font-size: 11px;
+  font-size: var(--text-micro);
   font-weight: 700;
   letter-spacing: 0.02em;
   padding: 3px 10px;
@@ -261,7 +260,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
   align-items: center;
   gap: 10px;
   min-height: 18px;
-  font-size: 12px;
+  font-size: var(--text-caption);
   font-weight: 700;
   line-height: 1;
   color: var(--color-chalk-white);
@@ -297,11 +296,25 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .movie-synopsis-icon { transition: transform var(--bf-motion-fast) ease; }
 .movie-synopsis.is-expanded .movie-synopsis-icon { transform: rotate(180deg); }
 
-@keyframes bf-reveal {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+/* Hai lớp ảnh chồng nhau cho hero. `:only-child` giữ khung hình đầu tiên hiện
+   ngay ở opacity 1 — nếu để nó fade vào thì LCP bị tính trễ đúng bằng thời
+   lượng transition. */
+.bf-hero-layer {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  width: 100%;
+  object-fit: cover;
+  object-position: center;
+  opacity: 0;
+  transition: opacity 600ms ease;
 }
-.bf-reveal { animation: bf-reveal 420ms ease both; }
+.bf-hero-layer.is-active { opacity: 1; }
+.bf-hero-layer:only-child { opacity: 1; transition: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .bf-hero-layer { transition: none; }
+}
 
 @media (max-width: 767px) {
   :root { --bf-nav-height: 56px; }

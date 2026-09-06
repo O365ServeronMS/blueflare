@@ -95,7 +95,7 @@ export function GlobalNav({ featureSearch = true, featureLocalLibrary = true }: 
               href={item.href}
               aria-current={activeKey === item.key ? "page" : undefined}
               className={cn(
-                "relative py-5 text-[13px] font-medium text-silver transition-colors hover:text-chalk-white",
+                "relative py-5 text-control font-medium text-silver transition-colors hover:text-chalk-white",
                 activeKey === item.key && "text-chalk-white after:absolute after:inset-x-0 after:bottom-3 after:h-0.5 after:bg-netflix-red"
               )}
             >
@@ -158,7 +158,7 @@ export function GlobalNav({ featureSearch = true, featureLocalLibrary = true }: 
                 onClick={closePanels}
                 aria-current={activeKey === item.key ? "page" : undefined}
                 className={cn(
-                  "border-b border-white/10 py-3.5 text-[15px] font-medium text-silver",
+                  "border-b border-white/10 py-3.5 text-body font-medium text-silver",
                   activeKey === item.key && "text-chalk-white"
                 )}
               >
@@ -170,7 +170,7 @@ export function GlobalNav({ featureSearch = true, featureLocalLibrary = true }: 
             {visibleUtilityItems.map((item) => {
               const Icon = item.icon;
               return (
-                <a key={item.href} href={item.href} onClick={closePanels} className="flex min-h-11 items-center justify-center gap-2 rounded px-2 text-[12px] font-medium text-silver hover:bg-graphite hover:text-chalk-white">
+                <a key={item.href} href={item.href} onClick={closePanels} className="flex min-h-11 items-center justify-center gap-2 rounded px-2 text-caption font-medium text-silver hover:bg-graphite hover:text-chalk-white">
                   <Icon className="h-4 w-4" />
                   {item.label}
                 </a>

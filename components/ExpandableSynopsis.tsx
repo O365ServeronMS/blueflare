@@ -53,7 +53,7 @@ export function ExpandableSynopsis({
         type="button"
         aria-expanded={expanded}
         onClick={toggle}
-        className="mt-2 inline-flex items-center gap-1.5 text-[13px] font-bold text-white transition hover:text-netflix-red"
+        className="mt-2 inline-flex items-center gap-1.5 text-control font-bold text-white transition hover:text-netflix-red"
       >
         {expanded ? "Thu gọn" : "Xem thêm"}
         <ChevronDown className="movie-synopsis-icon h-4 w-4" aria-hidden="true" />

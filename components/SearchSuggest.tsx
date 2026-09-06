@@ -98,7 +98,7 @@ export function SearchSuggest({ initialQuery = "", autoFocus = false, syncWithUr
           onChange={(event) => updateQuery(event.target.value)}
           onFocus={() => setOpen(true)}
           placeholder="Tên phim, diễn viên hoặc thể loại"
-          className="bf-search-input min-w-0 flex-1 bg-transparent py-2 text-[14px] text-white outline-none placeholder:text-ash"
+          className="bf-search-input min-w-0 flex-1 bg-transparent py-2 text-body text-white outline-none placeholder:text-ash"
           autoFocus={autoFocus && !syncWithUrl}
           autoComplete="off"
         />
@@ -106,7 +106,7 @@ export function SearchSuggest({ initialQuery = "", autoFocus = false, syncWithUr
 
       {showPanel ? (
         <div className="absolute inset-x-0 top-[calc(100%+8px)] z-[70] max-h-[72vh] overflow-y-auto border border-white/15 bg-black">
-          {state === "loading" ? <p className="px-4 py-4 text-[13px] text-silver" role="status">Đang tìm...</p> : null}
+          {state === "loading" ? <p className="px-4 py-4 text-control text-silver" role="status">Đang tìm...</p> : null}
           {state === "ready" ? items.map((movie) => (
             <a key={movie.slug} href={hrefWithReturnTo(`/movie/${movie.slug}`, returnTo)} onClick={() => setOpen(false)} className="flex items-center gap-3 border-b border-white/10 px-3 py-2.5 transition last:border-0 hover:bg-graphite focus:bg-graphite">
               <span className="h-[72px] w-12 shrink-0 overflow-hidden rounded-sm bg-graphite">
@@ -127,9 +127,9 @@ export function SearchSuggest({ initialQuery = "", autoFocus = false, syncWithUr
                 ) : null}
               </span>
               <span className="min-w-0 flex-1">
-                <span className="line-clamp-1 text-[14px] font-bold text-white">{movie.name}</span>
-                {movie.originName ? <span className="mt-0.5 block truncate text-[12px] text-silver">{movie.originName}</span> : null}
-                <span className="mt-1 flex gap-2 text-[11px] text-ash">
+                <span className="line-clamp-1 text-body font-bold text-white">{movie.name}</span>
+                {movie.originName ? <span className="mt-0.5 block truncate text-caption text-silver">{movie.originName}</span> : null}
+                <span className="mt-1 flex gap-2 text-micro text-ash">
                   {movie.year ? <span>{movie.year}</span> : null}
                   {movie.quality ? <span>{movie.quality}</span> : null}
                   {movie.episodeCurrent ? <span>{movie.episodeCurrent}</span> : null}
@@ -137,9 +137,9 @@ export function SearchSuggest({ initialQuery = "", autoFocus = false, syncWithUr
               </span>
             </a>
           )) : null}
-          {state === "empty" ? <p className="px-4 py-4 text-[13px] text-silver">Không có gợi ý phù hợp.</p> : null}
-          {state === "error" ? <p className="px-4 py-4 text-[13px] text-silver">Chưa tải được gợi ý.</p> : null}
-          <a href={`/search?q=${encodeURIComponent(query.trim())}`} className="block border-t border-white/15 px-4 py-3 text-center text-[12px] font-bold text-white hover:bg-graphite">Xem tất cả kết quả</a>
+          {state === "empty" ? <p className="px-4 py-4 text-control text-silver">Không có gợi ý phù hợp.</p> : null}
+          {state === "error" ? <p className="px-4 py-4 text-control text-silver">Chưa tải được gợi ý.</p> : null}
+          <a href={`/search?q=${encodeURIComponent(query.trim())}`} className="block border-t border-white/15 px-4 py-3 text-center text-caption font-bold text-white hover:bg-graphite">Xem tất cả kết quả</a>
         </div>
       ) : null}
     </form>

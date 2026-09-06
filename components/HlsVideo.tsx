@@ -183,7 +183,7 @@ export function HlsVideo({
   return (
     <div className="relative h-full w-full bg-black">
       <video ref={videoRef} className="h-full w-full bg-black" controls playsInline preload="metadata" poster={poster} />
-      {error ? <div className="absolute inset-0 grid place-items-center bg-black p-6 text-center text-sm text-zinc-400">{error}</div> : null}
+      {error ? <div className="absolute inset-0 grid place-items-center bg-black p-6 text-center text-control text-zinc-400">{error}</div> : null}
     </div>
   );
 }

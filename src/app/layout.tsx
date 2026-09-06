@@ -1,16 +1,18 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Be_Vietnam_Pro } from "next/font/google";
 import { GlobalNav } from "@/components/GlobalNav";
 import { ImageFallbackHandler } from "@/src/app/image-fallback-handler";
 import { readFrontendFeatures } from "@/lib/features";
 import "@/src/styles/globals.css";
 
-// Netflix Sans stand-in named by DESIGN.md. Self-hosted by next/font, so the
-// real weight 900 is available — without it the browser synthesizes a faux
-// bold from the system fallback and heavy type (the Top-10 numerals) is wrong.
-const inter = Inter({
+// Be Vietnam Pro: dấu thanh tiếng Việt được vẽ chủ đích thay vì chắp thêm, quan
+// trọng với giao diện toàn tiếng Việt có nhiều tiêu đề nén chặt. Không phải
+// variable font nên weight phải liệt kê tường minh — 900 là bắt buộc, thiếu nó
+// thì numeral Top-10 và H1 hero bị trình duyệt tổng hợp faux-bold.
+const bodyFont = Be_Vietnam_Pro({
   subsets: ["latin", "vietnamese"],
-  variable: "--font-inter",
+  weight: ["400", "500", "700", "900"],
+  variable: "--font-bf",
   display: "swap"
 });
 
@@ -37,7 +39,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   const features = readFrontendFeatures();
   return (
-    <html lang="vi" data-scroll-behavior="smooth" className={inter.variable}>
+    <html lang="vi" data-scroll-behavior="smooth" className={bodyFont.variable}>
       <body className="min-h-screen bg-deep-space text-chalk-white antialiased">
         <GlobalNav featureSearch={features.searchSuggest} featureLocalLibrary={features.localLibrary} />
         <ImageFallbackHandler />

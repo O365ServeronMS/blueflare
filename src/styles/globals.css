@@ -9,7 +9,7 @@
   --color-silver: #b3b3b3;
   --color-chalk-white: #ffffff;
   --color-luxury-gold: #d4af37;
-  --font-sans: var(--font-inter), Inter, Roboto, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-sans: var(--font-bf), "Be Vietnam Pro", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   /* Thang chữ đặt tên theo vai trò, không theo cỡ, để đổi giá trị mà không phải
      đụng call site. Cố ý không đè lên text-xs/sm/base của Tailwind. Tầng display
      (32-64px) không nằm ở đây: nó chỉ có hai vai trò và được viết thẳng trong
@@ -70,7 +70,7 @@ body {
   overflow-x: clip;
   background: var(--bf-bg);
   color: var(--bf-text-primary);
-  font-family: var(--font-inter), Inter, Roboto, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--font-bf), "Be Vietnam Pro", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 /* Posters/backdrops render at their real, full color — no filter is ever
@@ -252,9 +252,9 @@ button, a { -webkit-tap-highlight-color: transparent; }
    against near-black it clears 8:1. */
 .bf-tag-gold { background: var(--color-luxury-gold); color: #100c02; }
 
-/* The row of 🍅/🍿 percentages between a poster and its title. The height is
-   reserved whether or not either badge is present: most rows carry no critic
-   score, so an unreserved row would shift the grid on the few that do. */
+/* Hàng phần trăm 🍅/🍿. Chiều cao được giữ vô điều kiện khi hàng này đứng riêng
+   (hero, thẻ landscape). Ở thẻ poster nó nằm lồng trong `.bf-card-meta`, và
+   chính `.bf-card-meta` mới là thứ giữ cho lưới không xô. */
 .bf-score-row {
   display: flex;
   align-items: center;
@@ -269,6 +269,22 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .bf-score-icon { width: 15px; height: 15px; flex: none; }
 .bf-tag-outline { border: 1px solid var(--color-netflix-red); color: var(--color-netflix-red); background: transparent; }
 .bf-tag-outline[aria-current="true"] { background: var(--color-netflix-red); color: #fff; }
+
+/* Dòng meta duy nhất dưới tiêu đề thẻ poster. Chiều cao giữ vô điều kiện: phần
+   lớn phim không có điểm phê bình, nên dòng co lại sẽ xô cả lưới ở đúng những
+   thẻ có điểm. */
+.bf-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 18px;
+  margin-top: 4px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: var(--text-caption);
+  line-height: 1;
+  color: var(--color-silver);
+}
 
 .bf-card-vignette { background: linear-gradient(180deg, transparent 44%, rgba(0, 0, 0, 0.86) 100%); }
 .bf-rail-track { scrollbar-width: none; scroll-padding-inline: var(--bf-page-gutter); }

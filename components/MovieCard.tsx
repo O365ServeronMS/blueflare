@@ -113,18 +113,14 @@ export function MovieCard({
           {rank ? (
             <span className="bf-rank pointer-events-none absolute bottom-0 left-1 z-10" aria-hidden="true">{rank}</span>
           ) : null}
-          {status ? (
-            <span className="bf-tag bf-tag-accent absolute left-2 top-2">{status}</span>
-          ) : null}
-          {displayRating ? (
-            <span className="bf-tag bf-tag-gold absolute right-2 top-2">{displayRating.score.toFixed(1)}</span>
-          ) : null}
         </div>
-        <ScoreBadges movie={movie} className="mt-2" />
-        <Title className={compact ? "mt-1 line-clamp-1 text-control font-medium text-chalk-white" : "mt-1 line-clamp-1 text-body font-medium text-chalk-white"}>{movie.name}</Title>
-        {!compact ? (
-          <p className="mt-1 line-clamp-1 text-caption text-silver">{[movie.year, movie.country].filter(Boolean).join(" · ")}</p>
-        ) : null}
+        <Title className={compact ? "mt-2 line-clamp-1 text-control font-medium text-chalk-white" : "mt-2 line-clamp-1 text-body font-medium text-chalk-white"}>{movie.name}</Title>
+        <p className="bf-card-meta">
+          <ScoreBadges movie={movie} className="!text-caption" reserveSpace={false} />
+          {displayRating ? <span className="font-bold text-luxury-gold">{displayRating.score.toFixed(1)}</span> : null}
+          {status ? <span>{status}</span> : null}
+          {movie.year ? <span>{movie.year}</span> : null}
+        </p>
       </article>
     </a>
   );

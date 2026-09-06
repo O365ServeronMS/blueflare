@@ -48,12 +48,12 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
   try {
     const movie = await getMovieServer((await params).slug);
     return {
-      title: `${movie.name} — Bluesia Cinema`,
-      description: stripHtml(movie.content) || `Xem ${movie.name} trên Bluesia Cinema.`,
+      title: `${movie.name} — Blueflare`,
+      description: stripHtml(movie.content) || `Xem ${movie.name} trên Blueflare.`,
       openGraph: { title: movie.name, description: stripHtml(movie.content) || undefined, images: movie.poster ? [movie.poster] : undefined }
     };
   } catch {
-    return { title: "Không tìm thấy phim — Bluesia Cinema" };
+    return { title: "Không tìm thấy phim — Blueflare" };
   }
 }
 
@@ -89,11 +89,10 @@ export default async function MoviePage({ params, searchParams }: { params: Para
       <section className="bf-detail-shell relative min-h-[74vh] overflow-hidden bg-deep-space md:min-h-[78vh]">
         {movie.poster || movie.thumb ? <img src={movie.poster || movie.thumb} alt="" width={1280} height={720} loading="eager" fetchPriority="high" decoding="async" className="absolute inset-0 h-full w-full object-cover" /> : null}
         <div className="bf-detail-overlay absolute inset-0" />
-        <div className="bf-detail-shell bf-content-width bf-page-gutter relative z-10 flex min-h-[74vh] flex-col justify-end pb-16 pt-24 md:min-h-[78vh] md:pb-24">
+        <div className="bf-detail-content bf-content-width bf-page-gutter relative z-10 flex min-h-[74vh] flex-col justify-end pb-16 pt-24 md:min-h-[78vh] md:pb-24">
           <a href={backHref} data-nav-back aria-label="Quay lại danh sách phim" className="absolute left-[var(--bf-page-gutter)] top-20 grid h-11 w-11 place-items-center rounded bg-black/55 text-white transition hover:bg-graphite md:top-24"><ArrowLeft className="h-5 w-5" /></a>
           <div className="max-w-[42rem]">
-            <p className="text-[11px] font-bold uppercase tracking-[0.15em] text-silver">Bluesia giới thiệu</p>
-            <h1 className="mt-3 max-w-[13ch] text-[38px] font-black leading-[0.98] tracking-[-0.035em] text-white sm:text-[52px] lg:text-[64px]">{movie.name}</h1>
+            <h1 className="max-w-[13ch] text-[38px] font-black leading-[0.98] tracking-[-0.035em] text-white sm:text-[52px] lg:text-[64px]">{movie.name}</h1>
             {movie.originName && movie.originName !== movie.name ? <p className="mt-3 text-[14px] font-medium text-silver md:text-[16px]">{movie.originName}</p> : null}
             <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 text-[13px] font-medium text-white">
               <ScoreBadges movie={movie} className="!text-[13px]" reserveSpace={false} />

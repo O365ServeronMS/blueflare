@@ -24,9 +24,9 @@ export const viewport = { themeColor: "#000000" };
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://phim.bluesia.net"),
-  title: "Bluesia Cinema",
+  title: "Blueflare",
   description: "Góc nhỏ của người đam mê phim",
-  applicationName: "Bluesia Cinema",
+  applicationName: "Blueflare",
   icons: {
     icon: "/favicon.ico",
     apple: "/apple-touch-icon.png"

@@ -70,7 +70,7 @@ export function MovieCard({
             data-fallback-src={fallbackUrl || undefined}
             data-original-src={primaryUrl || undefined}
             data-placeholder-src={LOCAL_IMAGE_PLACEHOLDER}
-            className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
+            className="h-full w-full object-cover"
           />
           <span className="bf-card-vignette absolute inset-0 opacity-80 transition-opacity group-hover:opacity-100" aria-hidden="true" />
           <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 p-3">
@@ -108,9 +108,8 @@ export function MovieCard({
             data-fallback-src={fallbackUrl || undefined}
             data-original-src={primaryUrl || undefined}
             data-placeholder-src={LOCAL_IMAGE_PLACEHOLDER}
-            className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.025]"
+            className="h-full w-full object-cover"
           />
-          <span className="absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/15" aria-hidden="true" />
           {rank ? (
             <span className="bf-rank pointer-events-none absolute bottom-0 left-1 z-10" aria-hidden="true">{rank}</span>
           ) : null}

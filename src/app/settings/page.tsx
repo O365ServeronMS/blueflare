@@ -1,13 +1,12 @@
 import type { Metadata } from "next";
 
-export const metadata: Metadata = { title: "Thông tin — Bluesia Cinema" };
+export const metadata: Metadata = { title: "Thông tin — Blueflare" };
 
 export default function SettingsPage() {
   return (
     <div className="bf-content-width bf-page-gutter pb-16 pt-24 md:pt-28">
       <header className="max-w-3xl">
-        <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-silver">Về Blueflare</p>
-        <h1 className="mt-2 text-[34px] font-black tracking-tight text-white sm:text-[48px]">Điện ảnh là trung tâm.</h1>
+        <h1 className="text-[34px] font-black tracking-tight text-white sm:text-[48px]">Điện ảnh là trung tâm.</h1>
         <p className="mt-4 text-[15px] leading-7 text-silver">Blueflare là giao diện khám phá phim render trên VPS, tối ưu cho tốc độ và trải nghiệm xem liền mạch.</p>
       </header>
       <div className="mt-12 grid max-w-5xl gap-10 border-t border-white/10 pt-9 md:grid-cols-3">

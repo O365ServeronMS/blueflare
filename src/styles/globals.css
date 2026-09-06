@@ -2,11 +2,9 @@
 
 @theme {
   --color-netflix-red: #e4312a;
-  --color-feature-card-gradient: #1d153f;
   --color-deep-space: #000000;
   --color-graphite: #2d2d2d;
   --color-charcoal: #414141;
-  --color-slate: #5a5a5a;
   --color-ash: #808080;
   --color-silver: #b3b3b3;
   --color-chalk-white: #ffffff;
@@ -111,6 +109,10 @@ button, a { -webkit-tap-highlight-color: transparent; }
 ::-webkit-scrollbar-thumb { border-radius: 999px; background: rgba(255, 255, 255, 0.18); }
 :focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
 .bf-search-input:focus-visible { outline: none; }
+/* The hero shell is tabbable for its arrow-key handler, and it clips its own
+   backdrop, so the ring is drawn inside the box rather than offset outward
+   where `overflow: hidden` would cut it off. */
+.bf-hero-shell:focus-visible { outline: 2px solid #fff; outline-offset: -4px; }
 
 .bf-page-gutter { padding-inline: var(--bf-page-gutter); }
 .bf-content-width { width: 100%; max-width: 1920px; margin-inline: auto; }
@@ -331,9 +333,16 @@ button, a { -webkit-tap-highlight-color: transparent; }
      otherwise apply full desktop typography inside a 360px-tall viewport and
      push the Play CTA below the fold. The hero shrinks to its content instead
      of forcing a viewport-height block, and the top padding clears the
-     floating back button so the two never collide. */
-  .bf-detail-shell {
-    min-height: 0;
+     floating back button so the two never collide.
+
+     The shell and its content column are nested, so only the min-height reset
+     belongs to both. The padding belongs to the content column alone —
+     applying it to both stacked the same padding twice in the one breakpoint
+     that has no vertical room to spare. */
+  .bf-detail-shell,
+  .bf-detail-content { min-height: 0; }
+
+  .bf-detail-content {
     padding-top: calc(var(--bf-nav-height) + 0.5rem);
     padding-bottom: 1rem;
   }
@@ -342,7 +351,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
      absolutely positioned against the padding box, so it stays at the gutter
      while the text column moves right — landscape trades plentiful horizontal
      space for the scarce vertical kind instead of stacking the two. */
-  .bf-detail-shell.bf-page-gutter { padding-left: calc(var(--bf-page-gutter) + 3.5rem); }
+  .bf-detail-content.bf-page-gutter { padding-left: calc(var(--bf-page-gutter) + 3.5rem); }
 
   .bf-detail-shell [data-nav-back] { top: calc(var(--bf-nav-height) + 0.5rem); }
 

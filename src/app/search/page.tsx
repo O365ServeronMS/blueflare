@@ -14,7 +14,7 @@ function first(value: string | string[] | undefined) {
 export async function generateMetadata({ searchParams }: { searchParams: SearchParams }): Promise<Metadata> {
   const query = await searchParams;
   const keyword = first(query.q).trim();
-  return { title: keyword ? `Tìm kiếm: ${keyword} — Bluesia Cinema` : "Tìm kiếm — Bluesia Cinema" };
+  return { title: keyword ? `Tìm kiếm: ${keyword} — Blueflare` : "Tìm kiếm — Blueflare" };
 }
 
 export default async function SearchPage({ searchParams }: { searchParams: SearchParams }) {
@@ -37,8 +37,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Searc
   return (
     <div className="bf-content-width pb-10 pt-24 md:pt-28">
       <header className="bf-page-gutter">
-        <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-silver">Blueflare search</p>
-        <h1 className="mt-2 text-[32px] font-black tracking-tight text-chalk-white sm:text-[44px]">{keyword ? `Kết quả cho “${keyword}”` : "Tìm kiếm phim"}</h1>
+        <h1 className="text-[32px] font-black tracking-tight text-chalk-white sm:text-[44px]">{keyword ? `Kết quả cho “${keyword}”` : "Tìm kiếm phim"}</h1>
       </header>
       {keyword ? (
         <section className="bf-page-gutter mt-7 grid grid-cols-2 gap-x-3 gap-y-7 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7" aria-label="Kết quả tìm kiếm">

@@ -116,8 +116,7 @@ export function EmptyState({ title, description }: { title: string; description:
   return (
     <section className="bf-page-gutter flex min-h-[55vh] items-center py-20">
       <div className="max-w-lg">
-        <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-netflix-red">Thư viện cá nhân</p>
-        <h2 className="mt-3 text-[32px] font-black tracking-tight text-white sm:text-[42px]">{title}</h2>
+        <h2 className="text-[32px] font-black tracking-tight text-white sm:text-[42px]">{title}</h2>
         <p className="mt-4 text-[14px] leading-6 text-silver">{description}</p>
         <a href="/" className="mt-6 inline-flex min-h-11 items-center rounded bg-white px-5 py-2.5 text-[13px] font-bold text-black">Khám phá phim</a>
       </div>

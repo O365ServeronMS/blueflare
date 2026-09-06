@@ -2,14 +2,14 @@
 
 ## Product direction
 
-Blueflare is a premium cinematic discovery surface. Content is the interface, pure black is the stage, artwork supplies nearly all color, and `#e50914` is reserved for the brand, active indicators, and primary playback actions. The visual language is dense, compact, and confident rather than decorative.
+Blueflare is a premium cinematic discovery surface. Content is the interface, pure black is the stage, artwork supplies nearly all color, and `#e4312a` is reserved for the brand, active indicators, and primary playback actions. The visual language is dense, compact, and confident rather than decorative.
 
 ## Token model
 
 - Canvas: `#000000`.
 - Primary text: `#ffffff`; secondary text: `#b3b3b3`; quiet text: `#808080`.
 - Surfaces: `#2d2d2d` and `#414141`, used only where controls require separation.
-- Accent: `#e50914`, restricted to brand, active state, and primary playback urgency.
+- Accent: `#e4312a`, restricted to brand, active state, and primary playback urgency.
 - Typography: Inter, Roboto, system UI. One family, 400/500/700/900.
 - Spacing: 4px base scale from the root token source.
 - Radius: 4px controls, 8px compact media, 16px only for large feature surfaces.

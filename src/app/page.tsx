@@ -5,7 +5,7 @@ import { getHomeServer } from "@/lib/catalog-server";
 import { readFrontendFeatures } from "@/lib/features";
 
 export const metadata = {
-  title: "Bluesia Cinema — Xem phim online",
+  title: "Blueflare — Xem phim online",
   description: "Khám phá phim lẻ, phim bộ, TV Shows và hoạt hình trên Blueflare."
 };
 

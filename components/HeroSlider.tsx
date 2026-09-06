@@ -22,6 +22,11 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
   const [activeSlug, setActiveSlug] = useState<string | null>(null);
   const [interactionTick, setInteractionTick] = useState(0);
   const [synopsisExpanded, setSynopsisExpanded] = useState(false);
+  // WCAG 2.2.2 needs a way to stop content that auto-updates for longer than
+  // 5s. Pointer hover covers the mouse, and focus (the shell is tabbable for
+  // its arrow-key handler) covers the keyboard, so both routes can hold a
+  // slide still without a separate pause control competing with the CTAs.
+  const [interactionPaused, setInteractionPaused] = useState(false);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
@@ -34,7 +39,7 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
   // Rotation pauses while a synopsis is expanded so the text cannot slide out
   // from under someone who is reading it.
   useEffect(() => {
-    if (slides.length <= 1 || synopsisExpanded || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (slides.length <= 1 || synopsisExpanded || interactionPaused || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     const timer = window.setInterval(() => {
       if (!document.hidden) {
         setActiveSlug((current) => {
@@ -44,7 +49,7 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
       }
     }, SLIDE_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, [slides, interactionTick, synopsisExpanded]);
+  }, [slides, interactionTick, synopsisExpanded, interactionPaused]);
 
   const active = slides[visibleIndex];
   const { isFavorite, toggle: toggleFavorite } = useFavoriteToggle(active || EMPTY_MOVIE);
@@ -85,11 +90,15 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
 
   return (
     <section
-      className="bf-hero-shell relative h-[72vh] min-h-[520px] max-h-[880px] overflow-hidden bg-deep-space outline-none md:h-[78vh]"
+      className="bf-hero-shell relative h-[72vh] min-h-[520px] max-h-[880px] overflow-hidden bg-deep-space md:h-[78vh]"
       tabIndex={0}
       onKeyDown={handleKeyDown}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
+      onMouseEnter={() => setInteractionPaused(true)}
+      onMouseLeave={() => setInteractionPaused(false)}
+      onFocus={() => setInteractionPaused(true)}
+      onBlur={() => setInteractionPaused(false)}
       aria-roledescription="carousel"
       aria-label="Nội dung nổi bật"
     >
@@ -112,7 +121,6 @@ export function HeroSlider({ items }: { items: MovieCard[] }) {
 
       <div className="bf-content-width bf-page-gutter relative z-10 flex h-full flex-col items-start justify-end pb-8 md:justify-center md:pb-14 md:pt-16">
         <div className="max-w-[34rem]">
-          <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.16em] text-silver">Blueflare nổi bật</p>
           <h1 className="max-w-[12ch] text-[34px] font-black leading-[0.98] tracking-[-0.035em] text-chalk-white sm:text-[46px] md:text-[56px] lg:text-[64px]">
             {heroTitle}
           </h1>

@@ -28,7 +28,7 @@ function cleanFilter(value: string | string[] | undefined) {
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
   const { type } = await params;
   const title = typeTitles[type] || "Danh sách phim";
-  return { title: `${title} — Bluesia Cinema`, description: `Khám phá ${title.toLowerCase()} trên Bluesia Cinema.` };
+  return { title: `${title} — Blueflare`, description: `Khám phá ${title.toLowerCase()} trên Blueflare.` };
 }
 
 export default async function ListPage({ params, searchParams }: { params: Params; searchParams: SearchParams }) {
@@ -44,7 +44,12 @@ export default async function ListPage({ params, searchParams }: { params: Param
   if (page > 1) currentSearch.set("page", String(page));
   const data = await getListServer(type, page, { country, category });
   const returnTo = createReturnToPath(`/list/${type}`, currentSearch.toString()) || `/list/${type}`;
-  const title = [typeTitles[type] || data.title, country, category].filter(Boolean).join(" · ");
+  // The heading names the catalog and nothing else. An active filter is a
+  // separate, removable control — folding it into the h1 with a middle dot
+  // turned the title into a breadcrumb, and printed the raw slug at that.
+  const heading = typeTitles[type] || data.title;
+  const activeFilter = country || category;
+  const gridLabel = activeFilter ? `${heading}, lọc theo ${activeFilter}` : heading;
 
   function listHref(nextPage: number, nextCountry = country, nextCategory = category) {
     const filters = new URLSearchParams();
@@ -57,11 +62,16 @@ export default async function ListPage({ params, searchParams }: { params: Param
   return (
     <div className="bf-content-width pb-10 pt-24 md:pt-28">
       <header className="bf-page-gutter">
-        <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-silver">Khám phá Blueflare</p>
-        <h1 className="mt-2 text-[32px] font-black tracking-tight text-chalk-white sm:text-[44px]">{title}</h1>
+        <h1 className="text-[32px] font-black tracking-tight text-chalk-white sm:text-[44px]">{heading}</h1>
+        {activeFilter ? (
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <span className="bf-tag bf-tag-outline" aria-current="true">{activeFilter}</span>
+            <a href={listHref(1, "", "")} className="text-[12px] font-bold text-chalk-white transition-colors hover:text-netflix-red">Xóa bộ lọc</a>
+          </div>
+        ) : null}
       </header>
 
-      <section className="bf-page-gutter mt-7 grid grid-cols-2 gap-x-3 gap-y-7 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7" aria-label={title}>
+      <section className="bf-page-gutter mt-7 grid grid-cols-2 gap-x-3 gap-y-7 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7" aria-label={gridLabel}>
         {data.items.map((movie) => <MovieCard key={movie.slug} movie={movie} headingLevel={2} navSourceKey={type} returnTo={returnTo} />)}
       </section>
 

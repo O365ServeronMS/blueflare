@@ -10,7 +10,7 @@ Blueflare is a premium cinematic discovery surface. Content is the interface, pu
 - Primary text: `#ffffff`; secondary text: `#b3b3b3`; quiet text: `#808080`.
 - Surfaces: `#2d2d2d` and `#414141`, used only where controls require separation.
 - Accent: `#e4312a`, restricted to brand, active state, and primary playback urgency.
-- Typography: Inter, Roboto, system UI. One family, 400/500/700/900.
+- Typography: Be Vietnam Pro. One family, 400/500/700/900. Not a variable font — weights are loaded explicitly.
 - Spacing: 4px base scale from the root token source.
 - Radius: 4px controls, 8px compact media, 16px only for large feature surfaces.
 - Elevation: image overlap, scale, opacity, and surface contrast; no traditional card shadows.
@@ -53,7 +53,7 @@ The fixed navigation begins transparent and becomes near-black after scroll. The
 
 - Home rails use landscape `poster_url` backdrops in 16:9 frames when available.
 - Catalog, search, favorites, and history use 2:3 `thumb_url` posters.
-- Cards show minimal status; titles are visible where orientation and context require them.
+- Poster cards carry only the Top-10 numeral over the artwork; status, ratings and year share one meta line below the title.
 - Desktop hover scales inside an overlay layer without changing document flow; keyboard focus reveals the same treatment.
 - Rail arrows use native `scrollBy`; touch remains native horizontal swipe.
 - Every media frame has an intrinsic ratio and a controlled fallback.
@@ -82,7 +82,7 @@ Horizontal page gutters are fluid from 16px mobile to 4vw desktop. The content c
 
 - Feedback: 140–180ms.
 - Media emphasis: 180–240ms.
-- Hero crossfade: 500–700ms, with only the active image requested eagerly.
+- Hero crossfade: 600ms between two stacked layers; only the first image is requested eagerly.
 - Reduced motion disables automatic hero rotation and scale transitions.
 - Focus rings are visible white/red outlines with offset; controls remain at least 44px on touch.
 

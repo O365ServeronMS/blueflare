@@ -230,6 +230,9 @@ button, a { -webkit-tap-highlight-color: transparent; }
   transform-origin: center;
   transition: transform var(--bf-motion-media) ease, opacity var(--bf-motion-fast) ease;
   content-visibility: auto;
+  /* Thiếu dòng này thì nội dung bị bỏ qua render được tính chiều cao 0 và thanh
+     cuộn giật khi cuộn nhanh qua rail. 300px xấp xỉ chiều cao một thẻ poster. */
+  contain-intrinsic-size: auto 300px;
 }
 
 @media (hover: hover) and (pointer: fine) {

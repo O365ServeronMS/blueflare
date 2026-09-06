@@ -41,7 +41,12 @@ export default async function HomePage() {
             items={section.items}
             returnTo="/"
             spotlight={index === 0 && !heroItems.length}
-            itemLimit={section.href === "/list/phim-moi-cap-nhat" ? 24 : features.homeSectionLimit}
+            // Chỉ rail đầu nằm trong tầm nhìn ban đầu. Rail sau cắt còn 12: người
+            // cuộn tới cuối rail sẽ bấm tiêu đề để mở trang danh mục đầy đủ, nên
+            // thẻ thứ 13 trở đi gần như không được nhìn tới mà vẫn tốn HTML.
+            itemLimit={index === 0
+              ? (section.href === "/list/phim-moi-cap-nhat" ? 24 : features.homeSectionLimit)
+              : 12}
             slideDurationMs={features.railSlideDurationMs}
           />
         ))}

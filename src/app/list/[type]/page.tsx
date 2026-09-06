@@ -47,9 +47,12 @@ export default async function ListPage({ params, searchParams }: { params: Param
   // The heading names the catalog and nothing else. An active filter is a
   // separate, removable control — folding it into the h1 with a middle dot
   // turned the title into a breadcrumb, and printed the raw slug at that.
-  const heading = typeTitles[type] || data.title;
   const activeFilter = country || category;
-  const gridLabel = activeFilter ? `${heading}, lọc theo ${activeFilter}` : heading;
+  // Khi có bộ lọc, `data.title` là tên bộ lọc chứ không phải tên danh mục, nên
+  // tiêu đề phải lấy từ typeTitles trước và chỉ rơi về data.title khi không lọc.
+  const heading = typeTitles[type] || (activeFilter ? "Danh sách phim" : data.title);
+  const activeFilterLabel = activeFilter ? (data.title || activeFilter) : "";
+  const gridLabel = activeFilter ? `${heading}, lọc theo ${activeFilterLabel}` : heading;
 
   function listHref(nextPage: number, nextCountry = country, nextCategory = category) {
     const filters = new URLSearchParams();
@@ -65,7 +68,7 @@ export default async function ListPage({ params, searchParams }: { params: Param
         <h1 className="text-[32px] font-black tracking-tight text-chalk-white sm:text-[44px]">{heading}</h1>
         {activeFilter ? (
           <div className="mt-4 flex flex-wrap items-center gap-3">
-            <span className="bf-tag bf-tag-outline" aria-current="true">{activeFilter}</span>
+            <span className="bf-tag bf-tag-outline" aria-current="true">{activeFilterLabel}</span>
             <a href={listHref(1, "", "")} className="text-[12px] font-bold text-chalk-white transition-colors hover:text-netflix-red">Xóa bộ lọc</a>
           </div>
         ) : null}

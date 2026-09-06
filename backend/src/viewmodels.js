@@ -8,7 +8,8 @@ import {
   getHeroTrendingMovies,
   listCanonical,
   recommendations,
-  taxonomy
+  taxonomy,
+  taxonomyName
 } from './repository.js';
 
 function card(row) {
@@ -92,13 +93,19 @@ export async function buildList(type, page) {
 }
 
 export async function buildGenre(slug, page) {
-  const result = await listCanonical({ genre: slug, page, limit: 24 });
-  return listResponse(result, slug);
+  const [result, name] = await Promise.all([
+    listCanonical({ genre: slug, page, limit: 24 }),
+    taxonomyName('genres', slug)
+  ]);
+  return listResponse(result, name);
 }
 
 export async function buildCountry(slug, page) {
-  const result = await listCanonical({ country: slug, page, limit: 24 });
-  return listResponse(result, slug);
+  const [result, name] = await Promise.all([
+    listCanonical({ country: slug, page, limit: 24 }),
+    taxonomyName('countries', slug)
+  ]);
+  return listResponse(result, name);
 }
 
 export async function buildSearch(keyword, page) {

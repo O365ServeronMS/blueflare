@@ -805,7 +805,7 @@ export async function listCanonical(options = {}) {
     addListFilter(
       filters,
       values,
-      "genres @> jsonb_build_array(jsonb_build_object('slug', ?))",
+      "genres @> jsonb_build_array(jsonb_build_object('slug', ?::text))",
       options.genre
     );
   }
@@ -813,7 +813,7 @@ export async function listCanonical(options = {}) {
     addListFilter(
       filters,
       values,
-      "countries @> jsonb_build_array(jsonb_build_object('slug', ?))",
+      "countries @> jsonb_build_array(jsonb_build_object('slug', ?::text))",
       options.country
     );
   }
@@ -1002,7 +1002,7 @@ export async function recommendations(mediaType, tmdbId, limit = 16) {
   let genreFilter = '';
   if (genre) {
     values.push(genre);
-    genreFilter = " AND genres @> jsonb_build_array(jsonb_build_object('slug', $3))";
+    genreFilter = " AND genres @> jsonb_build_array(jsonb_build_object('slug', $3::text))";
   }
   values.push(limit);
   const result = await pool.query(
@@ -1021,6 +1021,21 @@ export async function taxonomy(field) {
     'GROUP BY item->>\'slug\' ORDER BY name'
   );
   return result.rows;
+}
+
+/**
+ * Tên hiển thị của một slug taxonomy. Trả lại chính slug nếu không tra được,
+ * để trang danh sách luôn có gì đó để hiện thay vì rỗng.
+ */
+export async function taxonomyName(field, slug) {
+  if (!['genres', 'countries'].includes(field)) throw new Error('Invalid taxonomy field');
+  if (!slug) return '';
+  const result = await pool.query(
+    "SELECT item->>'name' AS name FROM movies, jsonb_array_elements(" + field + ') item ' +
+    "WHERE item->>'slug' = $1::text LIMIT 1",
+    [slug]
+  );
+  return result.rows[0]?.name || slug;
 }
 
 export async function providerHealth() {

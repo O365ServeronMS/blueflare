@@ -258,6 +258,12 @@ export async function syncMdblistRatings(sources, options = {}) {
  * whatever the daily budget allows. The cursor only advances past rows that
  * were actually attempted, so a pass cut short by budget resumes exactly where
  * it stopped rather than skipping un-scored rows.
+ *
+ * The walk never retires. Rows become eligible *behind* the cursor all the
+ * time — a title lookup resolves an id for a row the walk already passed, or
+ * new content lands — so reaching the end wraps back to the start instead of
+ * marking the job done. An idle lap is close to free: the TTL filter excludes
+ * everything checked recently, so it costs one indexed query and no API call.
  */
 export async function backfillMdblistRatings(options = {}) {
   const ctx = await prepareRun(options);
@@ -270,10 +276,21 @@ export async function backfillMdblistRatings(options = {}) {
 
   const cursor = String(options.cursor ?? '');
   const limit = Math.max(1, Math.floor(options.batchLimit ?? config.mdblistBackfillBatchLimit));
-  const candidates = await listBackfill(cursor, limit);
+
+  let candidates = await listBackfill(cursor, limit);
+  let wrapped = false;
+  if (!candidates.length && cursor) {
+    wrapped = true;
+    candidates = await listBackfill('', limit);
+  }
+  const startCursor = wrapped ? '' : cursor;
+
   stats.selected = candidates.length;
+  stats.wrapped = wrapped;
   if (!candidates.length) {
-    stats.cursor = { next: cursor, completed: true };
+    // Nothing due anywhere: park the cursor at the start so the next pass is a
+    // single query rather than a walk to the end before it can wrap again.
+    stats.cursor = { next: '', wrapped };
     return done();
   }
 
@@ -281,20 +298,13 @@ export async function backfillMdblistRatings(options = {}) {
 
   // Advance only to the last id that was attempted; leave budget-declined rows
   // (and everything after them) for the next pass by keeping the cursor there.
-  let lastAttempted = cursor;
-  let attemptedCount = 0;
+  let lastAttempted = startCursor;
   for (const movie of candidates) {
     const state = states.get(movie.id);
-    if (state?.attempted) {
-      lastAttempted = movie.id;
-      attemptedCount += 1;
-    } else {
-      break;
-    }
+    if (!state?.attempted) break;
+    lastAttempted = movie.id;
   }
-  const exhausted = stats.declined === 'budget-exhausted';
-  const completed = !exhausted && candidates.length < limit && attemptedCount === candidates.length;
-  stats.cursor = { next: lastAttempted, completed };
+  stats.cursor = { next: lastAttempted, wrapped };
   return done();
 }
 
@@ -315,7 +325,7 @@ export function formatMdblistStats(stats) {
     'drained=' + stats.keysDrained,
     'durationMs=' + stats.durationMs
   ];
-  if (stats.cursor) parts.push('completed=' + Boolean(stats.cursor.completed));
+  if (stats.cursor) parts.push('wrapped=' + Boolean(stats.cursor.wrapped));
   if (stats.declined) parts.push('declined=' + stats.declined);
   const errors = Object.entries(stats.errors);
   if (errors.length) parts.push('errors=' + errors.map(([reason, count]) => reason + 'x' + count).join(','));

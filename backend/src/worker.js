@@ -523,8 +523,10 @@ async function refreshMdblistRatings() {
 
 /**
  * Walk the whole catalog for MDBList scores, one budget-limited slice per run,
- * resuming from a persisted id cursor. Idle once the walk completes; a
- * MDBLIST_BACKFILL_RESET=true env re-arms it from the start once per process.
+ * resuming from a persisted id cursor. The walk wraps rather than retiring, so
+ * rows that only became eligible after the cursor passed them still get picked
+ * up; a lap with nothing due costs one query and no API call.
+ * MDBLIST_BACKFILL_RESET=true forces it back to the start once per process.
  */
 async function refreshMdblistBackfill() {
   if (!config.mdblistBackfillEnabled || !config.mdblistApiKeys.length) return [];
@@ -544,8 +546,6 @@ async function refreshMdblistBackfill() {
     console.warn('[worker] mdblist backfill checkpoint unavailable', error.message);
     return [];
   }
-  if (checkpoint.completed) return [];
-
   let stats;
   try {
     stats = await backfillMdblistRatings({ cursor: checkpoint.cursor });
@@ -556,8 +556,7 @@ async function refreshMdblistBackfill() {
 
   if (stats.cursor) {
     await saveMdblistBackfillCursor({
-      cursor: stats.cursor.next,
-      completed: stats.cursor.completed
+      cursor: stats.cursor.next
     }).catch((error) => console.warn('[worker] mdblist backfill cursor save failed', error.message));
   }
 

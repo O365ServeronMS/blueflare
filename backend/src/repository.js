@@ -610,8 +610,13 @@ export async function getMdblistBackfillCursor() {
   return { cursor: row.next_cursor || '', completed: Boolean(row.completed_at) };
 }
 
-/** Advance (or complete, or reset) the MDBList backfill checkpoint. */
-export async function saveMdblistBackfillCursor({ cursor, completed = false, reset = false } = {}) {
+/**
+ * Advance (or reset) the MDBList backfill checkpoint.
+ *
+ * `completed_at` is always cleared: the walk wraps instead of retiring, so a
+ * value left over from the older terminating version must not park it forever.
+ */
+export async function saveMdblistBackfillCursor({ cursor, reset = false } = {}) {
   if (reset) {
     await pool.query(
       "UPDATE crawl_checkpoints SET next_cursor=NULL, completed_at=NULL, last_error=NULL, updated_at=now() " +
@@ -620,9 +625,9 @@ export async function saveMdblistBackfillCursor({ cursor, completed = false, res
     return;
   }
   await pool.query(
-    'UPDATE crawl_checkpoints SET next_cursor=$1, completed_at=$2, last_success_at=now(), updated_at=now() ' +
+    'UPDATE crawl_checkpoints SET next_cursor=$1, completed_at=NULL, last_success_at=now(), updated_at=now() ' +
     "WHERE provider='mdblist' AND lane='backfill'",
-    [cursor || null, completed ? new Date() : null]
+    [cursor || null]
   );
 }
 

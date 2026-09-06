@@ -255,12 +255,38 @@ function backfillHarness(overrides = {}) {
   return { deps, calls, rows };
 }
 
-test('backfill advances the cursor to the last id and completes at the end of the catalog', async () => {
+test('backfill advances the cursor to the last id it attempted', async () => {
   const { deps } = backfillHarness();
   const stats = await backfillMdblistRatings(deps);
   assert.equal(stats.selected, 2);
   assert.equal(stats.matched, 2);
-  assert.deepEqual(stats.cursor, { next: 'm2', completed: true });
+  assert.deepEqual(stats.cursor, { next: 'm2', wrapped: false });
+});
+
+test('reaching the end wraps to the start so rows that became eligible behind the cursor are picked up', async () => {
+  const behind = [{
+    id: 'm0', canonical_slug: 'm0', media_type: 'movie', tmdb_id: null,
+    tmdb_media_type: 'movie', imdb_id: null, tmdb_lookup_id: 7,
+    mdblist_tomatoes: null, mdblist_audience: null
+  }];
+  const seen = [];
+  const { deps } = backfillHarness({
+    cursor: 'zzz',
+    // Nothing left past the cursor, but one row is due back at the start.
+    listBackfill: async (cursor) => { seen.push(cursor); return cursor ? [] : behind; }
+  });
+  const stats = await backfillMdblistRatings(deps);
+  assert.deepEqual(seen, ['zzz', '']);
+  assert.equal(stats.wrapped, true);
+  assert.equal(stats.matched, 1);
+  assert.deepEqual(stats.cursor, { next: 'm0', wrapped: true });
+});
+
+test('a lap with nothing due parks the cursor at the start and spends nothing', async () => {
+  const { deps } = backfillHarness({ cursor: 'zzz', listBackfill: async () => [] });
+  const stats = await backfillMdblistRatings(deps);
+  assert.equal(stats.spent, 0);
+  assert.deepEqual(stats.cursor, { next: '', wrapped: true });
 });
 
 test('backfill stops the cursor at the last attempted row when budget runs out', async () => {
@@ -275,15 +301,8 @@ test('backfill stops the cursor at the last attempted row when budget runs out',
   });
   const stats = await backfillMdblistRatings(deps);
   assert.equal(stats.declined, 'budget-exhausted');
-  assert.equal(stats.cursor.completed, false);
+  assert.equal(stats.cursor.wrapped, false);
   assert.equal(stats.cursor.next, 'm1');
-});
-
-test('backfill completes without spending when the walk is already at the end', async () => {
-  const { deps } = backfillHarness({ rows: [], cursor: 'zzz' });
-  const stats = await backfillMdblistRatings(deps);
-  assert.equal(stats.spent, 0);
-  assert.deepEqual(stats.cursor, { next: 'zzz', completed: true });
 });
 
 test('stats format as a single greppable line', () => {

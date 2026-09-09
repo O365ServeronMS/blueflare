@@ -2,9 +2,9 @@
 
 > **Architecture (current): self-hosted Next.js frontend + Blueflare Docker origin.** Next.js is rendered by the Node 24 `frontend` container on the VPS and exposed through Caddy at `phim.bluesia.net`. Cloudflare is a normal proxy/CDN only; there is no Astro, frontend Worker, Pages Function, or edge runtime. The same repository owns the API, sync worker, PostgreSQL, Valkey, and the `m`/`d` image cache behind `img.bluesia.net`. `CLAUDE.md` is authoritative.
 
-## Required project skill
+## Local project skill
 
-Before implementing, reviewing, debugging, or refactoring this repository, read and follow `.codex/skills/blueflare-engineering/SKILL.md`. It defines the project's precision workflow, verification matrix, and architecture invariants; `CLAUDE.md` remains the authoritative specification where the two overlap.
+If `.codex/skills/blueflare-engineering/SKILL.md` exists on this machine, read and follow it before implementing, reviewing, debugging, or refactoring. It defines the project's precision workflow, verification matrix, and architecture invariants. It is local Codex configuration and is not tracked in the repository, so it may be absent; `CLAUDE.md` remains the authoritative specification either way.
 
 ## Behavioral guidelines
 

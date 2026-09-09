@@ -40,7 +40,9 @@ claude.local.md
 # Local Blueflare signed-image cache
 backend/data/images/
 
-# Claude Code local state and worktrees (multi-GB if left untracked)
+# Per-machine coding-agent config, local state, and worktrees
+# (multi-GB if left untracked). CLAUDE.md and AGENTS.md are the tracked
+# instructions; anything under these directories is local only.
 .claude/
 .codex/
 

@@ -1,6 +1,6 @@
 # Agent Guide
 
-> **Architecture (current): self-hosted Next.js frontend + Blueflare Docker origin.** Next.js is rendered by the Node 24 `frontend` container on the VPS and exposed through Caddy at `phim.bluesia.net`. Cloudflare is a normal proxy/CDN only; there is no Astro, frontend Worker, Pages Function, or edge runtime. The same repository owns the API, sync worker, PostgreSQL, Valkey, and signed `m`/`d` image cache behind `img.bluesia.net`. `CLAUDE.md` is authoritative.
+> **Architecture (current): self-hosted Next.js frontend + Blueflare Docker origin.** Next.js is rendered by the Node 24 `frontend` container on the VPS and exposed through Caddy at `phim.bluesia.net`. Cloudflare is a normal proxy/CDN only; there is no Astro, frontend Worker, Pages Function, or edge runtime. The same repository owns the API, sync worker, PostgreSQL, Valkey, and the `m`/`d` image cache behind `img.bluesia.net`. `CLAUDE.md` is authoritative.
 
 ## Required project skill
 
@@ -27,7 +27,7 @@ Before implementing, reviewing, debugging, or refactoring this repository, read 
 - `npm run build`: production build and the only automated frontend gate.
 - `npm run start`: standalone production server.
 - `npm run deploy`: build the frontend Docker image; do not imply it has been deployed.
-- `docker compose -f backend/compose.yml config --quiet`: validate VPS composition.
+- `BLUEFLARE_ENV_FILE=$PWD/backend/.env.example docker compose -f deploy/compose.yml config --quiet`: validate VPS composition. The absolute env-file path is required because the real `.env` exists only in the stack directory.
 
 ## Editing and performance rules
 
@@ -36,7 +36,7 @@ Before implementing, reviewing, debugging, or refactoring this repository, read 
 - Preserve the rebuilt full-width cinematic shell, responsive gutters, compact mobile navigation, and existing playback ordering.
 - Never generate movie context with hash fragments; use `returnTo=<encoded path+search>`.
 - Keep the strict compact pagination window in `docs/PAGINATION.md`; do not replace it with endless scroll.
-- Images are pre-signed by the API. Use only `thumb_url` (`/i/m/`) and `poster_url` (`/i/d/`); never add client signing, `srcset` variants, or route-specific cache keys.
+- Image URLs are built by the API and are path-only, keyed by `image_assets.id` (`/i/m/<uuid>.webp` portrait, `/i/d/<uuid>.webp` landscape). The older HMAC `?url=&sig=` form survives in `backend/src/images.js` for backward compatibility only; nothing emits it. Use exactly those two variants; never add client signing, `srcset` variants, or route-specific cache keys.
 - The first home hero image is eager/high priority; other images are lazy with stable dimensions.
 - Do not mount embeds until the user presses Play; dynamically import only `hls.js/dist/hls.light.js` for MSE fallback.
 - Do not proxy, re-chunk, or cache video bytes.

@@ -6,6 +6,10 @@ export default defineConfig({
     alias: { "@": resolve(__dirname) },
   },
   test: {
-    include: ["lib/**/*.test.ts", "src/**/*.test.ts"],
+    include: [
+      "lib/**/*.test.ts",
+      "src/**/*.test.ts",
+      "components/**/*.test.{ts,tsx}",
+    ],
   },
 });

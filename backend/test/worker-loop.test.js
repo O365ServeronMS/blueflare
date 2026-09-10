@@ -3,7 +3,8 @@ import test from 'node:test';
 import {
   isTransientDependencyError,
   retryDelayMs,
-  runWorkerLoop
+  runWorkerLoop,
+  WorkerCycleTimeoutError
 } from '../src/workerLoop.js';
 
 test('recognizes the PostgreSQL timeout that previously terminated the worker', () => {
@@ -91,4 +92,47 @@ test('fails fast and marks heartbeat failed for a non-transient error', async ()
 
   assert.deepEqual(states.map((entry) => entry.status), ['starting', 'failed']);
   assert.equal(states[1].details.stage, 'startup');
+});
+
+test('exits when a cycle never settles, even if the error looks transient', async () => {
+  const states = [];
+
+  await assert.rejects(
+    runWorkerLoop({
+      initialize: async () => {},
+      runCycle: () => new Promise(() => {}),
+      writeHeartbeat: async (status, details) => states.push({ status, details }),
+      isTransient: () => true,
+      intervalMs: 1000,
+      cycleTimeoutMs: 20,
+      logger: { warn: () => {} }
+    }),
+    WorkerCycleTimeoutError
+  );
+
+  assert.deepEqual(states.map((entry) => entry.status), ['starting', 'running', 'failed']);
+  assert.equal(states[2].details.stage, 'cycle');
+});
+
+test('a hung heartbeat write does not wedge the loop', async () => {
+  const controller = new AbortController();
+  const warnings = [];
+  let cycles = 0;
+
+  await runWorkerLoop({
+    initialize: async () => {},
+    runCycle: async () => {
+      cycles += 1;
+      controller.abort();
+    },
+    writeHeartbeat: () => new Promise(() => {}),
+    intervalMs: 1000,
+    heartbeatTimeoutMs: 10,
+    signal: controller.signal,
+    sleep: async () => {},
+    logger: { warn: (...args) => warnings.push(args.join(' ')) }
+  });
+
+  assert.equal(cycles, 1);
+  assert.equal(warnings.filter((line) => line.includes('heartbeat write failed')).length, 3);
 });

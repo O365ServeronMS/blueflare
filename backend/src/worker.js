@@ -585,11 +585,20 @@ try {
     },
     writeHeartbeat: writeWorkerHeartbeat,
     intervalMs: config.syncIntervalMs,
+    // A cycle that outlives the heartbeat TTL is already reported as a dead
+    // worker by /api/health, so treat it as one: exit and let Compose restart.
+    cycleTimeoutMs: config.workerHeartbeatTtlSeconds * 1000,
     signal: stopController.signal
   });
 } catch (error) {
   console.error('[worker] fatal worker failure', error);
   process.exitCode = 1;
 } finally {
-  await Promise.allSettled([closeCache(), closeDatabase()]);
+  // A timed-out cycle can still hold a pooled client or a wedged Valkey socket,
+  // which would stall a graceful close forever. Bound it, then exit.
+  await Promise.race([
+    Promise.allSettled([closeCache(), closeDatabase()]),
+    new Promise((resolve) => setTimeout(resolve, 5000).unref())
+  ]);
+  process.exit();
 }

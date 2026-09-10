@@ -53,6 +53,27 @@ export function waitFor(milliseconds, signal) {
   });
 }
 
+/**
+ * A cycle that outlived its deadline. Always fatal: the stuck work cannot be
+ * cancelled from here, so the only clean recovery is to exit and let Compose
+ * restart the container.
+ */
+export class WorkerCycleTimeoutError extends Error {
+  constructor(timeoutMs) {
+    super('worker cycle exceeded its ' + timeoutMs + 'ms deadline');
+    this.name = 'WorkerCycleTimeoutError';
+  }
+}
+
+export function withDeadline(promise, timeoutMs, createError) {
+  if (!(timeoutMs > 0)) return promise;
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(createError()), timeoutMs);
+  });
+  return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
+}
+
 function timestamp(now) {
   return new Date(now()).toISOString();
 }
@@ -70,6 +91,11 @@ function errorDetails(error, stage, failureStreak) {
  * Keep transient PostgreSQL and Valkey failures from taking down the process.
  * Programming/configuration failures still surface as a non-zero exit so
  * Compose can make them visible instead of masking a broken release.
+ *
+ * A promise that never settles — seen after a host freeze on 2026-09-10 — used
+ * to wedge the loop forever with the container still "running". `cycleTimeoutMs`
+ * turns that into a fatal exit, and `heartbeatTimeoutMs` keeps a hung Valkey
+ * write from doing the same outside the cycle.
  */
 export async function runWorkerLoop(options) {
   const {
@@ -78,6 +104,8 @@ export async function runWorkerLoop(options) {
     writeHeartbeat = async () => {},
     isTransient = isTransientDependencyError,
     intervalMs,
+    cycleTimeoutMs = 0,
+    heartbeatTimeoutMs = 10000,
     retryBaseMs = 1000,
     retryMaxMs = 60000,
     now = () => Date.now(),
@@ -90,7 +118,11 @@ export async function runWorkerLoop(options) {
 
   async function heartbeat(status, details = {}) {
     try {
-      await writeHeartbeat(status, details);
+      await withDeadline(
+        writeHeartbeat(status, details),
+        heartbeatTimeoutMs,
+        () => new Error('heartbeat write exceeded ' + heartbeatTimeoutMs + 'ms')
+      );
     } catch (error) {
       logger.warn('[worker] heartbeat write failed', error.message);
     }
@@ -132,7 +164,11 @@ export async function runWorkerLoop(options) {
       failure_streak: failureStreak
     });
     try {
-      await runCycle();
+      await withDeadline(
+        runCycle(),
+        cycleTimeoutMs,
+        () => new WorkerCycleTimeoutError(cycleTimeoutMs)
+      );
       failureStreak = 0;
       const elapsed = Math.max(0, now() - startedAt);
       await heartbeat('ok', {
@@ -143,7 +179,7 @@ export async function runWorkerLoop(options) {
       });
       await sleep(Math.max(1000, intervalMs - elapsed), signal);
     } catch (error) {
-      if (!isTransient(error)) {
+      if (error instanceof WorkerCycleTimeoutError || !isTransient(error)) {
         await heartbeat('failed', errorDetails(error, 'cycle', failureStreak + 1));
         throw error;
       }

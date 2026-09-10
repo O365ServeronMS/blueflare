@@ -99,6 +99,15 @@ exponential backoff and writes a `degraded` heartbeat. Any other failure is
 intentional fail-fast: it writes `failed`, exits non-zero and lets Compose expose
 the bad release. Do not add a blanket catch or an infinite crash loop.
 
+A cycle that never settles is treated the same way. Each cycle has a deadline
+equal to the heartbeat TTL — past that point `/api/health` already reports the
+worker as `missing` — and each heartbeat write has a 10-second bound. On expiry
+the worker writes `failed`, closes its pools with a 5-second cap and exits
+non-zero so `restart: unless-stopped` replaces it. Before this, a promise lost
+during a host freeze (2026-09-10, CPU steal 84%) left the process alive, idle,
+and `unhealthy` indefinitely, because Docker does not restart unhealthy
+containers.
+
 If CPU steal, block-device await, soft-lockups, `containerd-shim`/`runc` stalls, or
 Docker restart-manager task conflicts coincide with the exit, open a VPS-provider
 ticket with the preserved timestamps, `sar` output and kernel/Docker excerpts.

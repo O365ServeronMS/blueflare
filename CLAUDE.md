@@ -98,12 +98,18 @@ secure copy off the machine.
 
 ## Verification
 
-Run `npm run build` and `npm test` for frontend changes, and `cd backend && node --test` for backend changes. Validate the compose file with
-`BLUEFLARE_ENV_FILE=$PWD/backend/.env.example docker compose -f deploy/compose.yml config --quiet`
-(the absolute `BLUEFLARE_ENV_FILE` is required because the real `.env` only exists in the stack directory), and a container smoke test for `/healthz`, `/list/phim-le?page=2`, `/list/phim-le?page=3`, and protected revalidation. Run `git diff --check`.
+`scripts/verify.sh` runs the whole checklist and exits non-zero if anything failed
+(`--changed` limits it to the sections the working tree touches). The local
+`verifier` agent (`.claude/`, not in the repo) runs it and reports only failures.
+What it runs:
 
-Known and not a regression: `backend/test/providers.test.js` fails on a host with
-no `backend/node_modules` (`Cannot find package 'pg'`). It passes inside the image.
+Run `npm run build` and `npm test` for frontend changes, and `(cd backend && node --test)` for backend changes. Validate the compose file with
+`BLUEFLARE_ENV_FILE=$PWD/backend/.env.example docker compose -f deploy/compose.yml config --quiet`
+(the absolute `BLUEFLARE_ENV_FILE` is required because the real `.env` only exists in the stack directory), and a container smoke test for `/healthz`, `/list/phim-le?page=2`, `/list/phim-le?page=3`, and protected revalidation. Run `git diff --check HEAD`.
+
+`backend/node_modules` is installed on the host, so `node --test` must be fully
+green. If `providers.test.js` fails with `Cannot find package 'pg'`, the directory
+is gone — run `npm ci` in `backend/`; do not skip or delete the test.
 
 When adding a key to `backend/.env.example`, add it to the stack `.env` too —
 `deploy/apply-env.sh` fails the deploy if `.env` is missing anything the example

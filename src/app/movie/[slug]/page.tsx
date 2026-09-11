@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
+import { Suspense } from "react";
 import { ArrowLeft, Play } from "lucide-react";
 import { ExpandableSynopsis } from "@/components/ExpandableSynopsis";
 import { MovieActions } from "@/components/LocalMovieActions";
 import { MoviePlayer } from "@/components/MoviePlayer";
+import { RecommendationRail } from "@/components/RecommendationRail";
 import { getMovieServer } from "@/lib/catalog-server";
 import { episodeWatchKey, findEpisodeByWatchKey } from "@/lib/episodes";
 import { fallbackReturnToForSource, getBackHref, hrefWithReturnTo, inferNavSourceFromMovie, returnToFromSearchParams } from "@/lib/navigation";
@@ -138,6 +140,10 @@ export default async function MoviePage({ params, searchParams }: { params: Para
           </section>
         ) : null}
       </div>
+
+      <Suspense fallback={null}>
+        <RecommendationRail slug={movie.slug} returnTo={returnTo} />
+      </Suspense>
     </article>
   );
 }

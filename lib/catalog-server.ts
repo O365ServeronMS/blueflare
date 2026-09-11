@@ -2,7 +2,7 @@ import { cacheLife, cacheTag } from "next/cache";
 import { normalizedEpisodeName, normalizedEpisodeSlug } from "@/lib/episodes";
 import { normalizeCard } from "@/lib/catalog";
 import { normalizePage } from "@/lib/navigation";
-import type { EpisodeServer, HomePayload, ListPayload, MovieDetail } from "@/lib/types";
+import type { EpisodeServer, HomePayload, ListPayload, MovieCard, MovieDetail } from "@/lib/types";
 
 const INTERNAL_CATALOG_BASE = (process.env.INTERNAL_CATALOG_URL || process.env.CATALOG_BASE_URL || "https://img.bluesia.net").replace(/\/$/, "");
 
@@ -128,4 +128,15 @@ export async function getMovieServer(slug: string): Promise<MovieDetail> {
     countryList: detailLabels(movieRaw?.country),
     episodes
   };
+}
+
+export async function getRecommendationsServer(slug: string): Promise<MovieCard[]> {
+  "use cache";
+  const safeSlug = String(slug || "").trim();
+  cacheLife({ stale: 900, revalidate: 3600, expire: 86400 });
+  // Same tag as the detail page, so a changed title refreshes its rail too.
+  cacheTag(`movie:${safeSlug}`);
+  const payload = await fetchCatalog<any>(`/api/recommendations/${encodeURIComponent(safeSlug)}`);
+  const items = Array.isArray(payload?.items) ? payload.items : [];
+  return items.map(normalizeCard).filter((movie: MovieCard) => movie.slug);
 }

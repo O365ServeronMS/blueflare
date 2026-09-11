@@ -21,7 +21,7 @@ export function SectionRow({
   slideDurationMs = 300
 }: {
   title: string;
-  href: string;
+  href?: string;
   items: MovieCardType[];
   returnTo?: string;
   spotlight?: boolean;
@@ -108,13 +108,21 @@ export function SectionRow({
   return (
     <section className={spotlight ? "relative z-20 mt-6 pb-3 md:-mt-20" : "relative mt-7 pb-3 md:mt-10"} aria-labelledby={`rail-${title.replace(/\s+/g, "-").toLowerCase()}`}>
       <div className="bf-content-width bf-page-gutter mb-3 flex items-end justify-between gap-4">
-        <a href={href} className="group inline-flex min-w-0 items-center gap-2">
-          <h2 id={`rail-${title.replace(/\s+/g, "-").toLowerCase()}`} className="line-clamp-1 text-subheading font-bold leading-tight text-chalk-white md:text-heading-sm">
-            {title}
-          </h2>
-          <span className="hidden text-caption font-medium text-silver transition group-hover:text-chalk-white sm:inline">Khám phá</span>
-          <ChevronRight className="h-4 w-4 shrink-0 text-silver transition-transform group-hover:translate-x-0.5 group-hover:text-chalk-white" />
-        </a>
+        {href ? (
+          <a href={href} className="group inline-flex min-w-0 items-center gap-2">
+            <h2 id={`rail-${title.replace(/\s+/g, "-").toLowerCase()}`} className="line-clamp-1 text-subheading font-bold leading-tight text-chalk-white md:text-heading-sm">
+              {title}
+            </h2>
+            <span className="hidden text-caption font-medium text-silver transition group-hover:text-chalk-white sm:inline">Khám phá</span>
+            <ChevronRight className="h-4 w-4 shrink-0 text-silver transition-transform group-hover:translate-x-0.5 group-hover:text-chalk-white" />
+          </a>
+        ) : (
+          <div className="inline-flex min-w-0 items-center gap-2">
+            <h2 id={`rail-${title.replace(/\s+/g, "-").toLowerCase()}`} className="line-clamp-1 text-subheading font-bold leading-tight text-chalk-white md:text-heading-sm">
+              {title}
+            </h2>
+          </div>
+        )}
         <div className="hidden items-center gap-1 md:flex">
           <button type="button" aria-label={`Cuộn ${title} sang trái`} onClick={() => scroll(-1)} className="grid h-8 w-8 place-items-center rounded-sm bg-black/80 text-silver transition hover:bg-graphite hover:text-chalk-white">
             <ChevronLeft className="h-5 w-5" />

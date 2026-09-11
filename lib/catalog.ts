@@ -201,21 +201,6 @@ export async function getMovie(slug: string): Promise<MovieDetail> {
   return movie;
 }
 
-/**
- * "Bạn cũng có thể thích" — canonical-catalog recommendations for a title,
- * resolved and cached by the Blueflare backend. TMDB ids are not unique across
- * movie/tv, so `type` selects the matching media family. Returns pre-signed
- * `MovieCard`s; fire-and-forget on the detail page.
- */
-export async function getRecommendation(tmdbId: number | string, type = "movie"): Promise<MovieCard[]> {
-  const id = String(tmdbId ?? "").trim();
-  if (!id) return [];
-  const mediaType = type === "tv" ? "tv" : "movie";
-  const payload = await fetchJson<any>(`${CATALOG_BASE}/api/recommendation/${mediaType}/${encodeURIComponent(id)}`);
-  const items = Array.isArray(payload?.items) ? payload.items : [];
-  return items.map(normalizeCard).filter((movie: MovieCard) => movie.slug);
-}
-
 type Taxonomy = { name: string; slug: string };
 
 function taxonomyItems(payload: any): Taxonomy[] {

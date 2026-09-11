@@ -50,7 +50,13 @@ npm run preview   # serve the standalone build
 npm run deploy    # build the frontend Docker image only
 npm test          # vitest, frontend
 cd backend && node --test    # backend suite
+scripts/deploy.sh [--dry-run] [svc...|all]   # build changed services, recreate, health gate, auto-rollback
+scripts/rollback.sh [--dry-run] [svc...]     # swap services back to their previous (:prev) images
 ```
+
+`scripts/deploy.sh` ships only a clean, pushed `main`, records the running rev in
+`/opt/stacks/blueflare/.last-deploy`, and tags each replaced image `:prev`. A
+rollback moves images only; it does not undo migrations or synced stack files.
 
 Codebase and runtime are separate directories (ADR-001): the repo lives at `/home/ubuntu/blueflare`, while the Docker stack runs from `/opt/stacks/blueflare` (`compose.yml`, `.env`, `deploy/`, `data/images/`, `backups/`). `deploy/compose.yml` and `deploy/*` in this repo are the source of truth; `deploy/sync-stack.sh` copies them to the stack directory. Compose builds straight from the codebase through `BLUEFLARE_SRC`. Do not run a production restart, a sync, or a Caddy reload unless explicitly requested.
 

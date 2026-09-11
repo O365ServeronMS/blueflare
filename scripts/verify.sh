@@ -70,6 +70,17 @@ check_env_keys() {
   return "$missing"
 }
 
+# shellcheck is not installed on the VPS; bash -n still catches the syntax
+# errors that would otherwise surface halfway through a deploy.
+check_shell() {
+  local f bad=0
+  for f in scripts/*.sh scripts/lib/*.sh deploy/*.sh deploy/backup/*.sh; do
+    [[ -e $f ]] || continue
+    bash -n "$f" || { echo "syntax error: $f"; bad=1; }
+  done
+  return "$bad"
+}
+
 check_smoke() {
   local p code bad=0
   for p in /healthz "/list/phim-le?page=2" "/list/phim-le?page=3"; do
@@ -111,6 +122,12 @@ if touches '^deploy/|^backend/\.env\.example$'; then
   run compose check_compose
 else
   skip compose "no deploy/ or .env.example changes"
+fi
+
+if touches '^(scripts|deploy)/.*\.sh$'; then
+  run shell check_shell
+else
+  skip shell "no shell script changes"
 fi
 
 if ! touches '^backend/\.env\.example$'; then

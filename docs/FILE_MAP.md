@@ -50,9 +50,16 @@ trong git; thư mục stack giữ bản copy, đồng bộ bằng `deploy/sync-s
 - `deploy/bootstrap-vps.sh`: dựng VPS trắng; hai site block Caddy (`phim` → 3100,
   `img` → 3200) nằm inline trong script, không còn file `.caddy` riêng.
 - `deploy/cloudflare-frontend-static-rule.json`: optional normal Cloudflare cache rule for immutable `/_next/static/` assets.
+- `scripts/deploy.sh`: deploy `main` đã push — chỉ build service mà diff chạm tới, tag
+  image cũ thành `:prev`, tạo lại container, chờ healthy + smoke, tự rollback nếu hỏng.
+- `scripts/rollback.sh`: đổi `:latest` ↔ `:prev` cho service rồi chạy cùng health gate;
+  chạy lần hai là roll forward.
+- `scripts/lib/stack.sh`: helper chung của hai script trên (health wait, smoke, swap image).
+- `scripts/verify.sh`: checklist kiểm chứng trong CLAUDE.md, một dòng PASS/FAIL mỗi mục.
 
 Chỉ tồn tại ở thư mục stack, **không** trong git: `.env` (secret),
 `.env.example` (bản copy của `backend/.env.example`, đồng bộ bằng `sync-stack.sh`),
+`.last-deploy` (rev đang chạy, do `scripts/deploy.sh` ghi),
 `data/images/` (cache ảnh), `backups/postgres/` (dump local, bản offsite nằm trên R2).
 
 ## Fast search hints

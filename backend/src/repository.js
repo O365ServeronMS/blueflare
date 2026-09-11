@@ -507,6 +507,57 @@ export async function recordTmdbLookup(movieId, status, tmdbId = null) {
   );
 }
 
+/**
+ * TMDB identities whose recommendation lists are missing or due. Never-fetched
+ * identities go first, newest catalog rows first, so the pages visitors reach
+ * soonest get a rail soonest.
+ */
+export async function listTmdbRecommendationCandidates(limit = config.tmdbRecommendationsLimit) {
+  const result = await pool.query(
+    'WITH keys AS (' +
+    '  SELECT DISTINCT ON (k.media_type, k.tmdb_id) k.media_type, k.tmdb_id, m.catalog_sort_at FROM movies m ' +
+    '  CROSS JOIN LATERAL (SELECT ' +
+    "    CASE WHEN m.tmdb_id IS NOT NULL AND m.tmdb_media_type IN ('movie','tv') THEN m.tmdb_media_type ELSE m.media_type END AS media_type, " +
+    "    CASE WHEN m.tmdb_id IS NOT NULL AND m.tmdb_media_type IN ('movie','tv') THEN m.tmdb_id " +
+    '         ELSE COALESCE(m.tmdb_lookup_id::bigint, m.tmdb_image_fallback_id) END AS tmdb_id) k ' +
+    "  WHERE m.catalog_state='ready' AND k.tmdb_id IS NOT NULL AND k.media_type IN ('movie','tv') " +
+    '  ORDER BY k.media_type, k.tmdb_id, m.catalog_sort_at DESC NULLS LAST' +
+    ') ' +
+    'SELECT keys.media_type, keys.tmdb_id FROM keys ' +
+    'LEFT JOIN tmdb_recommendations r ON r.media_type=keys.media_type AND r.tmdb_id=keys.tmdb_id ' +
+    'WHERE r.tmdb_id IS NULL ' +
+    "  OR (r.status <> 'error' AND r.fetched_at < now() - ($1::bigint * interval '1 millisecond')) " +
+    "  OR (r.status = 'error' AND r.fetched_at < now() - ($2::bigint * interval '1 millisecond')) " +
+    'ORDER BY (r.tmdb_id IS NULL) DESC, keys.catalog_sort_at DESC NULLS LAST LIMIT $3',
+    [config.tmdbRecommendationsRefreshMs, config.tmdbRecommendationsRetryMs, Math.max(1, Math.floor(limit))]
+  );
+  return result.rows;
+}
+
+/**
+ * Record one fetch. A failed fetch keeps the ids from the last good one, so a
+ * TMDB outage degrades to a stale rail rather than an empty one.
+ */
+export async function recordTmdbRecommendations(mediaType, tmdbId, status, lists = null, message = null) {
+  if (status === 'error') {
+    await pool.query(
+      'INSERT INTO tmdb_recommendations (media_type, tmdb_id, status, last_error, fetched_at) ' +
+      "VALUES ($1,$2,'error',$3,now()) ON CONFLICT (media_type, tmdb_id) DO UPDATE SET " +
+      "status='error', last_error=EXCLUDED.last_error, fetched_at=now()",
+      [mediaType, tmdbId, String(message || 'unknown error').slice(0, 500)]
+    );
+    return;
+  }
+  const allowed = ['ok', 'empty', 'not_found'].includes(status) ? status : 'empty';
+  await pool.query(
+    'INSERT INTO tmdb_recommendations (media_type, tmdb_id, recommended_ids, similar_ids, status, last_error, fetched_at) ' +
+    'VALUES ($1,$2,$3::bigint[],$4::bigint[],$5,NULL,now()) ON CONFLICT (media_type, tmdb_id) DO UPDATE SET ' +
+    'recommended_ids=EXCLUDED.recommended_ids, similar_ids=EXCLUDED.similar_ids, ' +
+    'status=EXCLUDED.status, last_error=NULL, fetched_at=now()',
+    [mediaType, tmdbId, lists?.recommended || [], lists?.similar || [], allowed]
+  );
+}
+
 export async function recordTmdbImageFallback(movieId, match) {
   const client = await pool.connect();
   try {

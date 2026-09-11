@@ -263,3 +263,32 @@ export async function fetchVerifiedTmdbImages(identity, options = {}) {
     posterSourceUrl: imageSource(series.backdrop_path, 'w1280', options.imageBaseUrl)
   };
 }
+
+function resultIds(body) {
+  const ids = [];
+  const seen = new Set();
+  for (const result of Array.isArray(body?.results) ? body.results : []) {
+    const id = validMovieId(result?.id);
+    if (id && !seen.has(id)) {
+      seen.add(id);
+      ids.push(id);
+    }
+  }
+  return ids;
+}
+
+/**
+ * First page of TMDB's recommendations and similar lists for one identity.
+ * A 404 propagates with `error.status === 404` so the caller can record the
+ * identity as not found instead of retrying it like a transient failure —
+ * a guessed lookup id that TMDB no longer knows is the usual cause.
+ */
+export async function fetchTmdbRecommendations(identity, options = {}) {
+  const tmdbId = validMovieId(identity?.tmdbId);
+  const mediaType = validMediaType(identity?.mediaType);
+  if (!tmdbId || !mediaType) throw new Error('TMDB identity is incomplete');
+  const base = '/' + mediaType + '/' + tmdbId;
+  const recommended = resultIds(await fetchTmdb(base + '/recommendations?page=1', options));
+  const similar = resultIds(await fetchTmdb(base + '/similar?page=1', options));
+  return { recommended, similar };
+}

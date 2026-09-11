@@ -62,6 +62,14 @@ export const config = Object.freeze({
   tmdbLookupConcurrency: integer('TMDB_LOOKUP_CONCURRENCY', 4, 1),
   tmdbLookupRetryMs: integer('TMDB_LOOKUP_RETRY_MS', 30 * 24 * 60 * 60 * 1000, 60 * 1000),
 
+  // TMDB recommendation/similar id lists for the detail-page rail. Keyed by
+  // TMDB identity, refreshed slowly: the lists barely move week to week.
+  tmdbRecommendationsEnabled: boolean('TMDB_RECOMMENDATIONS_ENABLED', true),
+  tmdbRecommendationsLimit: integer('TMDB_RECOMMENDATIONS_LIMIT', 300, 1),
+  tmdbRecommendationsConcurrency: integer('TMDB_RECOMMENDATIONS_CONCURRENCY', 3, 1),
+  tmdbRecommendationsRefreshMs: integer('TMDB_RECOMMENDATIONS_REFRESH_MS', 14 * 24 * 60 * 60 * 1000, 60 * 60 * 1000),
+  tmdbRecommendationsRetryMs: integer('TMDB_RECOMMENDATIONS_RETRY_MS', 6 * 60 * 60 * 1000, 60 * 1000),
+
   // MDBList supplies both Rotten Tomatoes critic and audience percentages shown
   // on cards. Gated by the key list being non-empty, like TMDB above.
   mdblistEnabled: boolean('MDBLIST_ENABLED', false),

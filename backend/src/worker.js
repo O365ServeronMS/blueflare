@@ -18,7 +18,9 @@ import {
   listTmdbImageCandidates,
   listTmdbImageFallbackCandidates,
   listTmdbLookupCandidates,
+  listTmdbRecommendationCandidates,
   recordTmdbLookup,
+  recordTmdbRecommendations,
   recordTmdbImageFailure,
   recordTmdbImageFallback,
   recordTmdbImageFallbackMiss,
@@ -39,6 +41,7 @@ import {
 import { formatPrewarmStats, prewarmImages } from './prewarm.js';
 import { backfillMdblistRatings, formatMdblistStats, syncMdblistRatings } from './mdblistRatingsSync.js';
 import {
+  fetchTmdbRecommendations,
   fetchTrendingMovieIds,
   fetchVerifiedTmdbImages,
   searchTmdbIdByTitle,
@@ -351,6 +354,39 @@ async function refreshTmdbLookups() {
 }
 
 /**
+ * Fetch TMDB recommendation/similar id lists for the detail-page rail.
+ *
+ * Runs after the lookup pass because that pass is what gives most rows an id
+ * to fetch for. Returns nothing: the rail is matched to the catalog at read
+ * time and its response carries its own TTL, so nothing here needs purging.
+ */
+async function refreshTmdbRecommendations() {
+  if (!config.tmdbEnabled || !config.tmdbRecommendationsEnabled || !config.tmdbApiKey) return;
+  const candidates = await listTmdbRecommendationCandidates();
+  if (!candidates.length) return;
+
+  const counts = { ok: 0, empty: 0, not_found: 0, error: 0 };
+  await mapLimit(candidates, config.tmdbRecommendationsConcurrency, async (candidate) => {
+    const mediaType = candidate.media_type;
+    const tmdbId = Number(candidate.tmdb_id);
+    try {
+      const lists = await fetchTmdbRecommendations({ mediaType, tmdbId });
+      const status = lists.recommended.length || lists.similar.length ? 'ok' : 'empty';
+      counts[status] += 1;
+      await recordTmdbRecommendations(mediaType, tmdbId, status, lists);
+    } catch (error) {
+      const status = error.status === 404 ? 'not_found' : 'error';
+      counts[status] += 1;
+      await recordTmdbRecommendations(mediaType, tmdbId, status, null, error.message).catch(() => {});
+    }
+  });
+
+  console.log('[worker] tmdb recommendations checked=' + candidates.length +
+    ' ok=' + counts.ok + ' empty=' + counts.empty +
+    ' not_found=' + counts.not_found + ' error=' + counts.error);
+}
+
+/**
  * Warm the image cache for the catalog surfaces users land on first.
  *
  * The payloads come from the same viewmodels the API serves, so the prewarmer
@@ -419,6 +455,11 @@ async function syncCycle() {
   const ratingChangedSlugs = [];
   if (!stopping) ratingChangedSlugs.push(...await refreshMdblistRatings());
   if (!stopping) await refreshTmdbLookups();
+  if (!stopping) {
+    await refreshTmdbRecommendations().catch((error) => {
+      console.warn('[worker] tmdb recommendations pass failed', error.message);
+    });
+  }
   if (!stopping) ratingChangedSlugs.push(...await refreshMdblistBackfill());
   if (ratingChangedSlugs.length) {
     await invalidateForSlugs([...new Set(ratingChangedSlugs)]).catch((error) => {

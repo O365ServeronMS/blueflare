@@ -242,7 +242,7 @@ means the Cache Rule is not active or the token used to create it lacks
 - GET /api/country?slug=trung-quoc&page=1
 - GET /api/search?keyword=ren%20yu&page=1
 - GET /api/movie/:canonicalSlug
-- GET /api/recommendation/:movieOrTv/:tmdbId
+- GET /api/recommendations/:canonicalSlug
 - GET /api/categories
 - GET /api/countries
 - GET /i/:variant/:sha256.webp?url=...&sig=...

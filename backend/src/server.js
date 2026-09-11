@@ -284,18 +284,15 @@ async function route(request, response) {
     return;
   }
 
-  const recommendationMatch = url.pathname.match(
-    /^\/api\/recommendation\/(movie|tv)\/(\d+)$/
-  );
+  const recommendationMatch = url.pathname.match(/^\/api\/recommendations\/([^/]+)$/);
   if (recommendationMatch) {
-    const mediaType = recommendationMatch[1];
-    const tmdbId = Number(recommendationMatch[2]);
+    const slug = decodeURIComponent(recommendationMatch[1]);
     await cachedJson(
       request,
       response,
-      'recommendation:' + mediaType + ':' + tmdbId,
-      () => buildRecommendations(mediaType, tmdbId),
-      900
+      'recommendations:' + slug,
+      () => buildRecommendations(slug),
+      3600
     );
     return;
   }

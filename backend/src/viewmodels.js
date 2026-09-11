@@ -7,7 +7,7 @@ import {
   findMovie,
   getHeroTrendingMovies,
   listCanonical,
-  recommendations,
+  recommendationsForSlug,
   taxonomy,
   taxonomyName
 } from './repository.js';
@@ -164,9 +164,9 @@ export async function buildMovie(slug) {
   };
 }
 
-export async function buildRecommendations(mediaType, tmdbId) {
+export async function buildRecommendations(slug) {
   return {
-    items: (await recommendations(mediaType, tmdbId, 16)).map(card)
+    items: (await recommendationsForSlug(slug)).map(card)
   };
 }
 

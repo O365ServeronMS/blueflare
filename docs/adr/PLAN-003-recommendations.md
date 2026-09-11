@@ -481,6 +481,17 @@ thật (lấy bằng `select canonical_slug, media_type, genres->0->>'slug' from
 thay tham số bằng giá trị cụ thể, thêm `EXPLAIN ANALYZE`. Kỳ vọng: ra ≥ 4 dòng,
 thời gian < 200 ms. Chậm hơn → DỪNG, báo plan.
 
+**Sửa đổi 2026-09-12 (Steve duyệt):** lần chạy đầu `genreFillRows` mất
+553–662 ms (tv/chinh-kich). Planner ước lượng điều kiện Play được còn 106 dòng
+`movie_provider_sources`, thực tế 62.710, nên hash toàn bảng rồi tra ngược 48.369
+lần thay vì đi `movies_ready_media_sort_idx` và dừng ở dòng 16. Vì vậy
+`genreFillRows` **không** dùng `playableSourceExists('movies')` mà viết điều
+kiện riêng có `OFFSET 0` trong `EXISTS` (chặn pull-up thành semi-join).
+`playableSourceExists` giữ nguyên vì hero trending dùng nó. Đo lại: tv/chinh-kich
+4,1 ms; movie/hanh-dong 43,6 → 0,6 ms; thể loại hiếm không đổi (~0,5 ms).
+Câu `rankedRecommendationRows` đo 114 ms trên production khi chưa có index của
+migration 015 — kiểm lại sau deploy (xem mục "Sau khi xong").
+
 ## Task 9. Viewmodel, route, observability
 
 `backend/src/viewmodels.js`:
@@ -641,7 +652,9 @@ Rail nằm cuối trang nên `fallback={null}` không gây xê dịch bố cục
    - log worker có dòng `tmdb recommendations checked=300 ok=… error=…`, `error` ≈ 0;
    - `select status, count(*) from tmdb_recommendations group by 1;` tăng dần;
    - `curl -s http://127.0.0.1:3200/api/recommendations/<slug> | jq '.items|length'`
-     ra 4–16 với một phim có `tmdb_id`.
+     ra 4–16 với một phim có `tmdb_id`;
+   - `EXPLAIN ANALYZE` câu `rankedRecommendationRows` với danh sách id thật từ
+     `tmdb_recommendations` phải < 200 ms (trước migration 015 đo được 114 ms).
 4. Sau khoảng 1 ngày, chạy lại truy vấn mốc ở đầu plan (30 phim ngẫu nhiên) và
    so với 12,4 / 13,3.
 

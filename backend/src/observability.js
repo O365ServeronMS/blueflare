@@ -6,7 +6,7 @@ function routeKey(pathname) {
   if (pathname.startsWith('/i/m/')) return '/i/m/*';
   if (pathname.startsWith('/i/d/')) return '/i/d/*';
   if (pathname.startsWith('/api/movie/')) return '/api/movie/:slug';
-  if (pathname.startsWith('/api/recommendation/')) return '/api/recommendation/:type/:id';
+  if (pathname.startsWith('/api/recommendations/')) return '/api/recommendations/:slug';
   if (pathname === '/api/health' || pathname === '/api/metrics' || pathname === '/healthz') return pathname;
   if (pathname.startsWith('/api/')) return '/api/*';
   return '/other';

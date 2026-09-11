@@ -9,6 +9,7 @@ import {
   normalizeTitle,
   slugify
 } from './identity.js';
+import { mergeRecommendationIds, recommendationSource, combineRecommendationRows, RECOMMENDATION_LIMIT } from './recommendations.js';
 
 async function ensureImageAsset(client, sourceUrl) {
   const normalized = normalizeAllowedImageSourceUrl(sourceUrl);
@@ -1041,27 +1042,94 @@ export async function findMovie(slug) {
   return { movie, sources: sources.rows };
 }
 
-export async function recommendations(mediaType, tmdbId, limit = 16) {
-  const target = await pool.query(
-    "SELECT * FROM movies WHERE catalog_state='ready' AND tmdb_id=$1 AND media_type=$2 LIMIT 1",
-    [tmdbId, mediaType]
+const imagePresent = (alias) =>
+  'COALESCE(' + alias + '.tmdb_thumb_asset_id, ' + alias + '.thumb_asset_id, ' + alias + '.poster_asset_id) IS NOT NULL';
+
+/**
+ * Catalog rows matching a ranked TMDB id list, one row per TMDB id (a series
+ * resolves to its latest season), in TMDB's order. Matches through the two
+ * guessed-id columns only on rows without a verified tmdb_id, the same
+ * precedence `recommendationSource` uses.
+ */
+async function rankedRecommendationRows(ids, mediaType, sourceMovieId) {
+  if (!ids.length) return [];
+  const result = await pool.query(
+    'WITH ranked(tmdb_id, position) AS (SELECT * FROM unnest($1::bigint[]) WITH ORDINALITY), ' +
+    'hits AS (' +
+    '  SELECT m.*, ranked.position FROM ranked JOIN movies m ON m.tmdb_id=ranked.tmdb_id AND m.tmdb_media_type=$2 ' +
+    '  UNION ALL ' +
+    '  SELECT m.*, ranked.position FROM ranked JOIN movies m ON m.tmdb_lookup_id=ranked.tmdb_id AND m.tmdb_id IS NULL AND m.media_type=$2 ' +
+    '  UNION ALL ' +
+    '  SELECT m.*, ranked.position FROM ranked JOIN movies m ON m.tmdb_image_fallback_id=ranked.tmdb_id AND m.tmdb_id IS NULL AND m.media_type=$2' +
+    '), ' +
+    'best AS (' +
+    '  SELECT DISTINCT ON (hits.position) hits.* FROM hits ' +
+    "  WHERE hits.catalog_state='ready' AND hits.canonical_slug<>'' AND hits.id<>$3 " +
+    '  AND ' + imagePresent('hits') + ' AND ' + playableSourceExists('hits') +
+    '  ORDER BY hits.position, hits.tmdb_season_number DESC NULLS LAST, hits.catalog_sort_at DESC NULLS LAST' +
+    ') ' +
+    'SELECT * FROM best ORDER BY position LIMIT $4',
+    [ids, mediaType, sourceMovieId, RECOMMENDATION_LIMIT]
   );
-  if (!target.rowCount) return [];
-  const movie = target.rows[0];
-  const genre = movie.genres?.[0]?.slug;
-  const values = [movie.id, mediaType];
+  return result.rows;
+}
+
+/** Newest playable titles sharing the source's first genre and media family. */
+async function genreFillRows(movie, excludeIds, limit) {
+  const values = [movie.media_type, excludeIds, limit];
   let genreFilter = '';
+  const genre = movie.genres?.[0]?.slug;
   if (genre) {
     values.push(genre);
-    genreFilter = " AND genres @> jsonb_build_array(jsonb_build_object('slug', $3::text))";
+    genreFilter = " AND genres @> jsonb_build_array(jsonb_build_object('slug', $4::text))";
   }
-  values.push(limit);
+  let seriesFilter = '';
+  if (movie.tmdb_id) {
+    values.push(movie.tmdb_id);
+    seriesFilter = ' AND tmdb_id IS DISTINCT FROM $' + values.length + '::bigint';
+  }
   const result = await pool.query(
-    "SELECT * FROM movies WHERE catalog_state='ready' AND id<>$1 AND media_type=$2" + genreFilter +
-    ' ORDER BY catalog_sort_at DESC NULLS LAST LIMIT $' + values.length,
+    "SELECT * FROM movies WHERE catalog_state='ready' AND canonical_slug<>'' AND media_type=$1 " +
+    'AND NOT (id = ANY($2::uuid[]))' + genreFilter + seriesFilter +
+    ' AND ' + imagePresent('movies') +
+    // OFFSET 0 stops the planner flattening this into a hash semi-join over all
+    // sources (it misestimates the stream predicate ~600x); per-row checks let
+    // the sort index stop at the limit. 553 ms -> 4 ms measured.
+    ' AND EXISTS (SELECT 1 FROM movie_provider_sources source ' +
+    'WHERE source.movie_id=movies.id AND source.availability=true ' +
+    "AND jsonb_typeof(source.streams)='array' AND jsonb_array_length(source.streams)>0 OFFSET 0)" +
+    ' ORDER BY catalog_sort_at DESC NULLS LAST LIMIT $3',
     values
   );
   return result.rows;
+}
+
+export async function recommendationsForSlug(slug) {
+  const target = await pool.query(
+    "SELECT * FROM movies WHERE catalog_state='ready' AND canonical_slug=$1 LIMIT 1",
+    [slug]
+  );
+  const movie = target.rows[0];
+  if (!movie) return [];
+
+  let ranked = [];
+  const source = recommendationSource(movie);
+  if (source) {
+    const stored = await pool.query(
+      'SELECT recommended_ids, similar_ids FROM tmdb_recommendations WHERE media_type=$1 AND tmdb_id=$2',
+      [source.mediaType, source.tmdbId]
+    );
+    const lists = stored.rows[0];
+    if (lists) {
+      const ids = mergeRecommendationIds(lists.recommended_ids, lists.similar_ids, source.tmdbId);
+      ranked = await rankedRecommendationRows(ids, source.mediaType, movie.id);
+    }
+  }
+
+  const fill = ranked.length >= RECOMMENDATION_LIMIT
+    ? []
+    : await genreFillRows(movie, [movie.id, ...ranked.map((row) => row.id)], RECOMMENDATION_LIMIT - ranked.length);
+  return combineRecommendationRows(ranked, fill);
 }
 
 export async function taxonomy(field) {

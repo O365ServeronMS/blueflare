@@ -488,6 +488,7 @@ async function invalidateForSlugs(changedSlugs) {
     for (let currentPage = 1; currentPage <= config.invalidatePageDepth; currentPage += 1) keys.push('list:' + type + ':' + currentPage);
   }
   for (const movieSlug of changedSlugs) keys.push('movie:' + movieSlug);
+  for (const movieSlug of changedSlugs) keys.push('recommendations:' + movieSlug);
   for (const movie of changedMovies) {
     for (const field of [movie.genres, movie.countries]) {
       for (const item of Array.isArray(field) ? field : []) {

@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { Suspense } from "react";
 import { ArrowLeft, Play } from "lucide-react";
+import { CastStrip } from "@/components/CastStrip";
 import { ExpandableSynopsis } from "@/components/ExpandableSynopsis";
 import { MovieActions } from "@/components/LocalMovieActions";
 import { MoviePlayer } from "@/components/MoviePlayer";
@@ -139,6 +140,7 @@ export default async function MoviePage({ params, searchParams }: { params: Para
             </div>
           </section>
         ) : null}
+        <CastStrip cast={movie.people?.cast || []} directors={movie.people?.directors || []} returnTo={returnTo} navSource={navSource} />
       </div>
 
       <Suspense fallback={null}>

@@ -42,9 +42,17 @@ export type EpisodeServer = {
   serverData: Episode[];
 };
 
+export type PersonCredit = {
+  name: string;
+  slug: string;
+  character?: string;
+  photo?: string;
+};
+
 export type MovieDetail = MovieCard & {
   actor?: string[];
   director?: string[];
+  people?: { cast: PersonCredit[]; directors: PersonCredit[] };
   episodeTotal?: string;
   categoryList?: { id?: string; name: string; slug: string }[];
   countryList?: { id?: string; name: string; slug: string }[];
@@ -61,6 +69,10 @@ export type ListPayload = {
   items: MovieCard[];
   page: number;
   totalPages?: number;
+};
+
+export type PersonPayload = ListPayload & {
+  person: { name: string; slug: string; photo?: string };
 };
 
 export type SourceLabel = {

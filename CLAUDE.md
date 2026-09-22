@@ -36,7 +36,7 @@ replica suffix. Service-to-service traffic still uses the stable service DNS nam
 
 Three loops run outside the request path. None of them may be moved into one.
 
-- **Provider sync** (`worker`, every `SYNC_INTERVAL_MS`): crawls NguonC/KKPhim head pages plus a checkpointed backfill, upserts canonical rows, enriches approved visible rows with MDBList Rotten Tomatoes critic/audience scores under a per-key daily budget, refreshes TMDB recommendation/similar id lists for the detail-page rail, then invalidates Valkey keys and Next render tags for exactly what changed.
+- **Provider sync** (`worker`, every `SYNC_INTERVAL_MS`): crawls NguonC/KKPhim head pages plus a checkpointed backfill, upserts canonical rows, enriches approved visible rows with MDBList Rotten Tomatoes critic/audience scores under a per-key daily budget, refreshes TMDB recommendation/similar id lists for the detail-page rail, refreshes TMDB cast/director credits for rows with a verified TMDB identity, then invalidates Valkey keys and Next render tags for exactly what changed.
 - **Image prewarm** (`worker`, end of every sync cycle): reads the same home/list viewmodels the API serves, extracts the asset URLs the next visitor will request, and asks the API to build any that are missing. It never writes the cache itself — it mounts `/data/images` **read-only** and only uses it to skip entries that already exist.
 - **Image cache sweep** (`api`, hourly): removes orphan `.tmp` files, and once the cache exceeds `IMAGE_CACHE_MAX_BYTES`, evicts least-recently-read entries back under target. Lives in `api` because **`api` is the only writer of `/data/images`** — keep it that way.
 
@@ -62,13 +62,13 @@ Codebase and runtime are separate directories (ADR-001): the repo lives at `/hom
 
 ## Source map
 
-- `src/app/`: App Router pages (`/`, `/list/[type]`, `/search`, `/movie/[slug]`, local libraries, `/healthz`, internal revalidation).
-- `components/`: shared React UI, navigation, cards, pagination, playback.
+- `src/app/`: App Router pages (`/`, `/list/[type]`, `/search`, `/movie/[slug]`, `/person/[slug]`, local libraries, `/healthz`, internal revalidation).
+- `components/`: shared React UI, navigation, cards, `CastStrip.tsx`, pagination, playback.
 - `lib/catalog.ts`: browser-safe catalog client; `lib/catalog-server.ts`: cached server API helpers.
 - `lib/navigation.ts`: returnTo/page URL contracts.
 - `lib/playback.ts`: device/source ordering; keep it centralized.
 - `src/styles/globals.css`: shared design tokens and Tailwind styles. Accent is red `#e4312a`.
-- `backend/src/`: `server.js` (API + sweep scheduler), `worker.js` (sync + rating enrichment + prewarm), `mdblist.js` + `mdblistRatingsSync.js` (batched Rotten Tomatoes scores), `images.js` + `imageStore.js` (cache origin), `prewarm.js`, `imageCacheSweep.js`, `concurrency.js`, `repository.js`, `recommendations.js`, `viewmodels.js`, `cache.js`.
+- `backend/src/`: `server.js` (API + sweep scheduler), `worker.js` (sync + rating enrichment + prewarm), `mdblist.js` + `mdblistRatingsSync.js` (batched Rotten Tomatoes scores), `images.js` + `imageStore.js` (cache origin), `prewarm.js`, `imageCacheSweep.js`, `concurrency.js`, `repository.js`, `recommendations.js`, `people.js` (cast/director slug + identity), `viewmodels.js`, `cache.js`.
 - `deploy/`: canonical `compose.yml`, Cloudflare rules, `backup/` (backup service image), and operational scripts (`sync-stack.sh`, `apply-env.sh`, `backup-postgres.sh`, `bootstrap-vps.sh`). The two Caddy site blocks live inline in `bootstrap-vps.sh`, not as separate files.
 
 ## Data, cache, and navigation invariants

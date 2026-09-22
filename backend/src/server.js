@@ -20,10 +20,12 @@ import {
   buildHome,
   buildList,
   buildMovie,
+  buildPerson,
   buildRecommendations,
   buildSearch,
   buildTaxonomy
 } from './viewmodels.js';
+import { normalizeCreditRole } from './people.js';
 
 function page(value) {
   const parsed = Number(value);
@@ -273,6 +275,30 @@ async function route(request, response) {
     observeCache(result.cacheStatus);
     if (!result.data) {
       json(response, request, 404, { error: 'Movie not found' }, {
+        'cache-control': 'public, max-age=30, stale-while-revalidate=60'
+      });
+      return;
+    }
+    json(response, request, 200, result.data, {
+      'cache-control': 'public, max-age=60, stale-while-revalidate=' + config.responseCacheStaleSeconds + ', stale-if-error=' + config.responseCacheStaleSeconds,
+      'x-blueflare-cache': result.cacheStatus
+    });
+    return;
+  }
+
+  const personMatch = url.pathname.match(/^\/api\/person\/([^/]+)$/);
+  if (personMatch) {
+    const slug = normalizeKeyPart(decodeURIComponent(personMatch[1]), 160);
+    const role = normalizeCreditRole(url.searchParams.get('role'));
+    const currentPage = page(url.searchParams.get('page'));
+    const result = await getOrBuild(
+      'person:' + slug + ':' + role + ':' + currentPage,
+      () => buildPerson(slug, currentPage, role),
+      { ttl: 3600 }
+    );
+    observeCache(result.cacheStatus);
+    if (!result.data) {
+      json(response, request, 404, { error: 'Person not found' }, {
         'cache-control': 'public, max-age=30, stale-while-revalidate=60'
       });
       return;

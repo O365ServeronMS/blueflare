@@ -4,13 +4,17 @@ function imageUrl(assetId, variant) {
   return assetId ? config.publicBaseUrl + '/i/' + variant + '/' + assetId + '.webp' : '';
 }
 import {
+  creditsForMovie,
   findMovie,
+  findPersonBySlug,
   getHeroTrendingMovies,
   listCanonical,
+  listPersonMovies,
   recommendationsForSlug,
   taxonomy,
   taxonomyName
 } from './repository.js';
+import { creditIdentity, normalizeCreditRole } from './people.js';
 
 function card(row) {
 function seasonTitle(row) {
@@ -56,6 +60,15 @@ function seasonTitle(row) {
     modified: {
       time: row.catalog_sort_at || row.provider_updated_at || row.updated_at
     }
+  };
+}
+
+function creditCard(row) {
+  return {
+    name: row.name,
+    slug: row.slug,
+    character: row.character_name || null,
+    photo: imageUrl(row.profile_asset_id, 'm')
   };
 }
 
@@ -141,6 +154,12 @@ export async function buildMovie(slug) {
   if (!result) return null;
   const { movie, sources } = result;
   const base = card(movie);
+  // Verified TMDB identities only, so most of the catalog has no rows here.
+  // `actor`/`director` below stay in the payload for exactly that reason.
+  const identity = creditIdentity(movie);
+  const credits = identity
+    ? await creditsForMovie(identity.mediaType, identity.tmdbId)
+    : [];
   return {
     status: true,
     movie: {
@@ -148,6 +167,10 @@ export async function buildMovie(slug) {
       content: movie.overview,
       actor: movie.actors || [],
       director: movie.directors || [],
+      people: {
+        cast: credits.filter((row) => row.role === 'cast').map(creditCard),
+        directors: credits.filter((row) => row.role === 'director').map(creditCard)
+      },
       episode_total: movie.episode_total,
       category: movie.genres || [],
       country: movie.countries || []
@@ -167,6 +190,36 @@ export async function buildMovie(slug) {
 export async function buildRecommendations(slug) {
   return {
     items: (await recommendationsForSlug(slug)).map(card)
+  };
+}
+
+/** Null means no such person; the route turns that into a 404. */
+export async function buildPerson(slug, page, role) {
+  const person = await findPersonBySlug(slug);
+  if (!person) return null;
+  const result = await listPersonMovies(person.id, {
+    role: normalizeCreditRole(role),
+    page
+  });
+  return {
+    status: 'success',
+    data: {
+      titlePage: person.name,
+      person: {
+        name: person.name,
+        slug: person.slug,
+        photo: imageUrl(person.profile_asset_id, 'm')
+      },
+      items: result.rows.map(card),
+      params: {
+        pagination: {
+          totalItems: result.totalItems,
+          totalItemsPerPage: result.limit,
+          currentPage: result.page,
+          totalPages: result.totalPages
+        }
+      }
+    }
   };
 }
 

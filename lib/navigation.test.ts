@@ -131,6 +131,14 @@ describe("hrefWithPage", () => {
   test("handles search string with ?", () => {
     expect(hrefWithPage("/list/phim-le", "?type=movie", 2)).toContain("page=2");
   });
+
+  test("builds a person page url with a page param", () => {
+    expect(hrefWithPage("/person/andy-lau-1337", "", 3)).toBe("/person/andy-lau-1337?page=3");
+  });
+
+  test("strips page=1 on a person page url", () => {
+    expect(hrefWithPage("/person/andy-lau-1337", "", 1)).toBe("/person/andy-lau-1337");
+  });
 });
 
 describe("validNavSourceKey", () => {
@@ -229,6 +237,11 @@ describe("createReturnToPath", () => {
   test("handles search with leading ?", () => {
     const result = createReturnToPath("/list/phim-le", "?page=2");
     expect(result).toBe("/list/phim-le?page=2");
+  });
+
+  test("creates a person page path with search", () => {
+    const result = createReturnToPath("/person/andy-lau-1337", "page=2");
+    expect(result).toBe("/person/andy-lau-1337?page=2");
   });
 });
 
@@ -395,6 +408,10 @@ describe("navSourceFromPath", () => {
     expect(navSourceFromPath("/search")).toBe("");
     expect(navSourceFromPath("/settings")).toBe("");
   });
+
+  test("returns empty for a person page: not one of the 5 nav sources", () => {
+    expect(navSourceFromPath("/person/andy-lau-1337")).toBe("");
+  });
 });
 
 describe("inferNavSourceFromMovie", () => {
@@ -466,6 +483,10 @@ describe("getActiveNavKey", () => {
       type: "single",
       episodes: [],
     })).toBe("phim-le");
+  });
+
+  test("resolves person child route from returnTo, same as a movie page", () => {
+    expect(getActiveNavKey("/person/andy-lau-1337", "returnTo=%2Flist%2Fphim-le")).toBe("phim-le");
   });
 
   test("returns empty for unrecognized path without context", () => {

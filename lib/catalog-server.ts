@@ -31,7 +31,8 @@ function toListPayload(payload: any, fallbackTitle: string, page: number): ListP
     title: data?.titlePage || fallbackTitle,
     items: items.map(normalizeCard).filter((movie) => movie.slug),
     page: Number(pagination?.currentPage || page),
-    totalPages: Number(pagination?.totalPages || pagination?.total_pages || computedTotalPages) || undefined
+    totalPages: Number(pagination?.totalPages || pagination?.total_pages || computedTotalPages) || undefined,
+    totalItems: totalItems || undefined
   };
 }
 

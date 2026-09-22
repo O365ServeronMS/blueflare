@@ -139,6 +139,13 @@ describe("hrefWithPage", () => {
   test("strips page=1 on a person page url", () => {
     expect(hrefWithPage("/person/andy-lau-1337", "", 1)).toBe("/person/andy-lau-1337");
   });
+
+  test("keeps returnTo while paging a person page", () => {
+    const result = hrefWithPage("/person/andy-lau-1337", "role=cast&returnTo=%2Flist%2Fphim-le", 2);
+    expect(result).toContain("returnTo=%2Flist%2Fphim-le");
+    expect(result).toContain("role=cast");
+    expect(result).toContain("page=2");
+  });
 });
 
 describe("validNavSourceKey", () => {

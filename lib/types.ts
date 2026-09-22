@@ -69,6 +69,7 @@ export type ListPayload = {
   items: MovieCard[];
   page: number;
   totalPages?: number;
+  totalItems?: number;
 };
 
 export type PersonPayload = ListPayload & {

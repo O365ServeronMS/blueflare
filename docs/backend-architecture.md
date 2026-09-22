@@ -37,6 +37,26 @@ provides normal DNS/proxy/CDN caching only; there is no frontend Worker.
   revalidation route invalidates only affected tags.
 - Search is request-specific and is not put in the public render cache.
 
+## API contract: people/credits
+
+`GET /api/movie/:slug` gains a `movie.people` field: `{ cast: [], directors: [] }`,
+each entry `{ name, slug, character, photo }`. It is populated only when the
+canonical row carries a **verified** TMDB identity (`tmdb_id` + `tmdb_media_type`,
+not the looser recommendation/image-fallback ids); most of the catalog has empty
+arrays here, and the existing plain-text `actor`/`director` fields stay populated
+either way.
+
+`GET /api/person/:slug` — paginated filmography for one TMDB person.
+- Query params: `page` (1-based, default 1), `role` (`cast` | `director` | `all`,
+  default `all`).
+- Envelope matches the list endpoints: `{ status: 'success', data: { titlePage,
+  person: { name, slug, photo }, items: [...card], params: { pagination: {
+  totalItems, totalItemsPerPage, currentPage, totalPages } } } }`.
+- 404 (not the list endpoints' empty-array shape) when the slug has no matching
+  person row.
+- Cache key is scoped to `slug:role:page` only — never `returnTo`, cookies, or
+  user agent — consistent with every other cached route.
+
 ## Deployment boundary
 
 Compose binds the frontend to `127.0.0.1:3100` and the API to `127.0.0.1:3200`;

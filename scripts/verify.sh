@@ -88,6 +88,11 @@ check_smoke() {
     echo "$p -> $code"
     [[ "$code" == 200 ]] || bad=1
   done
+  # /person/<slug> is data-dependent: before the first credits backfill there is
+  # no person to probe, so a 404 here is a pass and only a 5xx is a failure.
+  code=$(http_code "http://127.0.0.1:3100/person/khong-ton-tai-0")
+  echo "/person/khong-ton-tai-0 -> $code"
+  [[ "$code" -lt 500 ]] || bad=1
   return "$bad"
 }
 

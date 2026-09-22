@@ -10,6 +10,7 @@ import {
   slugify
 } from './identity.js';
 import { mergeRecommendationIds, recommendationSource, combineRecommendationRows, RECOMMENDATION_LIMIT } from './recommendations.js';
+import { personSlug } from './people.js';
 
 async function ensureImageAsset(client, sourceUrl) {
   const normalized = normalizeAllowedImageSourceUrl(sourceUrl);
@@ -557,6 +558,175 @@ export async function recordTmdbRecommendations(mediaType, tmdbId, status, lists
     'status=EXCLUDED.status, last_error=NULL, fetched_at=now()',
     [mediaType, tmdbId, lists?.recommended || [], lists?.similar || [], allowed]
   );
+}
+
+/**
+ * Verified TMDB identities whose credits are missing or due. Never-fetched
+ * identities go first, newest catalog rows first, so the pages visitors reach
+ * soonest get a cast strip soonest.
+ */
+export async function listTmdbCreditCandidates(limit = config.tmdbCreditsLimit) {
+  const result = await pool.query(
+    'WITH keys AS (' +
+    '  SELECT DISTINCT ON (m.tmdb_media_type, m.tmdb_id) m.tmdb_media_type AS media_type, ' +
+    '    m.tmdb_id, m.catalog_sort_at FROM movies m ' +
+    "  WHERE m.catalog_state='ready' AND m.tmdb_id IS NOT NULL " +
+    "    AND m.tmdb_media_type IN ('movie','tv') " +
+    '  ORDER BY m.tmdb_media_type, m.tmdb_id, m.catalog_sort_at DESC NULLS LAST' +
+    ') ' +
+    'SELECT keys.media_type, keys.tmdb_id FROM keys ' +
+    'LEFT JOIN tmdb_credits_sync s ON s.media_type=keys.media_type AND s.tmdb_id=keys.tmdb_id ' +
+    'WHERE s.tmdb_id IS NULL ' +
+    "  OR (s.status <> 'error' AND s.fetched_at < now() - ($1::bigint * interval '1 millisecond')) " +
+    "  OR (s.status = 'error' AND s.fetched_at < now() - ($2::bigint * interval '1 millisecond')) " +
+    'ORDER BY (s.tmdb_id IS NULL) DESC, keys.catalog_sort_at DESC NULLS LAST LIMIT $3',
+    [config.tmdbCreditsRefreshMs, config.tmdbCreditsRetryMs, Math.max(1, Math.floor(limit))]
+  );
+  return result.rows;
+}
+
+/**
+ * One fetch's cast and directors for one TMDB identity, replacing whatever was
+ * stored before. Delete-then-insert so a person TMDB drops from the list also
+ * disappears from movie_credits.
+ */
+export async function recordTmdbCredits(mediaType, tmdbId, payload) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const entries = [
+      ...(payload?.cast || []).map((entry) => ({ ...entry, role: 'cast' })),
+      ...(payload?.directors || []).map((entry) => ({ ...entry, role: 'director' }))
+    ];
+
+    const rows = [];
+    for (const entry of entries) {
+      const slug = personSlug(entry.name, entry.tmdbPersonId);
+      if (!slug) continue;
+      const assetId = await ensureImageAsset(client, entry.profileSourceUrl);
+      const person = await client.query(
+        'INSERT INTO people (tmdb_person_id, name, slug, profile_asset_id, profile_source_url, updated_at) ' +
+        'VALUES ($1,$2,$3,$4,$5,now()) ON CONFLICT (tmdb_person_id) DO UPDATE SET ' +
+        'name=EXCLUDED.name, ' +
+        // A person TMDB later drops a photo for keeps the one already cached.
+        'profile_asset_id=COALESCE(EXCLUDED.profile_asset_id, people.profile_asset_id), ' +
+        'profile_source_url=COALESCE(EXCLUDED.profile_source_url, people.profile_source_url), ' +
+        'updated_at=now() RETURNING id',
+        [entry.tmdbPersonId, entry.name, slug, assetId, entry.profileSourceUrl]
+      );
+      rows.push({
+        personId: person.rows[0].id,
+        role: entry.role,
+        characterName: entry.characterName || null,
+        order: entry.order || 0
+      });
+    }
+
+    await client.query('DELETE FROM movie_credits WHERE media_type=$1 AND tmdb_id=$2', [mediaType, tmdbId]);
+    for (const row of rows) {
+      await client.query(
+        'INSERT INTO movie_credits (media_type, tmdb_id, person_id, role, character_name, ord) ' +
+        'VALUES ($1,$2,$3,$4,$5,$6)',
+        [mediaType, tmdbId, row.personId, row.role, row.characterName, row.order]
+      );
+    }
+
+    const allowed = payload?.status === 'ok' ? 'ok' : 'empty';
+    await client.query(
+      'INSERT INTO tmdb_credits_sync (media_type, tmdb_id, status, last_error, fetched_at) ' +
+      "VALUES ($1,$2,$3,NULL,now()) ON CONFLICT (media_type, tmdb_id) DO UPDATE SET " +
+      'status=EXCLUDED.status, last_error=NULL, fetched_at=now()',
+      [mediaType, tmdbId, allowed]
+    );
+
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Record a failed fetch. movie_credits rows from the last successful fetch are
+ * left untouched, so a TMDB outage degrades the cast strip to stale rather than
+ * empty — same as recordTmdbRecommendations's error branch.
+ */
+export async function recordTmdbCreditsFailure(mediaType, tmdbId, status, message) {
+  const allowed = status === 'not_found' ? 'not_found' : 'error';
+  await pool.query(
+    'INSERT INTO tmdb_credits_sync (media_type, tmdb_id, status, last_error, fetched_at) ' +
+    "VALUES ($1,$2,$3,$4,now()) ON CONFLICT (media_type, tmdb_id) DO UPDATE SET " +
+    'status=EXCLUDED.status, last_error=EXCLUDED.last_error, fetched_at=now()',
+    [mediaType, tmdbId, allowed, String(message || 'unknown error').slice(0, 500)]
+  );
+}
+
+export async function findPersonBySlug(slug) {
+  const result = await pool.query('SELECT * FROM people WHERE slug=$1 LIMIT 1', [slug]);
+  return result.rows[0] || null;
+}
+
+export async function creditsForMovie(mediaType, tmdbId) {
+  const result = await pool.query(
+    'SELECT p.name, p.slug, p.profile_asset_id, c.role, c.character_name, c.ord ' +
+    'FROM movie_credits c JOIN people p ON p.id=c.person_id ' +
+    'WHERE c.media_type=$1 AND c.tmdb_id=$2 ' +
+    'ORDER BY c.role ASC, c.ord ASC',
+    [mediaType, tmdbId]
+  );
+  return result.rows;
+}
+
+/**
+ * Catalog rows credited to one person, one row per TMDB identity (a series
+ * resolves to its latest season) — the same DISTINCT ON shape
+ * rankedRecommendationRows uses, so a 6-season series doesn't repeat six times
+ * on the person page. imagePresent/playableSourceExists are declared later in
+ * this module but hoisted, same as elsewhere here.
+ */
+export async function listPersonMovies(personId, options = {}) {
+  const role = options.role === 'cast' || options.role === 'director' ? options.role : 'all';
+  const requestedPage = Math.max(1, Math.floor(Number(options.page) || 1));
+  const limit = Math.min(64, Math.max(1, Number(options.limit) || 24));
+
+  const values = [personId];
+  let roleFilter = '';
+  if (role !== 'all') {
+    values.push(role);
+    roleFilter = ' AND c.role=$2';
+  }
+
+  const hits =
+    'WITH hits AS (' +
+    '  SELECT DISTINCT ON (c.media_type, c.tmdb_id) m.* FROM movie_credits c ' +
+    '  JOIN movies m ON m.tmdb_id=c.tmdb_id AND m.tmdb_media_type=c.media_type ' +
+    '  WHERE c.person_id=$1' + roleFilter +
+    "    AND m.catalog_state='ready' AND m.canonical_slug<>'' " +
+    '    AND ' + imagePresent('m') + ' AND ' + playableSourceExists('m') +
+    '  ORDER BY c.media_type, c.tmdb_id, m.tmdb_season_number DESC NULLS LAST, ' +
+    '    m.catalog_sort_at DESC NULLS LAST' +
+    ') ';
+
+  const count = await pool.query(hits + 'SELECT count(*)::integer AS count FROM hits', values);
+  const totalItems = count.rows[0]?.count || 0;
+  const totalPages = Math.max(1, Math.ceil(totalItems / limit));
+  const page = Math.min(requestedPage, totalPages);
+
+  const pageValues = [...values, limit, (page - 1) * limit];
+  const rows = await pool.query(
+    hits + 'SELECT * FROM hits ORDER BY catalog_sort_at DESC NULLS LAST, year DESC NULLS LAST, canonical_slug ASC ' +
+    'LIMIT $' + (values.length + 1) + ' OFFSET $' + (values.length + 2),
+    pageValues
+  );
+  return {
+    rows: rows.rows,
+    page,
+    limit,
+    totalItems,
+    totalPages
+  };
 }
 
 export async function recordTmdbImageFallback(movieId, match) {

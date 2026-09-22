@@ -18,6 +18,7 @@ archive documents.
 - `src/app/list/[type]/page.tsx`: paginated list route with country/category filters.
 - `src/app/search/page.tsx`: no-store search route with pagination.
 - `src/app/movie/[slug]/page.tsx`: server-rendered detail/player shell and episode state.
+- `src/app/person/[slug]/page.tsx`: paginated filmography for a verified TMDB cast/director identity.
 - `src/app/favorites/page.tsx`, `history/page.tsx`: browser-local libraries.
 - `src/app/settings/page.tsx`, `not-found.tsx`, `error.tsx`: information/recovery screens.
 - `src/app/healthz/route.ts`: container health probe.
@@ -25,7 +26,7 @@ archive documents.
 
 ## Frontend components and libraries
 
-- `components/`: GlobalNav, HeroSlider, SectionRow, MovieCard, Pagination,
+- `components/`: GlobalNav, HeroSlider, SectionRow, MovieCard, CastStrip, Pagination,
   MoviePlayer, HlsVideo, IframePlayerFacade, local actions/grids, and shared UI.
 - `lib/catalog.ts`: browser-safe catalog client.
 - `lib/catalog-server.ts`: cached server API helpers and cache tags.
@@ -47,6 +48,7 @@ trong git; thư mục stack giữ bản copy, đồng bộ bằng `deploy/sync-s
 - `deploy/backup/`: image + script của service backup (dump, verify, upload S3-compatible, prune).
 - `backend/src/`: provider sync, canonical merge, ViewModels, cache, image cache origin.
   Job nền: `prewarm.js` (worker làm ấm cache ảnh), `imageCacheSweep.js` (API dọn/evict cache).
+  `people.js`: slug/identity thuần cho metadata cast/director lấy từ TMDB.
 - `deploy/bootstrap-vps.sh`: dựng VPS trắng; hai site block Caddy (`phim` → 3100,
   `img` → 3200) nằm inline trong script, không còn file `.caddy` riêng.
 - `deploy/cloudflare-frontend-static-rule.json`: optional normal Cloudflare cache rule for immutable `/_next/static/` assets.

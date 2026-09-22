@@ -2,7 +2,7 @@ import { cacheLife, cacheTag } from "next/cache";
 import { normalizedEpisodeName, normalizedEpisodeSlug } from "@/lib/episodes";
 import { normalizeCard } from "@/lib/catalog";
 import { normalizePage } from "@/lib/navigation";
-import type { EpisodeServer, HomePayload, ListPayload, MovieCard, MovieDetail } from "@/lib/types";
+import type { EpisodeServer, HomePayload, ListPayload, MovieCard, MovieDetail, PersonCredit, PersonPayload } from "@/lib/types";
 
 const INTERNAL_CATALOG_BASE = (process.env.INTERNAL_CATALOG_URL || process.env.CATALOG_BASE_URL || "https://img.bluesia.net").replace(/\/$/, "");
 
@@ -45,6 +45,18 @@ function detailLabels(value: unknown) {
   return value
     .filter((label) => label && label.name && label.slug)
     .map((label) => ({ id: label.id || label._id || undefined, name: label.name, slug: label.slug }));
+}
+
+function creditList(value: unknown): PersonCredit[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((entry) => entry && entry.name && entry.slug)
+    .map((entry) => ({
+      name: String(entry.name),
+      slug: String(entry.slug),
+      character: entry.character || undefined,
+      photo: entry.photo || undefined
+    }));
 }
 
 export async function getHomeServer(): Promise<HomePayload> {
@@ -123,6 +135,10 @@ export async function getMovieServer(slug: string): Promise<MovieDetail> {
     content: movieRaw?.content || movieRaw?.description || undefined,
     actor: Array.isArray(movieRaw?.actor) ? movieRaw.actor.filter(Boolean) : [],
     director: Array.isArray(movieRaw?.director) ? movieRaw.director.filter(Boolean) : [],
+    people: {
+      cast: creditList(movieRaw?.people?.cast),
+      directors: creditList(movieRaw?.people?.directors)
+    },
     episodeTotal: movieRaw?.episode_total || movieRaw?.episodeTotal || undefined,
     categoryList: detailLabels(movieRaw?.category),
     countryList: detailLabels(movieRaw?.country),
@@ -139,4 +155,26 @@ export async function getRecommendationsServer(slug: string): Promise<MovieCard[
   const payload = await fetchCatalog<any>(`/api/recommendations/${encodeURIComponent(safeSlug)}`);
   const items = Array.isArray(payload?.items) ? payload.items : [];
   return items.map(normalizeCard).filter((movie: MovieCard) => movie.slug);
+}
+
+export async function getPersonServer(slug: string, page = 1, role = "all"): Promise<PersonPayload> {
+  "use cache";
+  const safeSlug = String(slug || "").trim();
+  const safePage = normalizePage(page);
+  const safeRole = role === "cast" || role === "director" ? role : "all";
+  cacheLife({ stale: 900, revalidate: 3600, expire: 86400 });
+  cacheTag(`person:${safeSlug}`, `page:${safePage}`);
+  const payload = await fetchCatalog<any>(
+    `/api/person/${encodeURIComponent(safeSlug)}?page=${safePage}&role=${safeRole}`
+  );
+  const list = toListPayload(payload, "Người", safePage);
+  const person = payload?.data?.person || {};
+  return {
+    ...list,
+    person: {
+      name: String(person?.name || list.title || ""),
+      slug: String(person?.slug || safeSlug),
+      photo: person?.photo || undefined
+    }
+  };
 }

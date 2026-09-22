@@ -292,3 +292,57 @@ export async function fetchTmdbRecommendations(identity, options = {}) {
   const similar = resultIds(await fetchTmdb(base + '/similar?page=1', options));
   return { recommended, similar };
 }
+
+function creditPerson(entry, imageBaseUrl) {
+  const tmdbPersonId = validMovieId(entry?.id);
+  const name = String(entry?.name || '').trim();
+  if (!tmdbPersonId || !name) return null;
+  return {
+    tmdbPersonId,
+    name,
+    profileSourceUrl: imageSource(entry?.profile_path, 'w500', imageBaseUrl)
+  };
+}
+
+/**
+ * Billed cast and directors for one TMDB identity.
+ *
+ * Read at series level for tv, never per season: the credits table is keyed by
+ * the TMDB identity like tmdb_recommendations, so one fetch serves every season
+ * row sharing it. A 404 propagates with `error.status === 404` so the caller
+ * records the identity as not found instead of retrying it forever.
+ */
+export async function fetchTmdbCredits(identity, options = {}) {
+  const tmdbId = validMovieId(identity?.tmdbId);
+  const mediaType = validMediaType(identity?.mediaType);
+  if (!tmdbId || !mediaType) throw new Error('TMDB identity is incomplete');
+  const castLimit = Math.max(1, Math.floor(options.castLimit ?? config.tmdbCreditsCastLimit));
+  const body = await fetchTmdb('/' + mediaType + '/' + tmdbId + '/credits', options);
+
+  const cast = [];
+  const seenCast = new Set();
+  for (const entry of Array.isArray(body?.cast) ? body.cast : []) {
+    const person = creditPerson(entry, options.imageBaseUrl);
+    // One actor can be billed twice for two characters; the first billing wins.
+    if (!person || seenCast.has(person.tmdbPersonId)) continue;
+    seenCast.add(person.tmdbPersonId);
+    cast.push({
+      ...person,
+      characterName: String(entry?.character || '').trim() || null,
+      order: Number.isInteger(entry?.order) ? entry.order : cast.length
+    });
+    if (cast.length >= castLimit) break;
+  }
+
+  const directors = [];
+  const seenDirector = new Set();
+  for (const entry of Array.isArray(body?.crew) ? body.crew : []) {
+    if (entry?.job !== 'Director') continue;
+    const person = creditPerson(entry, options.imageBaseUrl);
+    if (!person || seenDirector.has(person.tmdbPersonId)) continue;
+    seenDirector.add(person.tmdbPersonId);
+    directors.push({ ...person, order: directors.length });
+  }
+
+  return { cast, directors };
+}

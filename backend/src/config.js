@@ -70,6 +70,15 @@ export const config = Object.freeze({
   tmdbRecommendationsRefreshMs: integer('TMDB_RECOMMENDATIONS_REFRESH_MS', 14 * 24 * 60 * 60 * 1000, 60 * 60 * 1000),
   tmdbRecommendationsRetryMs: integer('TMDB_RECOMMENDATIONS_RETRY_MS', 6 * 60 * 60 * 1000, 60 * 1000),
 
+  // TMDB cast/director credits, keyed by TMDB identity. Verified ids only:
+  // a wrong guess here prints the wrong actor on a movie page.
+  tmdbCreditsEnabled: boolean('TMDB_CREDITS_ENABLED', true),
+  tmdbCreditsLimit: integer('TMDB_CREDITS_LIMIT', 300, 1),
+  tmdbCreditsConcurrency: integer('TMDB_CREDITS_CONCURRENCY', 3, 1),
+  tmdbCreditsCastLimit: integer('TMDB_CREDITS_CAST_LIMIT', 12, 1),
+  tmdbCreditsRefreshMs: integer('TMDB_CREDITS_REFRESH_MS', 90 * 24 * 60 * 60 * 1000, 60 * 60 * 1000),
+  tmdbCreditsRetryMs: integer('TMDB_CREDITS_RETRY_MS', 6 * 60 * 60 * 1000, 60 * 1000),
+
   // MDBList supplies both Rotten Tomatoes critic and audience percentages shown
   // on cards. Gated by the key list being non-empty, like TMDB above.
   mdblistEnabled: boolean('MDBLIST_ENABLED', false),

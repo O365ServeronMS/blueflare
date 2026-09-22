@@ -170,7 +170,9 @@ export function navSourceFromPath(pathname: string) {
 
 function isChildRoute(pathname: string) {
   const path = normalizeNavPath(pathname);
-  return path.startsWith("/movie/");
+  // /person/... is reached from a movie page and keeps that page's returnTo,
+  // so the nav highlight has to follow the same rule.
+  return path.startsWith("/movie/") || path.startsWith("/person/");
 }
 
 function normalizedLabels(movie?: Partial<MovieDetail> | null) {

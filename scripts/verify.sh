@@ -82,7 +82,7 @@ check_shell() {
 }
 
 check_smoke() {
-  local p code bad=0
+  local p code bad=0 slug person
   for p in /healthz "/list/phim-le?page=2" "/list/phim-le?page=3"; do
     code=$(http_code "http://127.0.0.1:3100$p")
     echo "$p -> $code"
@@ -93,6 +93,31 @@ check_smoke() {
   code=$(http_code "http://127.0.0.1:3100/person/khong-ton-tai-0")
   echo "/person/khong-ton-tai-0 -> $code"
   [[ "$code" -lt 500 ]] || bad=1
+  # The detail page is the only route reading movie_credits, and it turns an API
+  # failure into notFound() — so a broken credits query surfaces as 404 here, not
+  # 5xx. The slug comes from the live catalog so the probe cannot rot.
+  slug=$(curl -s --max-time 10 "http://127.0.0.1:3200/api/list?type=phim-le&page=1" | jq -r '.data.items[0].slug // empty')
+  if [[ -z "$slug" ]]; then
+    echo "/api/list returned no phim-le slug to probe"
+    bad=1
+  else
+    code=$(http_code "http://127.0.0.1:3200/api/movie/$slug")
+    echo "/api/movie/$slug -> $code"
+    [[ "$code" == 200 ]] || bad=1
+    code=$(http_code "http://127.0.0.1:3100/movie/$slug")
+    echo "/movie/$slug -> $code"
+    [[ "$code" == 200 ]] || bad=1
+    # Only a real person slug reaches listPersonMovies; an invented one 404s at
+    # the lookup. Absent until the worker's first credits pass has run.
+    person=$(curl -s --max-time 10 "http://127.0.0.1:3200/api/movie/$slug" | jq -r '.movie.people.cast[0].slug // empty')
+    if [[ -n "$person" ]]; then
+      code=$(http_code "http://127.0.0.1:3100/person/$person")
+      echo "/person/$person -> $code"
+      [[ "$code" == 200 ]] || bad=1
+    else
+      echo "/person/<real> skipped: $slug has no credits yet"
+    fi
+  fi
   return "$bad"
 }
 

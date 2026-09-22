@@ -61,7 +61,7 @@ wait_healthy() {
 # smoke — the probes from scripts/verify.sh plus the API and the public origin.
 # Retries because a freshly started Next server renders its first list cold.
 smoke() {
-  local attempt p code bad
+  local attempt p code bad slug person
   for attempt in 1 2 3; do
     bad=0
     for p in /healthz "/list/phim-le?page=2" "/list/phim-le?page=3"; do
@@ -72,6 +72,27 @@ smoke() {
     log "  unauthenticated POST revalidate -> $code (want 401/403/404)"
     code=$(http_code http://127.0.0.1:3200/api/health); [[ $code == 200 ]] || bad=1
     log "  :3200/api/health -> $code"
+    # The detail page is the only route reading movie_credits, and it turns an API
+    # failure into notFound() — so a broken credits query surfaces as 404 here, not
+    # 5xx. The slug comes from the live catalog so the probe cannot rot.
+    slug=$(curl -s --max-time 15 "http://127.0.0.1:3200/api/list?type=phim-le&page=1" | jq -r '.data.items[0].slug // empty' || true)
+    if [[ -z $slug ]]; then
+      log "  :3200/api/list returned no phim-le slug to probe"; bad=1
+    else
+      code=$(http_code "http://127.0.0.1:3200/api/movie/$slug"); [[ $code == 200 ]] || bad=1
+      log "  :3200/api/movie/$slug -> $code"
+      code=$(http_code "http://127.0.0.1:3100/movie/$slug"); [[ $code == 200 ]] || bad=1
+      log "  :3100/movie/$slug -> $code"
+      # Only a real person slug reaches listPersonMovies; an invented one 404s at the
+      # lookup. Absent until the worker's first credits pass has run.
+      person=$(curl -s --max-time 15 "http://127.0.0.1:3200/api/movie/$slug" | jq -r '.movie.people.cast[0].slug // empty' || true)
+      if [[ -n $person ]]; then
+        code=$(http_code "http://127.0.0.1:3100/person/$person"); [[ $code == 200 ]] || bad=1
+        log "  :3100/person/$person -> $code"
+      else
+        log "  :3100/person skipped: $slug has no credits yet"
+      fi
+    fi
     code=$(http_code https://phim.bluesia.net/); [[ $code == 200 ]] || bad=1
     log "  https://phim.bluesia.net/ -> $code"
     (( bad == 0 )) && return 0

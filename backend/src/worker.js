@@ -42,7 +42,9 @@ import {
   getMovieInvalidationDimensions,
   getMdblistBackfillCursor,
   saveMdblistBackfillCursor,
-  listStoredSourceStates
+  listStoredSourceStates,
+  healImageSourcesFromItems,
+  healImageSourcesFromAlternate
 } from './repository.js';
 import { formatPrewarmStats, prewarmImages } from './prewarm.js';
 import { backfillMdblistRatings, formatMdblistStats, syncMdblistRatings } from './mdblistRatingsSync.js';
@@ -287,6 +289,60 @@ async function refreshHeroTrendingIfDue() {
   }
 }
 
+/**
+ * One-off repair for artwork whose provider CDN moved: walk the NguonC list
+ * pages (they already carry the live image URLs, so no detail fetches) and
+ * replace only broken image URLs. Position lives in crawl_checkpoints lane
+ * 'image-heal'; delete that row to run it again. Once the walk is complete,
+ * rows still broken borrow the image another provider source stored.
+ */
+async function healImageSources() {
+  if (!config.imageHealEnabled || stopping) return [];
+  const provider = providers.find((candidate) => candidate.name === 'nguonc');
+  if (!provider) return [];
+
+  const changed = [];
+  let checkpoint = await getCrawlCheckpoint(provider.name, 'image-heal', 1);
+  let pages = 0;
+  if (!checkpoint.completed_at) {
+    let page = checkpoint.next_page;
+    try {
+      while (pages < config.imageHealPagesPerRun && !stopping) {
+        const list = await provider.list('phim-moi-cap-nhat', page);
+        const items = provider.listItems(list.data);
+        changed.push(...await healImageSourcesFromItems(provider.name, items));
+        pages += 1;
+        const total = totalPages(list.data);
+        const completed = !items.length || Boolean(total && page >= total);
+        page += 1;
+        await saveCrawlCheckpoint(provider.name, 'image-heal', {
+          nextPage: page,
+          totalPages: total,
+          completed
+        });
+        if (completed) {
+          checkpoint = { completed_at: new Date() };
+          break;
+        }
+      }
+    } catch (error) {
+      await recordCrawlCheckpointFailure(provider.name, 'image-heal', error).catch(() => {});
+      console.warn('[worker] image heal page ' + page + ' failed', error.message);
+    }
+  }
+
+  let alternate = 0;
+  if (checkpoint.completed_at && !stopping) {
+    const healed = await healImageSourcesFromAlternate();
+    alternate = healed.length;
+    changed.push(...healed);
+  }
+  if (pages || alternate) {
+    console.log('[worker] image heal pages=' + pages + ' changed=' + changed.length + ' fromAlternate=' + alternate);
+  }
+  return [...new Set(changed)];
+}
+
 async function refreshTmdbImages() {
   if (!config.tmdbEnabled || !config.tmdbImageSyncEnabled || !config.tmdbApiKey) return [];
   const candidates = await listTmdbImageCandidates();
@@ -497,6 +553,10 @@ async function syncCycle() {
     backfillResults = await runBackfillPass();
   }
 
+  const healedImageSlugs = await healImageSources().catch((error) => {
+    console.warn('[worker] image heal pass failed', error.message);
+    return [];
+  });
   const tmdbImageSlugs = await refreshTmdbImages();
   const tmdbFallbackSlugs = await refreshTmdbImageFallbacks().catch((error) => {
     console.warn('[worker] tmdb image fallback pass failed', error.message);
@@ -505,6 +565,7 @@ async function syncCycle() {
   const changedSlugs = [...new Set([
     ...headResults.flatMap((result) => result.changedSlugs),
     ...backfillResults.flatMap((result) => result.changedSlugs),
+    ...healedImageSlugs,
     ...tmdbImageSlugs,
     ...tmdbFallbackSlugs
   ])];

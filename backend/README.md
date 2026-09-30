@@ -69,7 +69,17 @@ A list item whose `modified` time equals the stored `provider_updated_at` (and
 whose stored source already has streams) is skipped without a detail fetch; the
 head log reports it as `skippedUnchanged`. When a detail fetch fails, an existing
 source with streams is left untouched instead of being overwritten by the
-list-item summary.
+list-item summary. A stored source whose movie has no usable thumb (empty, or on a
+host in `IMAGE_DEAD_HOSTS`) is never skipped.
+
+Image heal: NguonC moved its CDN from `phim.nguonc.com` (now 404) to
+`img.nguonc.com`, and providers keep retaining the old URL when a fresh one is
+empty. Each cycle, `healImageSources` walks NguonC list pages (checkpoint lane
+`image-heal`, `IMAGE_HEAL_PAGES_PER_RUN` pages per cycle) and replaces thumb/poster
+source URLs that are empty or on a dead host with the list item's current ones.
+Once that walk completes it runs one pass copying another provider's stored image
+(e.g. KKPhim) into movies that still have none. Set `IMAGE_HEAL_ENABLED=false` to
+turn it off; delete the `crawl_checkpoints` row (nguonc / `image-heal`) to re-run.
 
 Catalog lists only expose `catalog_state=ready` rows. Their order is
 `catalog_sort_at` (the provider's update timestamp), then year and slug; an old

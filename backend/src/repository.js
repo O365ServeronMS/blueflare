@@ -1,4 +1,5 @@
 import { pool } from './db.js';
+import { planImageHeal } from './imageHeal.js';
 import { config } from './config.js';
 import {
   normalizeAllowedImageSourceUrl,
@@ -428,13 +429,90 @@ export async function upsertCanonical(incoming) {
 
   }
 }
+async function applyHealedImages(movieId, plan) {
+  const thumbAssetId = plan.thumb ? await ensureImageAsset(pool, plan.thumb) : null;
+  const posterAssetId = plan.poster ? await ensureImageAsset(pool, plan.poster) : null;
+  await pool.query(
+    'UPDATE movies SET thumb_source_url=COALESCE($2, thumb_source_url), ' +
+    'thumb_asset_id=COALESCE($3, thumb_asset_id), ' +
+    'poster_source_url=COALESCE($4, poster_source_url), ' +
+    'poster_asset_id=COALESCE($5, poster_asset_id), updated_at=now() WHERE id=$1',
+    [movieId, plan.thumb, thumbAssetId, plan.poster, posterAssetId]
+  );
+}
+
+// Thay ảnh hỏng bằng URL ảnh mà chính provider đang phát ở trang danh sách.
+export async function healImageSourcesFromItems(provider, items) {
+  const wanted = new Map();
+  for (const item of items) {
+    const candidate = {
+      thumb: normalizeAllowedImageSourceUrl(item.thumb_url),
+      poster: normalizeAllowedImageSourceUrl(item.poster_url)
+    };
+    if (item.slug && (candidate.thumb || candidate.poster)) wanted.set(item.slug, candidate);
+  }
+  if (!wanted.size) return [];
+  const rows = await pool.query(
+    'SELECT m.id, m.canonical_slug, m.thumb_source_url, m.poster_source_url, s.provider_slug ' +
+    'FROM movie_provider_sources s JOIN movies m ON m.id = s.movie_id ' +
+    'WHERE s.provider=$1 AND s.provider_slug = ANY($2::text[])',
+    [provider, [...wanted.keys()]]
+  );
+  const changed = [];
+  for (const row of rows.rows) {
+    const plan = planImageHeal(row, wanted.get(row.provider_slug), config.imageDeadHosts);
+    if (!plan) continue;
+    await applyHealedImages(row.id, plan);
+    changed.push(row.canonical_slug);
+  }
+  return changed;
+}
+
+// Dự phòng: dùng ảnh đã lưu trong metadata của nguồn khác cho phim còn ảnh hỏng.
+export async function healImageSourcesFromAlternate(batchSize = 1000) {
+  const changed = [];
+  let cursor = '00000000-0000-0000-0000-000000000000';
+  for (;;) {
+    const rows = await pool.query(
+      'SELECT DISTINCT ON (m.id) m.id, m.canonical_slug, m.thumb_source_url, m.poster_source_url, ' +
+      "s.metadata->>'thumb_source_url' AS alt_thumb, s.metadata->>'poster_source_url' AS alt_poster " +
+      'FROM movies m JOIN movie_provider_sources s ON s.movie_id = m.id AND s.availability ' +
+      "WHERE m.catalog_state='ready' AND m.id > $2 " +
+      "AND (m.thumb_source_url IS NULL OR m.thumb_source_url = '' " +
+      "OR split_part(split_part(m.thumb_source_url,'//',2),'/',1) = ANY($1::text[])) " +
+      "AND s.metadata->>'thumb_source_url' LIKE 'https://%' " +
+      "AND split_part(split_part(s.metadata->>'thumb_source_url','//',2),'/',1) <> ALL($1::text[]) " +
+      'ORDER BY m.id, s.priority DESC LIMIT $3',
+      [config.imageDeadHosts, cursor, batchSize]
+    );
+    if (!rows.rows.length) break;
+    for (const row of rows.rows) {
+      const plan = planImageHeal(row, {
+        thumb: normalizeAllowedImageSourceUrl(row.alt_thumb),
+        poster: normalizeAllowedImageSourceUrl(row.alt_poster)
+      }, config.imageDeadHosts);
+      if (!plan) continue;
+      await applyHealedImages(row.id, plan);
+      changed.push(row.canonical_slug);
+    }
+    cursor = rows.rows[rows.rows.length - 1].id;
+  }
+  return changed;
+}
+
 export async function listStoredSourceStates(provider, slugs) {
   if (!slugs.length) return [];
+  // Phim có ảnh hỏng không được coi là "không đổi": phải đi qua upsert đầy đủ để lấy lại URL ảnh.
   const result = await pool.query(
-    'SELECT provider_slug, provider_updated_at, streams FROM movie_provider_sources ' +
-    "WHERE provider=$1 AND provider_slug = ANY($2::text[]) AND availability " +
-    "AND jsonb_array_length(streams) > 0",
-    [provider, slugs]
+    'SELECT s.provider_slug, s.provider_updated_at, s.streams FROM movie_provider_sources s ' +
+    'JOIN movies m ON m.id = s.movie_id ' +
+    'WHERE s.provider=$1 AND s.provider_slug = ANY($2::text[]) AND s.availability ' +
+    'AND jsonb_array_length(s.streams) > 0 ' +
+    "AND m.thumb_source_url IS NOT NULL AND m.thumb_source_url <> '' " +
+    "AND split_part(split_part(m.thumb_source_url,'//',2),'/',1) <> ALL($3::text[]) " +
+    "AND (m.poster_source_url IS NULL OR m.poster_source_url = '' " +
+    "OR split_part(split_part(m.poster_source_url,'//',2),'/',1) <> ALL($3::text[]))",
+    [provider, slugs, config.imageDeadHosts]
   );
   return result.rows;
 }

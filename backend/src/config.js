@@ -115,7 +115,11 @@ export const config = Object.freeze({
   redisUrl: process.env.REDIS_URL || 'redis://valkey:6379',
   imageSigningSecret,
   imageCacheDir: process.env.IMAGE_CACHE_DIR || '/data/images',
-  imageAllowedHosts: csv('IMAGE_ALLOWED_HOSTS', 'phim.nguonc.com,phimimg.com,phimapi.com,image.tmdb.org'),
+  imageAllowedHosts: csv('IMAGE_ALLOWED_HOSTS', 'phim.nguonc.com,img.nguonc.com,phimimg.com,phimapi.com,image.tmdb.org'),
+  // Host ảnh gốc đã ngừng phục vụ: URL trỏ vào đây coi như mất, được thay khi có nguồn khác.
+  imageDeadHosts: csv('IMAGE_DEAD_HOSTS', 'phim.nguonc.com'),
+  imageHealEnabled: boolean('IMAGE_HEAL_ENABLED', true),
+  imageHealPagesPerRun: integer('IMAGE_HEAL_PAGES_PER_RUN', 300, 1),
   // Image prewarming: the worker asks the API to build the cache entries the
   // home/list viewmodels are about to serve, so the first visitor after a sync
   // does not pay the upstream fetch + sharp transcode. Reached over the Docker

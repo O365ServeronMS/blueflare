@@ -219,6 +219,10 @@ inject_caddy_block "img.bluesia.net" <<'CADDY'
 img.bluesia.net {
 	encode zstd gzip
 
+	# Tài khoản chỉ đi qua proxy Next của phim.bluesia.net (cookie, Origin, IP thật).
+	@account path /api/auth/* /api/me /api/me/*
+	respond @account 404
+
 	reverse_proxy 127.0.0.1:3200
 }
 CADDY

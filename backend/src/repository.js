@@ -1,5 +1,6 @@
 import { pool } from './db.js';
 import { planImageHeal } from './imageHeal.js';
+import { deadImageHosts } from './imageHostRegistry.js';
 import { config } from './config.js';
 import {
   normalizeAllowedImageSourceUrl,
@@ -460,7 +461,7 @@ export async function healImageSourcesFromItems(provider, items) {
   );
   const changed = [];
   for (const row of rows.rows) {
-    const plan = planImageHeal(row, wanted.get(row.provider_slug), config.imageDeadHosts);
+    const plan = planImageHeal(row, wanted.get(row.provider_slug), deadImageHosts());
     if (!plan) continue;
     await applyHealedImages(row.id, plan);
     changed.push(row.canonical_slug);
@@ -483,14 +484,14 @@ export async function healImageSourcesFromAlternate(batchSize = 1000) {
       "AND s.metadata->>'thumb_source_url' LIKE 'https://%' " +
       "AND split_part(split_part(s.metadata->>'thumb_source_url','//',2),'/',1) <> ALL($1::text[]) " +
       'ORDER BY m.id, s.priority DESC LIMIT $3',
-      [config.imageDeadHosts, cursor, batchSize]
+      [deadImageHosts(), cursor, batchSize]
     );
     if (!rows.rows.length) break;
     for (const row of rows.rows) {
       const plan = planImageHeal(row, {
         thumb: normalizeAllowedImageSourceUrl(row.alt_thumb),
         poster: normalizeAllowedImageSourceUrl(row.alt_poster)
-      }, config.imageDeadHosts);
+      }, deadImageHosts());
       if (!plan) continue;
       await applyHealedImages(row.id, plan);
       changed.push(row.canonical_slug);
@@ -512,7 +513,7 @@ export async function listStoredSourceStates(provider, slugs) {
     "AND split_part(split_part(m.thumb_source_url,'//',2),'/',1) <> ALL($3::text[]) " +
     "AND (m.poster_source_url IS NULL OR m.poster_source_url = '' " +
     "OR split_part(split_part(m.poster_source_url,'//',2),'/',1) <> ALL($3::text[]))",
-    [provider, slugs, config.imageDeadHosts]
+    [provider, slugs, deadImageHosts()]
   );
   return result.rows;
 }
@@ -1435,4 +1436,73 @@ export async function providerHealth() {
     'SELECT * FROM provider_health ORDER BY provider'
   );
   return result.rows;
+}
+
+export async function loadImageHostHealth() {
+  const result = await pool.query('SELECT * FROM image_host_health');
+  return result.rows;
+}
+
+export async function saveImageHostHealth(host, state, detail) {
+  await pool.query(
+    'INSERT INTO image_host_health (host, status, consecutive_failures, checked_at, last_ok_at, dead_since, last_detail) ' +
+    'VALUES ($1,$2,$3,now(),$4,$5,$6) ON CONFLICT (host) DO UPDATE SET status=EXCLUDED.status, ' +
+    'consecutive_failures=EXCLUDED.consecutive_failures, checked_at=now(), last_ok_at=EXCLUDED.last_ok_at, ' +
+    'dead_since=EXCLUDED.dead_since, last_detail=EXCLUDED.last_detail',
+    [host, state.status, state.consecutive_failures, state.last_ok_at, state.dead_since, detail]
+  );
+}
+
+export async function sampleImageSourceUrls(host, count) {
+  const result = await pool.query(
+    "SELECT source_url FROM image_assets WHERE split_part(split_part(source_url,'//',2),'/',1) = $1 " +
+    'ORDER BY random() LIMIT $2',
+    [host, count]
+  );
+  return result.rows.map((row) => row.source_url);
+}
+
+/**
+ * Gỡ link ảnh trỏ vào host đã chết khỏi movies. Ảnh nào còn file trong cache
+ * (isCached) thì giữ lại cho tới khi cache đào thải, vì nó vẫn đang hiển thị được.
+ * Asset không còn ai tham chiếu thì xoá luôn.
+ */
+export async function purgeDeadHostImages(deadHosts, isCached, limit) {
+  if (!deadHosts.length) return { slugs: [], assetsDeleted: 0 };
+  const hostSql = "split_part(split_part(%s,'//',2),'/',1) = ANY($1::text[])";
+  const slugs = new Set();
+  let cursor = '00000000-0000-0000-0000-000000000000';
+  while (slugs.size < limit) {
+    const rows = await pool.query(
+      'SELECT id, canonical_slug, thumb_source_url, thumb_asset_id, poster_source_url, poster_asset_id FROM movies ' +
+      'WHERE id > $2 AND (' + hostSql.replace('%s', 'thumb_source_url') + ' OR ' + hostSql.replace('%s', 'poster_source_url') + ') ' +
+      'ORDER BY id LIMIT 500',
+      [deadHosts, cursor]
+    );
+    if (!rows.rows.length) break;
+    for (const row of rows.rows) {
+      cursor = row.id;
+      const hostOfUrl = (url) => { try { return new URL(url).hostname; } catch { return ''; } };
+      const dead = (url) => url && deadHosts.some((host) => hostOfUrl(url) === host || hostOfUrl(url).endsWith('.' + host));
+      const dropThumb = dead(row.thumb_source_url) && !(row.thumb_asset_id && await isCached('m', row.thumb_asset_id));
+      const dropPoster = dead(row.poster_source_url) && !(row.poster_asset_id && await isCached('d', row.poster_asset_id));
+      if (!dropThumb && !dropPoster) continue;
+      await pool.query(
+        'UPDATE movies SET ' +
+        (dropThumb ? 'thumb_source_url=NULL, thumb_asset_id=NULL, ' : '') +
+        (dropPoster ? 'poster_source_url=NULL, poster_asset_id=NULL, ' : '') +
+        'updated_at=now() WHERE id=$1',
+        [row.id]
+      );
+      slugs.add(row.canonical_slug);
+    }
+  }
+  const deleted = await pool.query(
+    "DELETE FROM image_assets a WHERE split_part(split_part(a.source_url,'//',2),'/',1) = ANY($1::text[]) " +
+    'AND NOT EXISTS (SELECT 1 FROM movies m WHERE m.thumb_asset_id=a.id OR m.poster_asset_id=a.id ' +
+    'OR m.tmdb_thumb_asset_id=a.id OR m.tmdb_poster_asset_id=a.id) ' +
+    'AND NOT EXISTS (SELECT 1 FROM people p WHERE p.profile_asset_id=a.id)',
+    [deadHosts]
+  );
+  return { slugs: [...slugs], assetsDeleted: deleted.rowCount };
 }

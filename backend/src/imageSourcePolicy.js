@@ -1,17 +1,11 @@
-import { config } from './config.js';
-
-function allowedImageHost(hostname) {
-  return config.imageAllowedHosts.some((allowed) => (
-    hostname === allowed || hostname.endsWith('.' + allowed)
-  ));
-}
+import { isAllowedImageHost } from './imageHostRegistry.js';
 
 export function normalizeAllowedImageSourceUrl(sourceUrl) {
   const value = sourceUrl ? String(sourceUrl).trim() : '';
   if (!value) return null;
   try {
     const parsed = new URL(value);
-    if (parsed.protocol !== 'https:' || !allowedImageHost(parsed.hostname)) return null;
+    if (parsed.protocol !== 'https:' || !isAllowedImageHost(parsed.hostname)) return null;
     parsed.hash = '';
     return parsed.toString();
   } catch {

@@ -11,7 +11,8 @@ import { config } from './config.js';
 import { closeDatabase, migrate, postgresHealth } from './db.js';
 import { formatSweepStats, sweepImageCache } from './imageCacheSweep.js';
 import { serveSignedImage } from './images.js';
-import { providerHealth } from './repository.js';
+import { setLearnedDeadHosts } from './imageHostRegistry.js';
+import { loadImageHostHealth, providerHealth } from './repository.js';
 import { metricsSnapshot, observeCache, observeRequest } from './observability.js';
 import { assessWorkerHeartbeat } from './workerHealth.js';
 import {
@@ -349,6 +350,19 @@ server.listen(config.port, '0.0.0.0', () => {
   console.log('[api] listening on 0.0.0.0:' + config.port);
 });
 
+function scheduleImageHostRegistry() {
+  async function refresh() {
+    try {
+      const rows = await loadImageHostHealth();
+      setLearnedDeadHosts(rows.filter((row) => row.status === 'dead').map((row) => row.host));
+    } catch (error) {
+      console.warn('[api] image host registry refresh failed', error.message);
+    }
+  }
+  refresh();
+  setInterval(refresh, 5 * 60 * 1000).unref();
+}
+
 /**
  * Keep the disposable image cache under its ceiling.
  *
@@ -379,6 +393,7 @@ function scheduleImageCacheSweep() {
   setTimeout(run, config.imageCacheSweepStartDelayMs).unref();
 }
 
+scheduleImageHostRegistry();
 scheduleImageCacheSweep();
 
 async function shutdown(signal) {

@@ -44,9 +44,17 @@ import {
   saveMdblistBackfillCursor,
   listStoredSourceStates,
   healImageSourcesFromItems,
-  healImageSourcesFromAlternate
+  healImageSourcesFromAlternate,
+  loadImageHostHealth,
+  saveImageHostHealth,
+  sampleImageSourceUrls,
+  purgeDeadHostImages
 } from './repository.js';
 import { formatPrewarmStats, prewarmImages } from './prewarm.js';
+import { createLocalImageStore } from './imageStore.js';
+import { deadImageHosts, setLearnedDeadHosts } from './imageHostRegistry.js';
+import { probeUrl } from './imageHostHealth.js';
+import { runImageHostCheck } from './imageHostCheck.js';
 import { backfillMdblistRatings, formatMdblistStats, syncMdblistRatings } from './mdblistRatingsSync.js';
 import {
   fetchTmdbCredits,
@@ -287,6 +295,39 @@ async function refreshHeroTrendingIfDue() {
   } catch (error) {
     console.warn('[worker] hero trending refresh failed', error.message);
   }
+}
+
+/**
+ * Daily: probe each allowlisted image host with a few real stored URLs, drop hosts
+ * that stay dead from the effective allowlist, and clear their links from movies.
+ * Purging waits for image-heal to finish so heal can still swap in fresh URLs first.
+ */
+async function checkImageHosts() {
+  if (!config.imageHostCheckEnabled || stopping) return [];
+  const heal = await getCrawlCheckpoint('nguonc', 'image-heal', 1);
+  const store = createLocalImageStore(config.imageCacheDir);
+  const result = await runImageHostCheck({
+    hosts: config.imageAllowedHosts,
+    settings: {
+      intervalMs: config.imageHostCheckIntervalMs,
+      samples: config.imageHostCheckSamples,
+      deadAfter: config.imageHostDeadAfterChecks,
+      purgeAllowed: !config.imageHealEnabled || Boolean(heal.completed_at)
+    },
+    deps: {
+      loadHealth: loadImageHostHealth,
+      saveHealth: saveImageHostHealth,
+      sampleUrls: sampleImageSourceUrls,
+      probe: (url) => probeUrl(url, { timeoutMs: config.requestTimeoutMs }),
+      setDead: setLearnedDeadHosts,
+      deadHosts: deadImageHosts,
+      purge: (hosts) => purgeDeadHostImages(hosts, async (variant, id) => Boolean(await store.find(variant, id)), config.imageHostPurgeLimit)
+    }
+  });
+  if (!result) return [];
+  console.log('[worker] image host check probed=' + result.probed + ' dead=' + (result.dead.join(',') || '-') +
+    ' verdicts=' + JSON.stringify(result.verdicts) + ' purged=' + result.changedSlugs.length + ' assetsDeleted=' + result.assetsDeleted);
+  return result.changedSlugs;
 }
 
 /**
@@ -557,6 +598,10 @@ async function syncCycle() {
     console.warn('[worker] image heal pass failed', error.message);
     return [];
   });
+  const purgedImageSlugs = await checkImageHosts().catch((error) => {
+    console.warn('[worker] image host check failed', error.message);
+    return [];
+  });
   const tmdbImageSlugs = await refreshTmdbImages();
   const tmdbFallbackSlugs = await refreshTmdbImageFallbacks().catch((error) => {
     console.warn('[worker] tmdb image fallback pass failed', error.message);
@@ -566,6 +611,7 @@ async function syncCycle() {
     ...headResults.flatMap((result) => result.changedSlugs),
     ...backfillResults.flatMap((result) => result.changedSlugs),
     ...healedImageSlugs,
+    ...purgedImageSlugs,
     ...tmdbImageSlugs,
     ...tmdbFallbackSlugs
   ])];

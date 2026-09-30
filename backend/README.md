@@ -81,6 +81,18 @@ Once that walk completes it runs one pass copying another provider's stored imag
 (e.g. KKPhim) into movies that still have none. Set `IMAGE_HEAL_ENABLED=false` to
 turn it off; delete the `crawl_checkpoints` row (nguonc / `image-heal`) to re-run.
 
+Image host check: once a day (`IMAGE_HOST_CHECK_INTERVAL_MS`) the worker probes
+`IMAGE_HOST_CHECK_SAMPLES` random stored image URLs of every `IMAGE_ALLOWED_HOSTS`
+host (ranged GET, body discarded) and records a verdict in `image_host_health`. A
+host counts as dead only when every sample is 404/410/DNS-gone; 429/5xx/timeouts are
+inconclusive, one live sample clears it, and a simultaneous failure of all hosts is
+treated as our own network problem. After `IMAGE_HOST_DEAD_AFTER_CHECKS` consecutive
+dead checks the host leaves the effective allowlist (api and worker reload it every
+few minutes), and, once image-heal has finished, the worker clears its links from
+`movies` (up to `IMAGE_HOST_PURGE_LIMIT` per run, skipping images still in the disk
+cache) and deletes its unreferenced `image_assets`. `IMAGE_DEAD_HOSTS` is the static
+override. To reset a host, delete its `image_host_health` row.
+
 Catalog lists only expose `catalog_state=ready` rows. Their order is
 `catalog_sort_at` (the provider's update timestamp), then year and slug; an old
 record discovered during backfill cannot appear as a newly updated movie merely

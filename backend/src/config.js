@@ -120,6 +120,13 @@ export const config = Object.freeze({
   imageDeadHosts: csv('IMAGE_DEAD_HOSTS', 'phim.nguonc.com'),
   imageHealEnabled: boolean('IMAGE_HEAL_ENABLED', true),
   imageHealPagesPerRun: integer('IMAGE_HEAL_PAGES_PER_RUN', 300, 1),
+  // Kiểm tra sống/chết của từng host trong allowlist mỗi ngày; host chết liên tiếp
+  // IMAGE_HOST_DEAD_AFTER_CHECKS lần thì bị loại khỏi allowlist hiệu lực và link của nó bị dọn.
+  imageHostCheckEnabled: boolean('IMAGE_HOST_CHECK_ENABLED', true),
+  imageHostCheckIntervalMs: integer('IMAGE_HOST_CHECK_INTERVAL_MS', 24 * 60 * 60 * 1000, 60 * 1000),
+  imageHostCheckSamples: integer('IMAGE_HOST_CHECK_SAMPLES', 8, 1),
+  imageHostDeadAfterChecks: integer('IMAGE_HOST_DEAD_AFTER_CHECKS', 3, 1),
+  imageHostPurgeLimit: integer('IMAGE_HOST_PURGE_LIMIT', 5000, 1),
   // Image prewarming: the worker asks the API to build the cache entries the
   // home/list viewmodels are about to serve, so the first visitor after a sync
   // does not pay the upstream fetch + sharp transcode. Reached over the Docker

@@ -7,6 +7,7 @@ import { createReadStream } from 'node:fs';
 import { rename, stat, unlink } from 'node:fs/promises';
 import sharp from 'sharp';
 import { config } from './config.js';
+import { isAllowedImageHost, isDeadImageHost } from './imageHostRegistry.js';
 import { createFailureMemo, ImageSourceError } from './imageSourceFailure.js';
 import { createLocalImageStore } from './imageStore.js';
 import { observeCache } from './observability.js';
@@ -27,9 +28,7 @@ function normalizedUrl(raw) {
 }
 
 function allowedImageHost(hostname) {
-  return config.imageAllowedHosts.some((allowed) => (
-    hostname === allowed || hostname.endsWith('.' + allowed)
-  ));
+  return isAllowedImageHost(hostname);
 }
 
 function digest(value) {
@@ -79,6 +78,7 @@ function respondSourceFailure(response, failure) {
 
 async function fetchSource(url) {
   const parsed = new URL(url);
+  if (parsed.protocol === 'https:' && isDeadImageHost(parsed.hostname)) throw new ImageSourceError(410);
   if (parsed.protocol !== 'https:' || !allowedImageHost(parsed.hostname)) {
     throw new Error('Image source host is not allowed');
   }

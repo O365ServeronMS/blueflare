@@ -65,21 +65,19 @@ export function MoviePlayer({
     iframeFailedRef.current = false;
     nativeHlsFailedRef.current = false;
     const probe = document.createElement("video");
-    // Embeds cannot report playback time, so signed-in users get HLS when it exists.
-    const mode = preferredMode ?? (loggedIn && episodeKey && normalizePlaybackUrl(hlsSrc) ? "hls" : undefined);
-    if (mode === "iframe") {
+    if (preferredMode === "iframe") {
       const iframeUrl = normalizePlaybackUrl(embedSrc);
       setPlaybackSource(iframeUrl ? { mode: "iframe", iframeUrl } : resolveHlsPlaybackSource(hlsSrc, probe));
       return;
     }
-    if (mode === "hls") {
+    if (preferredMode === "hls") {
       const hlsSource = resolveHlsPlaybackSource(hlsSrc, probe);
       setPlaybackSource(hlsSource.mode !== "none" ? hlsSource : resolvePlaybackSource({ iframeUrl: embedSrc }, probe));
       return;
     }
 
     setPlaybackSource(resolvePlaybackSource({ iframeUrl: embedSrc, hlsUrl: hlsSrc }, probe));
-  }, [embedSrc, episodeKey, hlsSrc, isOpen, loggedIn, preferredMode]);
+  }, [embedSrc, hlsSrc, isOpen, preferredMode]);
 
   function handleIframeError() {
     iframeFailedRef.current = true;
@@ -103,8 +101,7 @@ export function MoviePlayer({
           : { mode: "none" });
       return;
     }
-    const iframeUrl = normalizePlaybackUrl(embedSrc);
-    setPlaybackSource(iframeUrl && !iframeFailedRef.current ? { mode: "iframe", iframeUrl } : { mode: "none" });
+    setPlaybackSource({ mode: "none" });
   }
 
   return (

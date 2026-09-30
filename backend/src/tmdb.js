@@ -58,7 +58,7 @@ function imageSource(path, size, imageBaseUrl) {
   return baseUrl + '/' + size + path;
 }
 
-async function fetchTmdb(path, options = {}) {
+export async function fetchTmdb(path, options = {}) {
   const apiKey = String(options.apiKey ?? config.tmdbApiKey).trim();
   const baseUrl = String(options.baseUrl ?? config.tmdbBaseUrl).replace(/\/$/, '');
   const language = String(options.language ?? config.tmdbTrendingLanguage).trim();
@@ -80,7 +80,7 @@ async function fetchTmdb(path, options = {}) {
 
 const MOVIE_MEDIA_TYPES = new Set(['single', 'movie', 'phim-le']);
 
-function comparableTitle(value) {
+export function comparableTitle(value) {
   return String(value || '')
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
@@ -89,7 +89,7 @@ function comparableTitle(value) {
     .trim();
 }
 
-function releaseYear(result) {
+export function releaseYear(result) {
   const year = Number(String(result?.release_date || result?.first_air_date || '').slice(0, 4));
   return Number.isInteger(year) && year > 1800 ? year : null;
 }
@@ -316,8 +316,17 @@ export async function fetchTmdbCredits(identity, options = {}) {
   const tmdbId = validMovieId(identity?.tmdbId);
   const mediaType = validMediaType(identity?.mediaType);
   if (!tmdbId || !mediaType) throw new Error('TMDB identity is incomplete');
-  const castLimit = Math.max(1, Math.floor(options.castLimit ?? config.tmdbCreditsCastLimit));
   const body = await fetchTmdb('/' + mediaType + '/' + tmdbId + '/credits', options);
+  return parseTmdbCredits(body, options);
+}
+
+/**
+ * Reduce a raw /credits body to the billed cast and directors we store. Split
+ * from the fetch so a caller that already holds the body — the cast-evidence
+ * matcher reads it to verify an identity — does not pay for a second request.
+ */
+export function parseTmdbCredits(body, options = {}) {
+  const castLimit = Math.max(1, Math.floor(options.castLimit ?? config.tmdbCreditsCastLimit));
 
   const cast = [];
   const seenCast = new Set();

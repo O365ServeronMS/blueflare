@@ -42,9 +42,30 @@ provides normal DNS/proxy/CDN caching only; there is no frontend Worker.
 
 User accounts, sessions and the last watched episode per title (`user_history`) live in PostgreSQL (migrations 020, 021).
 `auth.js` handles password hashing and sessions; `meApi.js` serves `/api/auth/*`
-and `/api/me/*`, always uncached (no Valkey). Browsers reach them only through the
+and `/api/me/*`, never response-cached (Valkey is used only for auth rate-limit counters). Browsers reach them only through the
 Next proxy on `phim.bluesia.net` (`bf_session` cookie, HttpOnly, SameSite=Lax);
-Caddy returns 404 for these paths on `img.bluesia.net`.
+Caddy returns 404 for these paths on `img.bluesia.net`, and refuses `/api/auth/*` on
+`phim.bluesia.net` with 403 unless the peer is a Cloudflare IP (`@authdirect`).
+
+Hardening (PLAN-008): `HashGate` in `auth.js` caps concurrent scrypt at
+`AUTH_HASH_CONCURRENCY` (2) with a queue of `AUTH_HASH_QUEUE` (16) and a 3 s queue
+wait; beyond that the API answers 503 `{error:"busy"}` + `Retry-After: 2`.
+scrypt shares the libuv threadpool with image I/O and sharp, so `api` runs with
+`UV_THREADPOOL_SIZE=8`. Rate-limit buckets (429 `rate_limited` + `Retry-After`):
+
+| Bucket | Limit |
+| --- | --- |
+| register per IP | 5/h |
+| register global (`AUTH_REGISTER_GLOBAL_PER_HOUR`) | 300/h |
+| login per IP | 30/15 min |
+| login per IP+email | 10/15 min |
+| login per email | 20/h, failures only |
+
+Counters live in Valkey (`auth:rl:<bucket>:<sha256>`); on error or a reply slower
+than 100 ms `authLimits.js` falls back to in-memory counters (fail-open, logged)
+and skips Valkey for 5 s. Consecutive login failures lock the IP+email pair with
+429 instead of sleeping. Known limitation: an attacker who knows an email can lock
+that account out of login for up to an hour.
 
 ## API contract: people/credits
 

@@ -1,0 +1,20 @@
+{
+  "action": "block",
+  "action_parameters": {
+    "response": {
+      "status_code": 429,
+      "content": "Too many requests",
+      "content_type": "text/plain"
+    }
+  },
+  "ratelimit": {
+    "characteristics": ["cf.colo.id", "ip.src"],
+    "period": 60,
+    "requests_per_period": 10,
+    "mitigation_timeout": 600
+  },
+  "expression": "(http.host eq \"phim.bluesia.net\" and starts_with(http.request.uri.path, \"/api/auth/\"))",
+  "description": "Blueflare auth rate limit: 10 requests/60s per IP on /api/auth/*, block 600s. Phase ruleset http_ratelimit. Free plan allows only ONE rate-limit rule and may restrict period (10s) and mitigation_timeout (10s) and characteristics (ip.src only, drop cf.colo.id): if the dashboard rejects this, adjust period/timeout/characteristics.",
+  "enabled": true,
+  "ref": "blueflare_auth_ratelimit"
+}

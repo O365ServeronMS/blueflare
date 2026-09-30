@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import fs from 'node:fs/promises';
 import test from 'node:test';
 import {
+  AuthOverloadedError,
   FailureTracker,
+  HashGate,
   RateLimiter,
   SESSION_RENEW_AFTER_MS,
   SESSION_TTL_MS,
@@ -11,8 +14,10 @@ import {
   hashPassword,
   hashToken,
   newToken,
+  hashGate,
   verifyPassword
 } from '../src/auth.js';
+import { createAuthLimits } from '../src/authLimits.js';
 import { createAccountHandler } from '../src/meApi.js';
 import { pool } from '../src/db.js';
 import * as meRepository from '../src/meRepository.js';
@@ -102,9 +107,13 @@ async function withApi(options, run) {
   let time = options.start || Date.UTC(2026, 8, 30);
   const clock = { now: () => time, advance: (ms) => { time += ms; } };
   repo.state.clock = () => new Date(time);
-  const sleeps = [];
   const handler = createAccountHandler({
-    repo, now: clock.now, sleep: async (ms) => { sleeps.push(ms); }, logger: { warn() {} }
+    repo,
+    now: clock.now,
+    logger: { warn() {} },
+    // No Valkey in tests: memory counters, driven by the fake clock.
+    limits: options.limits || createAuthLimits({ now: clock.now, logger: { warn() {} } }),
+    ...(options.handler || {})
   });
   const server = http.createServer((request, response) => {
     handler(request, response, new URL(request.url, 'http://x')).catch((error) => {
@@ -127,7 +136,7 @@ async function withApi(options, run) {
     return { status: response.status, headers: response.headers, json: text ? JSON.parse(text) : null };
   }
   try {
-    await run({ call, repo, clock, sleeps });
+    await run({ call, repo, clock });
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
@@ -223,17 +232,19 @@ test('failure delay is zero for 4 failures then monotonic and capped', () => {
 });
 
 test('login: 10 attempts per (ip,email) then 429 with Retry-After; register 5 per IP', async () => {
-  await withApi({}, async ({ call }) => {
+  await withApi({}, async ({ call, clock }) => {
     await signup(call);
     let last;
     for (let i = 0; i < 10; i += 1) {
       last = await call('POST', '/api/auth/login', { body: { email: 'a@example.com', password: 'nope nope' } });
       assert.equal(last.status, 401);
+      clock.advance(6000); // step past the consecutive-failure lock
     }
     last = await call('POST', '/api/auth/login', { body: { email: 'a@example.com', password: 'correct horse' } });
     assert.equal(last.status, 429);
     assert.equal(last.json.error, 'rate_limited');
     assert.ok(Number(last.headers.get('retry-after')) > 0);
+    assert.equal(last.headers.get('cache-control'), 'no-store');
     // A different email from the same IP has its own bucket.
     const other = await call('POST', '/api/auth/login', { body: { email: 'b@example.com', password: 'x' } });
     assert.equal(other.status, 401);
@@ -242,16 +253,264 @@ test('login: 10 attempts per (ip,email) then 429 with Retry-After; register 5 pe
     for (let i = 0; i < 5; i += 1) await signup(call, 'u' + i + '@example.com');
     const sixth = await call('POST', '/api/auth/register', { body: { email: 'u9@example.com', password: 'correct horse' } });
     assert.equal(sixth.status, 429);
+    assert.ok(Number(sixth.headers.get('retry-after')) > 0);
   });
 });
 
-test('repeated login failures add a growing delay', async () => {
-  await withApi({}, async ({ call, sleeps }) => {
-    for (let i = 0; i < 7; i += 1) {
-      await call('POST', '/api/auth/login', { body: { email: 'x@example.com', password: 'bad password' } });
-    }
-    assert.deepEqual(sleeps, [250, 500, 1000]);
+const badLogin = (call, email = 'x@example.com', headers = {}) => call('POST', '/api/auth/login', {
+  body: { email, password: 'bad password' }, headers
+});
+
+test('login after 5 consecutive failures is refused at once with Retry-After and holds no connection', async () => {
+  await withApi({}, async ({ call, clock }) => {
+    for (let i = 0; i < 5; i += 1) assert.equal((await badLogin(call)).status, 401);
+    const started = Date.now();
+    const locked = await badLogin(call);
+    assert.equal(locked.status, 429);
+    assert.equal(locked.json.error, 'rate_limited');
+    assert.equal(locked.headers.get('retry-after'), '1');
+    assert.equal(locked.headers.get('cache-control'), 'no-store');
+    // The old behaviour slept failureDelayMs (250 ms at this step) before answering.
+    assert.ok(Date.now() - started < 200, 'must not sleep');
+    // Lock expires with time, and the delay grows.
+    clock.advance(1100);
+    assert.equal((await badLogin(call)).status, 401);
+    assert.equal((await badLogin(call)).status, 429);
+    clock.advance(1100);
+    assert.equal((await badLogin(call)).status, 401);
+    const longer = await badLogin(call);
+    assert.equal(longer.status, 429);
+    assert.equal(longer.headers.get('retry-after'), '1');
   });
+});
+
+test('login-ip: one IP rotating emails is capped at 30 per 15 minutes', async () => {
+  await withApi({}, async ({ call, clock }) => {
+    for (let i = 0; i < 30; i += 1) assert.equal((await badLogin(call, 'e' + i + '@example.com')).status, 401);
+    const blocked = await badLogin(call, 'fresh@example.com');
+    assert.equal(blocked.status, 429);
+    assert.ok(Number(blocked.headers.get('retry-after')) > 0);
+    // Another IP is unaffected.
+    assert.equal((await badLogin(call, 'fresh@example.com', { 'x-forwarded-for': '9.9.9.9' })).status, 401);
+    clock.advance(15 * 60 * 1000 + 1000);
+    assert.equal((await badLogin(call, 'fresh@example.com')).status, 401);
+  });
+});
+
+test('login-email: 20 failures per hour across IPs, successes do not count', async () => {
+  await withApi({}, async ({ call, clock }) => {
+    await signup(call, 'victim@example.com');
+    // Correct logins never count against the email bucket.
+    for (let i = 0; i < 25; i += 1) {
+      const ok = await call('POST', '/api/auth/login', {
+        body: { email: 'victim@example.com', password: 'correct horse' }, headers: { 'x-forwarded-for': '10.0.0.' + i }
+      });
+      assert.equal(ok.status, 200);
+    }
+    for (let i = 0; i < 20; i += 1) {
+      const r = await badLogin(call, 'victim@example.com', { 'x-forwarded-for': '10.1.0.' + i });
+      assert.equal(r.status, 401);
+    }
+    const blocked = await badLogin(call, 'victim@example.com', { 'x-forwarded-for': '10.2.0.1' });
+    assert.equal(blocked.status, 429);
+    assert.ok(Number(blocked.headers.get('retry-after')) > 0);
+    // The known-limitation: even the right password is refused until the window ends.
+    const owner = await call('POST', '/api/auth/login', {
+      body: { email: 'victim@example.com', password: 'correct horse' }, headers: { 'x-forwarded-for': '10.3.0.1' }
+    });
+    assert.equal(owner.status, 429);
+    clock.advance(60 * 60 * 1000 + 1000);
+    const later = await call('POST', '/api/auth/login', {
+      body: { email: 'victim@example.com', password: 'correct horse' }, headers: { 'x-forwarded-for': '10.3.0.1' }
+    });
+    assert.equal(later.status, 200);
+  });
+});
+
+test('register-global caps signups per hour across IPs and is env-configurable', async () => {
+  await withApi({ handler: { registerGlobalPerHour: 3 } }, async ({ call, clock }) => {
+    for (let i = 0; i < 3; i += 1) {
+      const r = await call('POST', '/api/auth/register', {
+        body: { email: 'g' + i + '@example.com', password: 'correct horse' }, headers: { 'x-forwarded-for': '7.7.7.' + i }
+      });
+      assert.equal(r.status, 201);
+    }
+    const capped = await call('POST', '/api/auth/register', {
+      body: { email: 'g9@example.com', password: 'correct horse' }, headers: { 'x-forwarded-for': '7.7.7.99' }
+    });
+    assert.equal(capped.status, 429);
+    assert.equal(capped.json.error, 'rate_limited');
+    assert.ok(Number(capped.headers.get('retry-after')) > 0);
+    // Invalid requests do not burn the shared budget.
+    clock.advance(60 * 60 * 1000 + 1000);
+    const bad = await call('POST', '/api/auth/register', { body: { email: 'nope', password: 'correct horse' } });
+    assert.equal(bad.status, 422);
+  });
+});
+
+test('register-global is not spent by email_taken responses', async () => {
+  await withApi({ handler: { registerGlobalPerHour: 2 } }, async ({ call }) => {
+    const first = await call('POST', '/api/auth/register', { body: { email: 'dup@example.com', password: 'correct horse' }, headers: { 'x-forwarded-for': '8.8.8.1' } });
+    assert.equal(first.status, 201);
+    for (let i = 0; i < 4; i += 1) {
+      const dup = await call('POST', '/api/auth/register', { body: { email: 'dup@example.com', password: 'correct horse' }, headers: { 'x-forwarded-for': '8.8.8.' + (10 + i) } });
+      assert.equal(dup.status, 409);
+    }
+    const second = await call('POST', '/api/auth/register', { body: { email: 'other@example.com', password: 'correct horse' }, headers: { 'x-forwarded-for': '8.8.8.99' } });
+    assert.equal(second.status, 201);
+  });
+});
+
+test('hash overload maps to 503 busy with Retry-After and no-store, on login and register', async () => {
+  const original = { c: hashGate.concurrency, q: hashGate.maxQueue };
+  await withApi({}, async ({ call }) => {
+    await signup(call, 'busy@example.com');
+    hashGate.concurrency = 1; hashGate.maxQueue = 0;
+    let release;
+    const hold = hashGate.run(() => new Promise((resolve) => { release = resolve; })); // occupies the only slot
+    try {
+      const login = await call('POST', '/api/auth/login', { body: { email: 'busy@example.com', password: 'correct horse' } });
+      assert.equal(login.status, 503);
+      assert.deepEqual(login.json, { error: 'busy' });
+      assert.equal(login.headers.get('retry-after'), '2');
+      assert.equal(login.headers.get('cache-control'), 'no-store');
+      const ghost = await call('POST', '/api/auth/login', { body: { email: 'ghost@example.com', password: 'correct horse' } });
+      assert.equal(ghost.status, 503);
+      const reg = await call('POST', '/api/auth/register', { body: { email: 'new@example.com', password: 'correct horse' } });
+      assert.equal(reg.status, 503);
+      assert.equal(reg.headers.get('retry-after'), '2');
+    } finally {
+      release();
+      await hold;
+      hashGate.concurrency = original.c; hashGate.maxQueue = original.q;
+    }
+    // A refused attempt is not a failed credential: it did not count towards the lock.
+    const ok = await call('POST', '/api/auth/login', { body: { email: 'busy@example.com', password: 'correct horse' } });
+    assert.equal(ok.status, 200);
+  });
+});
+
+// ---- HashGate --------------------------------------------------------------
+
+const tick = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test('HashGate limits concurrency, queues in order, and refuses when the queue is full', async () => {
+  const gate = new HashGate({ concurrency: 2, maxQueue: 2, waitMs: 1000 });
+  let running = 0; let peak = 0; const order = [];
+  const releases = [];
+  const job = (id) => gate.run(async () => {
+    running += 1; peak = Math.max(peak, running); order.push(id);
+    await new Promise((resolve) => releases.push(resolve));
+    running -= 1;
+    return id;
+  });
+  const results = [job(1), job(2), job(3), job(4)];
+  await tick(5);
+  assert.deepEqual(order, [1, 2]);
+  await assert.rejects(job(5), (error) => error instanceof AuthOverloadedError && error.code === 'overloaded');
+  releases.shift()(); await tick(5);
+  assert.deepEqual(order, [1, 2, 3]);
+  while (releases.length || gate.active) { releases.shift()?.(); await tick(2); }
+  assert.deepEqual(await Promise.all(results), [1, 2, 3, 4]);
+  assert.equal(peak, 2);
+  assert.equal(gate.active, 0);
+  assert.equal(gate.queue.length, 0);
+});
+
+test('HashGate refuses a waiter after the wait timeout and keeps serving afterwards', async () => {
+  const gate = new HashGate({ concurrency: 1, maxQueue: 4, waitMs: 30 });
+  let release;
+  const first = gate.run(() => new Promise((resolve) => { release = resolve; }));
+  const started = Date.now();
+  await assert.rejects(gate.run(async () => 'late'), AuthOverloadedError);
+  assert.ok(Date.now() - started >= 25);
+  assert.equal(gate.queue.length, 0);
+  release('done');
+  assert.equal(await first, 'done');
+  assert.equal(await gate.run(async () => 'again'), 'again');
+});
+
+test('HashGate slot is released when the task throws', async () => {
+  const gate = new HashGate({ concurrency: 1, maxQueue: 0 });
+  await assert.rejects(gate.run(async () => { throw new Error('boom'); }), /boom/);
+  assert.equal(await gate.run(async () => 'ok'), 'ok');
+});
+
+// ---- authLimits ------------------------------------------------------------
+
+function fakeValkey() {
+  const store = new Map(); const ttls = new Map(); const calls = [];
+  return {
+    store, ttls, calls,
+    async incr(key) { calls.push(['incr', key]); const n = (store.get(key) || 0) + 1; store.set(key, n); return n; },
+    async expire(key, sec) { calls.push(['expire', key, sec]); ttls.set(key, sec); return 1; },
+    async ttl(key) { return ttls.get(key) ?? -1; },
+    async get(key) { const v = store.get(key); return v === undefined ? null : String(v); }
+  };
+}
+
+test('authLimits uses Valkey INCR+EXPIRE with sha256 keys and no raw identifiers', async () => {
+  const client = fakeValkey();
+  const limits = createAuthLimits({ getClient: async () => client, logger: { warn() {} } });
+  const email = 'someone@example.com';
+  assert.deepEqual(await limits.take('login-email', email, 2, 3600), { allowed: true, retryAfterSeconds: 0 });
+  assert.equal((await limits.take('login-email', email, 2, 3600)).allowed, true);
+  const third = await limits.take('login-email', email, 2, 3600);
+  assert.deepEqual(third, { allowed: false, retryAfterSeconds: 3600 });
+  assert.equal(client.calls.filter(([op]) => op === 'expire').length, 1, 'EXPIRE only on the first hit');
+  for (const key of client.store.keys()) {
+    assert.match(key, /^auth:rl:login-email:[0-9a-f]{64}$/);
+    assert.ok(!key.includes('someone') && !key.includes('example'));
+  }
+  // peek reads without recording.
+  const before = client.store.size && [...client.store.values()][0];
+  assert.equal((await limits.peek('login-email', email, 2, 3600)).allowed, false);
+  assert.equal((await limits.peek('login-email', 'other@example.com', 2, 3600)).allowed, true);
+  assert.equal([...client.store.values()][0], before);
+});
+
+test('authLimits falls back to memory on Valkey errors and timeouts, and logs', async () => {
+  const warnings = [];
+  const logger = { warn: (...a) => warnings.push(a.join(' ')) };
+  const failing = createAuthLimits({ getClient: async () => { throw new Error('ECONNREFUSED'); }, logger });
+  assert.equal((await failing.take('b', 'k', 1, 60)).allowed, true);
+  const blocked = await failing.take('b', 'k', 1, 60);
+  assert.equal(blocked.allowed, false);
+  assert.ok(blocked.retryAfterSeconds >= 1);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /ECONNREFUSED/);
+  assert.ok(!warnings[0].includes('"k"'));
+
+  const slowClient = { async incr() { await tick(300); return 1; } };
+  const slow = createAuthLimits({ getClient: async () => slowClient, logger });
+  const started = Date.now();
+  assert.equal((await slow.take('b', 'k', 1, 60)).allowed, true);
+  assert.ok(Date.now() - started < 250, 'gave up at ~100 ms');
+  assert.equal((await slow.take('b', 'k', 1, 60)).allowed, false, 'memory counters took over');
+
+  // A client error mid-operation also falls back.
+  const broken = createAuthLimits({ getClient: async () => ({ incr: async () => { throw new Error('LOADING'); } }), logger });
+  assert.equal((await broken.take('b', 'k', 5, 60)).allowed, true);
+});
+
+test('authLimits skips Valkey during backoff and repairs a key without TTL', async () => {
+  let attempts = 0; let time = 0;
+  const limits = createAuthLimits({
+    getClient: async () => { attempts += 1; throw new Error('down'); },
+    logger: { warn() {} }, clock: () => time, backoffMs: 1000
+  });
+  await limits.take('b', 'k', 5, 60); await limits.take('b', 'k', 5, 60);
+  assert.equal(attempts, 1);
+  time = 1001;
+  await limits.take('b', 'k', 5, 60);
+  assert.equal(attempts, 2);
+
+  const client = fakeValkey();
+  const repair = createAuthLimits({ getClient: async () => client });
+  client.store.set(`auth:rl:b:${(await import('node:crypto')).createHash('sha256').update('k').digest('hex')}`, 5);
+  const result = await repair.take('b', 'k', 1, 60);
+  assert.deepEqual(result, { allowed: false, retryAfterSeconds: 60 });
+  assert.equal([...client.ttls.values()][0], 60);
 });
 
 // ---- register / login / logout --------------------------------------------
@@ -480,4 +739,25 @@ test('importUserData SQL is one transaction that never overwrites existing favor
     assert.match(queries[2], /GREATEST\(user_history\.watched_at/);
     assert.match(queries[2], /EXCLUDED\.watched_at > user_history\.watched_at/);
   } finally { pool.connect = original; }
+});
+
+// ---- load ------------------------------------------------------------------
+
+test('200 concurrent verifyPassword through the gate leave the threadpool responsive (fs.stat < 800 ms)', async () => {
+  const stored = await hashPassword('correct horse');
+  const flood = Promise.allSettled(Array.from({ length: 200 }, () => verifyPassword('correct horse', stored)));
+  const worst = [];
+  for (let i = 0; i < 5; i += 1) {
+    const started = performance.now();
+    await fs.stat(new URL(import.meta.url));
+    worst.push(performance.now() - started);
+    await tick(20);
+  }
+  const settled = await flood;
+  const refused = settled.filter((r) => r.status === 'rejected');
+  assert.ok(refused.every((r) => r.reason instanceof AuthOverloadedError));
+  assert.ok(settled.some((r) => r.status === 'fulfilled' && r.value === true));
+  assert.ok(refused.length > 0, 'excess load is shed, not queued');
+  console.log('fs.stat under flood (ms):', worst.map((n) => n.toFixed(1)).join(' '));
+  assert.ok(Math.max(...worst) < 800, 'fs.stat waited ' + Math.max(...worst) + ' ms');
 });

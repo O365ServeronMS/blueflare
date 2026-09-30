@@ -54,9 +54,10 @@ trong git; thư mục stack giữ bản copy, đồng bộ bằng `deploy/sync-s
 - `backend/src/`: provider sync, canonical merge, ViewModels, cache, image cache origin.
   Job nền: `prewarm.js` (worker làm ấm cache ảnh), `imageCacheSweep.js` (API dọn/evict cache).
   `people.js`: slug/identity thuần cho metadata cast/director lấy từ TMDB.
-  Tài khoản: `auth.js` (hash mật khẩu + session), `meApi.js` (`/api/auth/*`, `/api/me/*`, không cache), `meRepository.js`; migration `020_users_sessions.sql`, `021_history_episode.sql` (thêm cột tập vào `user_history`, bỏ `user_watch_progress`).
+  Tài khoản: `auth.js` (hash mật khẩu + session + `HashGate` giới hạn scrypt đồng thời), `authLimits.js` (bộ đếm rate limit auth: Valkey, rơi về bộ nhớ), `meApi.js` (`/api/auth/*`, `/api/me/*`, không cache), `meRepository.js`; migration `020_users_sessions.sql`, `021_history_episode.sql` (thêm cột tập vào `user_history`, bỏ `user_watch_progress`).
 - `deploy/bootstrap-vps.sh`: dựng VPS trắng; hai site block Caddy (`phim` → 3100,
-  `img` → 3200, kèm rule `@account` trả 404 cho `/api/auth/*` và `/api/me*`) nằm inline trong script, không còn file `.caddy` riêng.
+  `img` → 3200, kèm rule `@account` trả 404 cho `/api/auth/*` và `/api/me*`; phía `phim` có `@authdirect` trả 403 cho `/api/auth/*` nếu không đến từ dải Cloudflare) nằm inline trong script, không còn file `.caddy` riêng.
+- `deploy/cloudflare-auth-ratelimit-rule.json`: Cloudflare rate-limit rule cho `/api/auth/*` (Steve áp tay, xem `docs/CLOUDFLARE_CACHE.md`).
 - `deploy/cloudflare-frontend-static-rule.json`: optional normal Cloudflare cache rule for immutable `/_next/static/` assets.
 - `scripts/deploy.sh`: deploy `main` đã push — chỉ build service mà diff chạm tới, tag
   image cũ thành `:prev`, tạo lại container, chờ healthy + smoke, tự rollback nếu hỏng.

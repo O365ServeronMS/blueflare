@@ -115,3 +115,7 @@ Do not restart `containerd` automatically: it disrupts every workload and would
 erase useful evidence. Move the workload to a different physical host only after
 the provider supplies a root-cause statement or the symptoms recur under normal
 load; validate restore and the public health endpoint after the move.
+
+## Auth rate limits
+
+If Valkey is unavailable, `[auth] rate-limit store unavailable, using memory counters` is logged (at most once per 5 s backoff) and login/signup limits fall back to per-process memory counters. A 503 `{error:"busy"}` from `/api/auth/*` means the scrypt `HashGate` is saturated.

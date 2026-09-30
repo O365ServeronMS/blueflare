@@ -1,10 +1,9 @@
 import {
+  AuthOverloadedError,
   FailureTracker,
-  RateLimiter,
   assessSession,
   bearerToken,
   dummyVerify,
-  failureDelayMs,
   hashPassword,
   hashToken,
   newToken,
@@ -15,6 +14,9 @@ import {
   verifyPassword,
   PASSWORD_MAX
 } from './auth.js';
+import { createHash } from 'node:crypto';
+import { redis } from './cache.js';
+import { createAuthLimits } from './authLimits.js';
 import * as meRepository from './meRepository.js';
 
 export const BODY_LIMIT_BYTES = 32 * 1024;
@@ -90,6 +92,11 @@ function importList(value, now, limit, withEpisode = false) {
   };
 }
 
+function registerGlobalLimit() {
+  const value = Number.parseInt(process.env.AUTH_REGISTER_GLOBAL_PER_HOUR ?? '', 10);
+  return Number.isFinite(value) && value >= 1 ? value : 300;
+}
+
 function clientIp(request) {
   const forwarded = String(request.headers['x-forwarded-for'] || '').split(',')[0].trim();
   return (forwarded || request.socket?.remoteAddress || 'unknown').slice(0, 64);
@@ -149,12 +156,15 @@ export function isAccountPath(pathname) {
 export function createAccountHandler({
   repo = meRepository,
   now = Date.now,
-  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-  logger = console
+  logger = console,
+  limits = createAuthLimits({ getClient: redis, now, logger }),
+  registerGlobalPerHour = registerGlobalLimit()
 } = {}) {
-  const loginLimiter = new RateLimiter({ limit: 10, windowMs: 15 * 60 * 1000, now });
-  const registerLimiter = new RateLimiter({ limit: 5, windowMs: 60 * 60 * 1000, now });
   const failures = new FailureTracker({ now });
+
+  const MIN = 60;
+  const HOUR = 60 * MIN;
+  const sha = (value) => createHash('sha256').update(value).digest('hex');
 
   function limited(result) {
     if (!result.allowed) {
@@ -184,21 +194,37 @@ export function createAccountHandler({
   }
 
   async function register(request, response) {
-    limited(registerLimiter.take(clientIp(request)));
+    limited(await limits.take('register-ip', clientIp(request), 5, HOUR));
     const body = await readJson(request);
     const email = normalizeEmail(body.email);
     if (!validEmail(email)) throw new ApiError(422, 'invalid_email');
     if (!validPassword(body.password)) throw new ApiError(422, 'weak_password');
+    // Checked before hashing, spent only by an account actually created, so
+    // email_taken and malformed requests cannot burn the shared signup budget.
+    limited(await limits.peek('register-global', 'all', registerGlobalPerHour, HOUR));
     const user = await repo.createUser(email, await hashPassword(body.password));
     if (!user) throw new ApiError(409, 'email_taken');
+    await limits.take('register-global', 'all', registerGlobalPerHour, HOUR);
     send(response, 201, await issueSession(user));
   }
 
   async function login(request, response) {
     const body = await readJson(request);
     const email = normalizeEmail(body.email);
-    const key = clientIp(request) + '|' + email;
-    limited(loginLimiter.take(key));
+    const ip = clientIp(request);
+    const key = ip + '|' + email;
+    limited(await limits.take('login-ip', ip, 30, 15 * MIN));
+    limited(await limits.take('login-ip-email', key, 10, 15 * MIN));
+    // Only failed attempts count towards the per-email bucket, so a stranger's
+    // correct login cannot be what locks the owner out.
+    const emailKey = email ? sha(email) : '';
+    if (emailKey) limited(await limits.peek('login-email', emailKey, 20, HOUR));
+    // Consecutive failures lock this IP|email out for the backoff period. The
+    // request is refused at once instead of being held open.
+    const lockedMs = failures.lockedForMs(key);
+    if (lockedMs > 0) {
+      throw new ApiError(429, 'rate_limited', { 'retry-after': String(Math.max(1, Math.ceil(lockedMs / 1000))) });
+    }
     const password = typeof body.password === 'string' ? body.password : '';
     let user = null;
     let ok = false;
@@ -207,8 +233,8 @@ export function createAccountHandler({
       ok = user ? await verifyPassword(password, user.password_hash) : await dummyVerify(password);
     }
     if (!ok) {
-      const delay = failureDelayMs(failures.fail(key));
-      if (delay) await sleep(delay);
+      failures.fail(key);
+      if (emailKey) await limits.take('login-email', emailKey, 20, HOUR);
       throw new ApiError(401, 'invalid_credentials');
     }
     failures.reset(key);
@@ -325,6 +351,10 @@ export function createAccountHandler({
     try {
       await handle(request, response, url);
     } catch (error) {
+      if (error instanceof AuthOverloadedError) {
+        send(response, 503, { error: 'busy' }, { 'retry-after': '2' });
+        return;
+      }
       if (!(error instanceof ApiError)) throw error;
       send(response, error.status, { error: error.code }, error.headers);
     }

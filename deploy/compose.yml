@@ -112,6 +112,9 @@ services:
       # V8 old-space cap dưới mem_limit để cgroup không OOM-kill khi heap phình
       # (chừa ~512MB cho sharp/libvips, buffer ảnh và stack ngoài heap).
       NODE_OPTIONS: --max-old-space-size=1536
+      # libuv threadpool (default 4) is shared by scrypt, image cache file I/O and
+      # sharp; AUTH_HASH_CONCURRENCY caps scrypt so the rest keeps free threads.
+      UV_THREADPOOL_SIZE: "8"
       FRONTEND_REVALIDATE_SECRET: ${FRONTEND_REVALIDATE_SECRET:-}
     depends_on:
       postgres:

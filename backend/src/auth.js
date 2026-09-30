@@ -16,12 +16,72 @@ export const PASSWORD_MAX = 128;
 // burst of logins from exhausting a small VPS.
 const SCRYPT = Object.freeze({ N: 16384, r: 8, p: 1, keylen: 64, maxmem: 64 * 1024 * 1024 });
 
+export class AuthOverloadedError extends Error {
+  constructor() {
+    super('overloaded');
+    this.code = 'overloaded';
+  }
+}
+
+/**
+ * Bounds how many scrypt runs occupy the libuv threadpool at once. scrypt shares
+ * that pool with image-cache file I/O and sharp, so an unbounded login flood
+ * would starve image serving. Waiters beyond `maxQueue`, or waiting longer than
+ * `waitMs`, are refused immediately with AuthOverloadedError.
+ */
+export class HashGate {
+  constructor({ concurrency = 2, maxQueue = 16, waitMs = 3000 } = {}) {
+    this.concurrency = Math.max(1, concurrency);
+    this.maxQueue = Math.max(0, maxQueue);
+    this.waitMs = waitMs;
+    this.active = 0;
+    this.queue = [];
+  }
+
+  run(task) {
+    if (this.active < this.concurrency) return this.#start(task);
+    if (this.queue.length >= this.maxQueue) return Promise.reject(new AuthOverloadedError());
+    return new Promise((resolve, reject) => {
+      const waiter = { start: () => this.#start(task).then(resolve, reject) };
+      waiter.timer = setTimeout(() => {
+        this.queue.splice(this.queue.indexOf(waiter), 1);
+        reject(new AuthOverloadedError());
+      }, this.waitMs);
+      this.queue.push(waiter);
+    });
+  }
+
+  async #start(task) {
+    this.active += 1;
+    try {
+      return await task();
+    } finally {
+      this.active -= 1;
+      const next = this.queue.shift();
+      if (next) {
+        clearTimeout(next.timer);
+        next.start();
+      }
+    }
+  }
+}
+
+function envInt(name, fallback, min) {
+  const value = Number.parseInt(process.env[name] ?? '', 10);
+  return Number.isFinite(value) && value >= min ? value : fallback;
+}
+
+export const hashGate = new HashGate({
+  concurrency: envInt('AUTH_HASH_CONCURRENCY', 2, 1),
+  maxQueue: envInt('AUTH_HASH_QUEUE', 16, 0)
+});
+
 function scryptAsync(password, salt, params) {
-  return new Promise((resolve, reject) => {
+  return hashGate.run(() => new Promise((resolve, reject) => {
     scrypt(password, salt, params.keylen, {
       N: params.N, r: params.r, p: params.p, maxmem: SCRYPT.maxmem
     }, (error, key) => (error ? reject(error) : resolve(key)));
-  });
+  }));
 }
 
 export async function hashPassword(password) {
@@ -40,7 +100,8 @@ export async function verifyPassword(password, stored) {
   try {
     const actual = await scryptAsync(password, Buffer.from(saltB64, 'base64'), params);
     return actual.length === expected.length && timingSafeEqual(actual, expected);
-  } catch {
+  } catch (error) {
+    if (error instanceof AuthOverloadedError) throw error;
     return false;
   }
 }
@@ -49,8 +110,13 @@ let dummyHash = null;
 
 /** Spend the same scrypt time as a real check so unknown emails are not distinguishable. */
 export async function dummyVerify(password) {
-  dummyHash ||= await hashPassword('blueflare-dummy-password');
-  await verifyPassword(password, dummyHash);
+  if (!dummyHash) {
+    // A refused init must not be cached, or every later call would rethrow it.
+    const pending = hashPassword('blueflare-dummy-password');
+    dummyHash = pending;
+    pending.catch(() => { if (dummyHash === pending) dummyHash = null; });
+  }
+  await verifyPassword(password, await dummyHash);
   return false;
 }
 
@@ -133,6 +199,16 @@ export class RateLimiter {
     return { allowed: true, retryAfterSeconds: 0 };
   }
 
+  /** Like take() but records nothing. */
+  peek(key) {
+    const recent = this.#recent(key);
+    if (recent.length >= this.limit) {
+      const retryMs = recent[0] + this.windowMs - this.now();
+      return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil(retryMs / 1000)) };
+    }
+    return { allowed: true, retryAfterSeconds: 0 };
+  }
+
   #prune() {
     for (const key of [...this.hits.keys()]) this.#recent(key);
     // Still full of live keys: drop the oldest insertions rather than grow.
@@ -159,6 +235,13 @@ export class FailureTracker {
       return 0;
     }
     return entry.count;
+  }
+
+  /** Milliseconds until `key` may try again (0 when not locked). */
+  lockedForMs(key) {
+    const entry = this.failures.get(key);
+    if (!entry || this.count(key) === 0) return 0;
+    return Math.max(0, entry.at + failureDelayMs(entry.count) - this.now());
   }
 
   fail(key) {

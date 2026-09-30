@@ -75,8 +75,19 @@ describe("login/register cookie", () => {
     const res = await handleAuthCredentials(req("POST", "/api/auth/login", sameOrigin, "{}"), "login");
     expect(res.status).toBe(429);
     expect(res.headers.get("retry-after")).toBe("120");
+    expect(res.headers.get("cache-control")).toBe("no-store");
     expect(res.headers.get("set-cookie")).toBeNull();
     expect(await res.json()).toEqual({ error: "rate_limited" });
+  });
+
+  it("passes 503 busy with Retry-After, uncached, on register", async () => {
+    fetchMock.mockResolvedValue(json(503, { error: "busy" }, { "retry-after": "5", "cache-control": "public, max-age=60" }));
+    const res = await handleAuthCredentials(req("POST", "/api/auth/register", sameOrigin, "{}"), "register");
+    expect(res.status).toBe(503);
+    expect(res.headers.get("retry-after")).toBe("5");
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(res.headers.get("set-cookie")).toBeNull();
+    expect(await res.json()).toEqual({ error: "busy" });
   });
 
   it("rejects bodies over 32 KB", async () => {

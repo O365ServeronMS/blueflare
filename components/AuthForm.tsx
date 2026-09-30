@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { safeInternalPath } from "@/lib/navigation";
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -8,18 +8,32 @@ const ERROR_MESSAGES: Record<string, string> = {
   email_taken: "Email này đã được đăng ký. Hãy đăng nhập thay vì tạo tài khoản mới.",
   weak_password: "Mật khẩu cần từ 8 đến 128 ký tự.",
   invalid_email: "Email không hợp lệ. Kiểm tra lại địa chỉ và thử lại.",
-  rate_limited: "Bạn thử quá nhiều lần. Đợi một lúc rồi thử lại."
+  rate_limited: "Thử quá nhiều lần, hãy thử lại sau ít phút.",
+  busy: "Hệ thống đang bận, hãy thử lại sau ít giây."
 };
+const MAX_COOLDOWN_SECONDS = 60;
+
+function retryAfterSeconds(res: Response) {
+  const value = Number(res.headers.get("retry-after"));
+  return Number.isFinite(value) && value > 0 ? Math.min(Math.ceil(value), MAX_COOLDOWN_SECONDS) : 0;
+}
 const FALLBACK_ERROR = "Không thể kết nối. Thử lại sau ít phút.";
 
 export function AuthForm({ mode, returnTo = "" }: { mode: "login" | "signup"; returnTo?: string }) {
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
   const signup = mode === "signup";
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const timer = window.setTimeout(() => setCooldown((n) => n - 1), 1000);
+    return () => window.clearTimeout(timer);
+  }, [cooldown]);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (pending) return;
+    if (pending || cooldown > 0) return;
     const form = new FormData(event.currentTarget);
     setPending(true);
     setError("");
@@ -37,7 +51,17 @@ export function AuthForm({ mode, returnTo = "" }: { mode: "login" | "signup"; re
         return;
       }
       const body = await res.json().catch(() => null);
-      setError(ERROR_MESSAGES[body?.error] || FALLBACK_ERROR);
+      if (res.status === 429 || res.status === 503) {
+        const seconds = retryAfterSeconds(res);
+        setCooldown(seconds);
+        setError(
+          res.status === 429 && seconds
+            ? `Thử quá nhiều lần, hãy thử lại sau ${seconds} giây.`
+            : ERROR_MESSAGES[res.status === 429 ? "rate_limited" : "busy"]
+        );
+      } else {
+        setError(ERROR_MESSAGES[body?.error] || FALLBACK_ERROR);
+      }
     } catch {
       setError(FALLBACK_ERROR);
     }
@@ -70,10 +94,10 @@ export function AuthForm({ mode, returnTo = "" }: { mode: "login" | "signup"; re
       <p role="alert" className={error ? "rounded border border-netflix-red/60 bg-netflix-red/10 px-4 py-3 text-control text-chalk-white" : "sr-only"}>{error}</p>
       <button
         type="submit"
-        disabled={pending}
+        disabled={pending || cooldown > 0}
         className="h-12 rounded bg-netflix-red text-body font-bold text-chalk-white transition-opacity hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-chalk-white disabled:opacity-60"
       >
-        {pending ? "Đang xử lý..." : signup ? "Tạo tài khoản" : "Đăng nhập"}
+        {pending ? "Đang xử lý..." : cooldown > 0 ? `Thử lại sau ${cooldown} giây` : signup ? "Tạo tài khoản" : "Đăng nhập"}
       </button>
     </form>
   );

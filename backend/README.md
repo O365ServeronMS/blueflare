@@ -58,6 +58,19 @@ Validate and start:
 The worker imports the configured number of newest pages immediately, starting
 with NguonC and then filling gaps from KKPhim.
 
+## Account hardening
+
+Auth routes are rate limited (Valkey counters, in-memory fallback) and scrypt is
+capped so it cannot starve the libuv threadpool shared with image I/O and sharp.
+Limits are in `docs/backend-architecture.md`; all vars must also be in the stack `.env`.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `AUTH_HASH_CONCURRENCY` | 2 | concurrent scrypt hashes; keep well below `UV_THREADPOOL_SIZE` |
+| `AUTH_HASH_QUEUE` | 16 | waiting hashes before 503 `busy` |
+| `AUTH_REGISTER_GLOBAL_PER_HOUR` | 300 | global signups per hour, then 429 |
+| `UV_THREADPOOL_SIZE` | 8 | set on `api` in `deploy/compose.yml` |
+
 ## Crawl, ordering, and storage
 
 Each worker cycle first refreshes the newest `SYNC_PAGES_PER_RUN` pages, then
@@ -194,6 +207,11 @@ already-deployed Caddyfile by hand):
         reverse_proxy 127.0.0.1:3200
     }
 
+The `phim.bluesia.net` block also carries an `@authdirect` rule that answers 403 for
+`/api/auth/*` unless the peer is in the Cloudflare ranges. `inject_caddy_block`
+skips an existing block, so add it to a deployed Caddyfile by hand; the snippet and
+ranges are in `docs/CLOUDFLARE_CACHE.md` ("Auth hardening").
+
 Caddy obtains and serves the origin certificate for img.bluesia.net. Once the
 route is active, Cloudflare Full (strict) can reach the origin without 525.
 
@@ -283,7 +301,7 @@ means the Cache Rule is not active or the token used to create it lacks
 - GET /api/categories
 - GET /api/countries
 - GET /api/cards?slugs=a,b (public, cached 60s, key = sorted slug list)
-- /api/auth/* and /api/me/* (accounts, sessions, favorites, history with last episode; never cached; reachable only via the Next proxy, 404 on img.bluesia.net)
+- /api/auth/* and /api/me/* (accounts, sessions, favorites, history with last episode; never cached; reachable only via the Next proxy, 404 on img.bluesia.net; 429 rate_limited / 503 busy with Retry-After)
 - GET /i/:variant/:sha256.webp?url=...&sig=...
 
 Only image variants m (480 x 720) and d (1280 x 720) exist. Their identity is

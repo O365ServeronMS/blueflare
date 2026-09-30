@@ -214,7 +214,6 @@ export function getActiveNavKey(
   const pathSource = navSourceFromPath(path);
   if (pathSource) return pathSource;
   if (pathMatches(path, "/search")) return "search";
-  if (pathMatches(path, "/settings")) return "settings";
   if (isChildRoute(path)) return navSourceFromSearchParams(searchParams) || inferNavSourceFromMovie(movie);
   return "";
 }

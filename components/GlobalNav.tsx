@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
-import { Clock3, Heart, Menu, Search, Settings, X } from "lucide-react";
+import { CircleUser, Clock3, Heart, LogOut, Menu, Search, User, X } from "lucide-react";
 import { SearchSuggest } from "@/components/SearchSuggest";
 import { BlueflareIcon } from "@/components/logo/BlueflareIcon";
 import { BlueflareWordmark } from "@/components/logo/BlueflareWordmark";
-import { getActiveNavKey } from "@/lib/navigation";
+import { useAccount } from "@/components/useAccount";
+import { createReturnToPath, getActiveNavKey } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
 
 const primaryItems = [
@@ -20,7 +21,6 @@ const primaryItems = [
 const utilityItems = [
   { href: "/favorites", label: "Yêu thích", icon: Heart },
   { href: "/history", label: "Lịch sử", icon: Clock3 },
-  { href: "/settings", label: "Cài đặt", icon: Settings },
 ];
 
 type GlobalNavProps = {
@@ -38,6 +38,12 @@ export function GlobalNav({ featureSearch = true, featureLocalLibrary = true }: 
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const activeKey = getActiveNavKey(pathname, search);
+  const account = useAccount(pathname);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const accountRef = useRef<HTMLDivElement>(null);
+  const onAuthPage = pathname === "/login" || pathname === "/signup";
+  const returnTo = onAuthPage ? "" : createReturnToPath(pathname, search);
+  const loginHref = returnTo ? `/login?returnTo=${encodeURIComponent(returnTo)}` : "/login";
   const visibleUtilityItems = featureLocalLibrary
     ? utilityItems
     : utilityItems.filter((item) => item.href !== "/favorites" && item.href !== "/history");
@@ -60,6 +66,33 @@ export function GlobalNav({ featureSearch = true, featureLocalLibrary = true }: 
   }, [pathname]);
 
   useEffect(() => {
+    if (!accountOpen) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setAccountOpen(false);
+    }
+    function onPointer(event: PointerEvent) {
+      if (accountRef.current && !accountRef.current.contains(event.target as Node)) setAccountOpen(false);
+    }
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onPointer);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onPointer);
+    };
+  }, [accountOpen]);
+
+  async function logout() {
+    setAccountOpen(false);
+    setMenuOpen(false);
+    try {
+      await fetch("/api/auth/logout", { method: "POST", credentials: "include", cache: "no-store" });
+    } catch {
+      // Fall through: reload re-checks the session either way.
+    }
+    window.location.assign("/");
+  }
+
+  useEffect(() => {
     if (!menuOpen && !searchOpen) return;
     function closeOnEscape(event: KeyboardEvent) {
       if (event.key === "Escape") {
@@ -74,6 +107,7 @@ export function GlobalNav({ featureSearch = true, featureLocalLibrary = true }: 
   function closePanels() {
     setMenuOpen(false);
     setSearchOpen(false);
+    setAccountOpen(false);
   }
 
   return (
@@ -118,14 +152,56 @@ export function GlobalNav({ featureSearch = true, featureLocalLibrary = true }: 
           ) : null}
 
           <div className="hidden items-center md:flex">
-            {visibleUtilityItems.map((item) => {
-              const Icon = item.icon;
-              return (
-                <a key={item.href} href={item.href} aria-label={item.label} className="grid h-11 w-10 place-items-center text-silver transition-colors hover:text-chalk-white">
-                  <Icon className="h-[18px] w-[18px]" />
+            {account !== "user"
+              ? visibleUtilityItems.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <a key={item.href} href={item.href} aria-label={item.label} className="grid h-11 w-10 place-items-center text-silver transition-colors hover:text-chalk-white">
+                      <Icon className="h-[18px] w-[18px]" />
+                    </a>
+                  );
+                })
+              : null}
+            {/* Fixed 40px slot in every state so the nav never shifts. */}
+            <div ref={accountRef} className="relative h-11 w-10">
+              {account === "loading" ? null : account === "user" ? (
+                <>
+                  <button
+                    type="button"
+                    aria-label="Tài khoản"
+                    aria-haspopup="menu"
+                    aria-expanded={accountOpen}
+                    onClick={() => setAccountOpen((open) => !open)}
+                    className="grid h-11 w-10 place-items-center text-chalk-white transition-colors hover:text-silver"
+                  >
+                    <CircleUser className="h-[18px] w-[18px]" />
+                  </button>
+                  {accountOpen ? (
+                    <div role="menu" aria-label="Tài khoản" className="absolute right-0 top-full z-50 mt-1 w-44 rounded border border-white/10 bg-black py-1 shadow-xl">
+                      {featureLocalLibrary
+                        ? utilityItems.map((item) => {
+                            const Icon = item.icon;
+                            return (
+                              <a key={item.href} role="menuitem" href={item.href} onClick={closePanels} className="flex min-h-10 items-center gap-3 px-4 text-control text-silver hover:bg-graphite hover:text-chalk-white">
+                                <Icon className="h-4 w-4" aria-hidden="true" />
+                                {item.label}
+                              </a>
+                            );
+                          })
+                        : null}
+                      <button type="button" role="menuitem" onClick={logout} className="flex min-h-10 w-full items-center gap-3 px-4 text-left text-control text-silver hover:bg-graphite hover:text-chalk-white">
+                        <LogOut className="h-4 w-4" aria-hidden="true" />
+                        Đăng xuất
+                      </button>
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <a href={loginHref} aria-label="Đăng nhập" title="Đăng nhập" className="grid h-11 w-10 place-items-center text-silver transition-colors hover:text-chalk-white">
+                  <User className="h-[18px] w-[18px]" />
                 </a>
-              );
-            })}
+              )}
+            </div>
           </div>
 
           <button
@@ -176,6 +252,17 @@ export function GlobalNav({ featureSearch = true, featureLocalLibrary = true }: 
                 </a>
               );
             })}
+            {account === "user" ? (
+              <button type="button" onClick={logout} className="flex min-h-11 items-center justify-center gap-2 rounded px-2 text-caption font-medium text-silver hover:bg-graphite hover:text-chalk-white">
+                <LogOut className="h-4 w-4" />
+                Đăng xuất
+              </button>
+            ) : account === "guest" ? (
+              <a href={loginHref} onClick={closePanels} className="flex min-h-11 items-center justify-center gap-2 rounded px-2 text-caption font-medium text-silver hover:bg-graphite hover:text-chalk-white">
+                <User className="h-4 w-4" />
+                Đăng nhập
+              </a>
+            ) : null}
           </div>
         </div>
       ) : null}

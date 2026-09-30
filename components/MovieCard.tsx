@@ -3,6 +3,7 @@ import type { MovieCard as MovieCardType } from "@/lib/types";
 import { hrefWithReturnTo } from "@/lib/navigation";
 import { getDisplayRating } from "@/lib/utils";
 import { ScoreBadges } from "@/components/ScoreBadges";
+import { clampProgress, progressWidth } from "@/lib/progress";
 
 const LOCAL_IMAGE_PLACEHOLDER = "/image-placeholder.svg";
 
@@ -32,7 +33,9 @@ export function MovieCard({
   navSourceKey = "",
   returnTo = "",
   variant = "poster",
-  rank
+  rank,
+  progress,
+  href
 }: {
   movie: MovieCardType;
   compact?: boolean;
@@ -43,6 +46,10 @@ export function MovieCard({
   variant?: "poster" | "landscape";
   /** Trending position; renders the Top-10 numeral inside the poster. */
   rank?: number;
+  /** Watch progress 0..1; renders a red bar on the poster edge when > 0. */
+  progress?: number;
+  /** Overrides the detail link (e.g. resume a specific episode). */
+  href?: string;
 }) {
   const portrait = validHttpImage(movie.thumb);
   const landscape = validHttpImage(movie.poster);
@@ -51,7 +58,8 @@ export function MovieCard({
   const imageSrc = primaryUrl || LOCAL_IMAGE_PLACEHOLDER;
   const displayRating = getDisplayRating(movie);
   const status = movieStatus(movie);
-  const detailHref = hrefWithReturnTo(`/movie/${movie.slug}`, returnTo, navSourceKey);
+  const detailHref = href || hrefWithReturnTo(`/movie/${movie.slug}`, returnTo, navSourceKey);
+  const progressRatio = clampProgress(progress);
   const Title = headingLevel === 2 ? "h2" : "h3";
 
   if (variant === "landscape") {
@@ -73,6 +81,18 @@ export function MovieCard({
             className="h-full w-full object-cover"
           />
           <span className="bf-card-vignette absolute inset-0 opacity-80 transition-opacity group-hover:opacity-100" aria-hidden="true" />
+          {progressRatio > 0 ? (
+            <div
+              role="progressbar"
+              aria-label="Đã xem"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(progressRatio * 100)}
+              className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-[3px] bg-black/60"
+            >
+              <div className="h-full bg-netflix-red" style={{ width: progressWidth(progressRatio) }} />
+            </div>
+          ) : null}
           <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 p-3">
             <div className="min-w-0">
               <Title className="line-clamp-1 text-body font-bold leading-tight text-chalk-white">{movie.name}</Title>
@@ -112,6 +132,18 @@ export function MovieCard({
           />
           {rank ? (
             <span className="bf-rank pointer-events-none absolute bottom-0 left-1 z-10" aria-hidden="true">{rank}</span>
+          ) : null}
+          {progressRatio > 0 ? (
+            <div
+              role="progressbar"
+              aria-label="Đã xem"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(progressRatio * 100)}
+              className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-[3px] bg-black/60"
+            >
+              <div className="h-full bg-netflix-red" style={{ width: progressWidth(progressRatio) }} />
+            </div>
           ) : null}
         </div>
         <Title className={compact ? "mt-2 line-clamp-1 text-control font-medium text-chalk-white" : "mt-2 line-clamp-1 text-body font-medium text-chalk-white"}>{movie.name}</Title>

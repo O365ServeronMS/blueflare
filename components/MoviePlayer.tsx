@@ -1,7 +1,11 @@
 "use client";
 
 import { X } from "lucide-react";
+import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { useAccount } from "@/components/useAccount";
+import { useContinueItem } from "@/components/useContinueItem";
+import { resumeTarget } from "@/lib/continue-watching";
 import { HlsVideo } from "@/components/HlsVideo";
 import { IframePlayerFacade } from "@/components/IframePlayerFacade";
 import { NowPlayingMetadata } from "@/components/NowPlayingMetadata";
@@ -16,6 +20,7 @@ import type { MovieCard } from "@/lib/types";
 
 type MoviePlayerProps = {
   embedSrc?: string;
+  episodeKey?: string;
   episodeLabel: string;
   episodeName?: string;
   hlsSrc?: string;
@@ -23,11 +28,14 @@ type MoviePlayerProps = {
   movie: MovieCard;
   poster?: string;
   preferredMode?: "iframe" | "hls";
+  /** True when the user opened the page via "Xem tiếp từ ...". */
+  resumeRequested?: boolean;
   title: string;
 };
 
 export function MoviePlayer({
   embedSrc,
+  episodeKey = "",
   episodeLabel,
   episodeName,
   hlsSrc,
@@ -35,8 +43,13 @@ export function MoviePlayer({
   movie,
   poster,
   preferredMode,
+  resumeRequested = false,
   title,
 }: MoviePlayerProps) {
+  const account = useAccount(usePathname());
+  const loggedIn = account === "user";
+  const continueItem = useContinueItem(movie.slug, loggedIn && resumeRequested);
+  const startAtSec = resumeRequested ? resumeTarget(continueItem, episodeKey) ?? undefined : undefined;
   const [isOpen, setIsOpen] = useState(initialOpen);
   const [playbackSource, setPlaybackSource] = useState<PlaybackSource | null>(null);
   const playerRef = useRef<HTMLDivElement | null>(null);
@@ -116,7 +129,14 @@ export function MoviePlayer({
             ) : (playbackSource?.mode === "native-hls" || playbackSource?.mode === "hls-js") && playbackSource.hlsUrl ? (
               <>
                 <NowPlayingMetadata name={movie.name} originName={movie.originName} type={movie.type} episodeName={episodeName} artworkSrc={poster} />
-                <HlsVideo mode={playbackSource.mode} onPlaybackFailure={handleHlsError} src={playbackSource.hlsUrl} poster={poster} />
+                <HlsVideo
+                  mode={playbackSource.mode}
+                  onPlaybackFailure={handleHlsError}
+                  src={playbackSource.hlsUrl}
+                  poster={poster}
+                  progress={loggedIn && episodeKey ? { slug: movie.slug, episodeKey } : null}
+                  startAtSec={startAtSec}
+                />
               </>
             ) : playbackSource === null ? (
               <div className="grid h-full place-items-center p-6 text-center text-body text-silver">Đang chuẩn bị player…</div>

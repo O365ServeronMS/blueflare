@@ -1,5 +1,6 @@
 import { connection } from "next/server";
 import { HeroSlider } from "@/components/HeroSlider";
+import { ContinueWatchingRow } from "@/components/ContinueWatchingRow";
 import { SectionRow } from "@/components/SectionRow";
 import { getHomeServer } from "@/lib/catalog-server";
 import { readFrontendFeatures } from "@/lib/features";
@@ -21,6 +22,7 @@ export default async function HomePage() {
     <>
       {features.heroSlider ? <HeroSlider items={heroItems} /> : null}
       <div className="pb-6">
+        <ContinueWatchingRow slideDurationMs={features.railSlideDurationMs} />
         {heroItems.length ? (
           <SectionRow
             title="Phim đang được xem nhiều"

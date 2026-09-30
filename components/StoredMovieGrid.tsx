@@ -4,7 +4,9 @@ import { useLocalMovies, EmptyState } from "@/components/LocalMovieActions";
 import { MovieCard } from "@/components/MovieCard";
 
 export function StoredMovieGrid({ type }: { type: "favorites" | "history" }) {
-  const { items } = useLocalMovies(type);
+  const { items, loading } = useLocalMovies(type);
+
+  if (loading && !items.length) return null;
 
   if (!items.length) {
     return (

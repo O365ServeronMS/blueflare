@@ -413,7 +413,6 @@ describe("navSourceFromPath", () => {
   test("returns empty for unrecognized paths", () => {
     expect(navSourceFromPath("/movie/test")).toBe("");
     expect(navSourceFromPath("/search")).toBe("");
-    expect(navSourceFromPath("/settings")).toBe("");
   });
 
   test("returns empty for a person page: not one of the 5 nav sources", () => {
@@ -474,10 +473,6 @@ describe("getActiveNavKey", () => {
 
   test("returns search for /search", () => {
     expect(getActiveNavKey("/search")).toBe("search");
-  });
-
-  test("returns settings for /settings", () => {
-    expect(getActiveNavKey("/settings")).toBe("settings");
   });
 
   test("resolves movie child route from searchParams", () => {

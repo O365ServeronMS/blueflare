@@ -7,6 +7,7 @@ import { CastStrip } from "@/components/CastStrip";
 import { ExpandableSynopsis } from "@/components/ExpandableSynopsis";
 import { MovieActions } from "@/components/LocalMovieActions";
 import { MoviePlayer } from "@/components/MoviePlayer";
+import { ResumeActions } from "@/components/ResumeActions";
 import { RecommendationRail } from "@/components/RecommendationRail";
 import { getMovieServer } from "@/lib/catalog-server";
 import { episodeWatchKey, findEpisodeByWatchKey } from "@/lib/episodes";
@@ -87,6 +88,9 @@ export default async function MoviePage({ params, searchParams }: { params: Para
   const displayRating = getDisplayRating(movie);
   const playerHref = hrefWithReturnTo(`/movie/${movie.slug}?server=${serverIndex}&ep=${encodeURIComponent(activeEpisodeKey)}&play=1#player`, returnTo, navSource);
 
+  const resumeHref = hrefWithReturnTo(`/movie/${movie.slug}?server=${serverIndex}&ep=${encodeURIComponent(activeEpisodeKey)}&play=1&resume=1#player`, returnTo, navSource);
+  const episodeKeys = (server?.serverData || []).map((item, index) => episodeWatchKey(item, index));
+
   return (
     <article className="pb-10">
       <section className="bf-detail-shell relative min-h-[74vh] overflow-hidden bg-deep-space md:min-h-[78vh]">
@@ -112,6 +116,7 @@ export default async function MoviePage({ params, searchParams }: { params: Para
             />
             <div className="bf-hero-actions mt-6 flex flex-wrap items-center gap-3">
               <a href={playerHref} className="bf-play-cta"><Play className="h-5 w-5 fill-current" aria-hidden="true" />Phát</a>
+              <ResumeActions activeEpisodeKey={activeEpisodeKey} episodeKeys={episodeKeys} navSource={navSource} resumeHref={resumeHref} returnTo={returnTo} serverIndex={serverIndex} slug={movie.slug} />
               <MovieActions movie={movieCard} />
             </div>
           </div>
@@ -121,12 +126,14 @@ export default async function MoviePage({ params, searchParams }: { params: Para
       <section id="player" className="bf-content-width bf-page-gutter scroll-mt-16 pt-4">
         <MoviePlayer
           embedSrc={episode?.linkEmbed}
+          episodeKey={activeEpisodeKey}
           episodeLabel={`${server?.serverName || "Server"} · ${episode?.name || "Tập phim"}`}
           episodeName={episode?.name}
           hlsSrc={episode?.linkM3u8}
           initialOpen={urlParams.get("play") === "1"}
           movie={movieCard}
           poster={movie.thumb || movie.poster}
+          resumeRequested={urlParams.get("resume") === "1"}
           title={`${movie.name} - ${episode?.name || "Tập phim"}`}
         />
       </section>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useProgressReporter } from "@/components/useProgressReporter";
 import { canPlayNativeHls, type PlaybackMode } from "@/lib/playback";
 
 type HlsErrorData = {
@@ -84,14 +85,43 @@ export function HlsVideo({
   mode,
   onPlaybackFailure,
   poster,
+  progress = null,
   src,
+  startAtSec,
 }: {
   mode: Extract<PlaybackMode, "native-hls" | "hls-js">;
   onPlaybackFailure?: () => void;
   poster?: string;
+  /** Set only for logged-in users: enables PUT /api/me/progress reporting. */
+  progress?: { slug: string; episodeKey: string } | null;
   src: string;
+  /** Resume position; applied once metadata is ready, never starts playback. */
+  startAtSec?: number;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const seekedRef = useRef(false);
+  useProgressReporter(videoRef, progress);
+
+  useEffect(() => {
+    seekedRef.current = false;
+  }, [src]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !startAtSec || startAtSec < 1) return;
+    const seek = () => {
+      if (seekedRef.current) return;
+      seekedRef.current = true;
+      // Respect a user who already scrubbed before the resume data arrived.
+      if (video.currentTime < 1) video.currentTime = startAtSec;
+    };
+    if (video.readyState >= 1) {
+      seek();
+      return;
+    }
+    video.addEventListener("loadedmetadata", seek, { once: true });
+    return () => video.removeEventListener("loadedmetadata", seek);
+  }, [startAtSec, src]);
   const failureRef = useRef(onPlaybackFailure);
   const [error, setError] = useState("");
   failureRef.current = onPlaybackFailure;

@@ -1,0 +1,31 @@
+import type { Metadata } from "next";
+import { AuthForm } from "@/components/AuthForm";
+import { hrefWithReturnTo, safeInternalPath } from "@/lib/navigation";
+
+export const metadata: Metadata = {
+  title: "Đăng nhập — Blueflare",
+  robots: { index: false, follow: false }
+};
+
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
+
+export default async function LoginPage({ searchParams }: { searchParams: SearchParams }) {
+  const query = await searchParams;
+  const raw = Array.isArray(query.returnTo) ? query.returnTo[0] : query.returnTo;
+  const returnTo = safeInternalPath(raw);
+  const otherHref = hrefWithReturnTo("/signup", returnTo);
+
+  return (
+    <div className="bf-content-width bf-page-gutter pb-16 pt-28 md:pt-36">
+      <div className="mx-auto max-w-sm">
+        <h1 className="text-[32px] font-black tracking-tight text-white">Đăng nhập</h1>
+        <p className="mt-3 text-body leading-6 text-silver">Đồng bộ yêu thích và phim đang xem trên mọi thiết bị.</p>
+        <AuthForm mode="login" returnTo={returnTo} />
+        <p className="mt-8 text-control text-silver">
+          Chưa có tài khoản?{" "}
+          <a href={otherHref} className="font-medium text-chalk-white underline underline-offset-4 hover:text-silver">Đăng ký</a>
+        </p>
+      </div>
+    </div>
+  );
+}

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { config } from './config.js';
 
 function imageUrl(assetId, variant) {
@@ -9,6 +10,7 @@ import {
   findPersonBySlug,
   getHeroTrendingMovies,
   listCanonical,
+  listReadyBySlugs,
   listPersonMovies,
   recommendationsForSlug,
   taxonomy,
@@ -16,7 +18,7 @@ import {
 } from './repository.js';
 import { creditIdentity, normalizeCreditRole } from './people.js';
 
-function card(row) {
+export function card(row) {
 function seasonTitle(row) {
   const season = row.tmdb_media_type === 'tv' ? row.tmdb_season_number : null;
   if (season === null || season === undefined) return String(row.title || '');
@@ -98,6 +100,33 @@ function listResponse(result, title) {
       }
     }
   };
+}
+
+export const CARDS_MAX_SLUGS = 60;
+const CARD_SLUG_MAX = 200;
+
+// Returns { slugs } (deduplicated, request order) or { error }.
+export function parseCardSlugs(raw) {
+  const seen = new Set();
+  const slugs = [];
+  for (const part of String(raw || '').split(',')) {
+    const slug = part.trim();
+    if (!slug || slug.length > CARD_SLUG_MAX) continue;
+    if (!seen.has(slug)) { seen.add(slug); slugs.push(slug); }
+  }
+  if (slugs.length > CARDS_MAX_SLUGS) return { error: 'too_many_slugs' };
+  return { slugs };
+}
+
+// Depends only on the sorted slug set; hashed to keep the key short.
+export function cardsCacheKey(slugs) {
+  return 'cards:' + createHash('sha256').update([...slugs].sort().join(',')).digest('hex').slice(0, 32);
+}
+
+export async function buildCards(slugs) {
+  const rows = await listReadyBySlugs(slugs);
+  const bySlug = new Map(rows.map((row) => [row.canonical_slug, row]));
+  return { items: slugs.filter((slug) => bySlug.has(slug)).map((slug) => card(bySlug.get(slug))) };
 }
 
 export async function buildList(type, page) {

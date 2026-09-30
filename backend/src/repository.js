@@ -1297,6 +1297,15 @@ export async function listCanonical(options = {}) {
 }
 
 
+export async function listReadyBySlugs(slugs) {
+  if (!slugs.length) return [];
+  const result = await pool.query(
+    "SELECT * FROM movies WHERE catalog_state = 'ready' AND canonical_slug = ANY($1::text[])",
+    [slugs]
+  );
+  return result.rows;
+}
+
 function validTrendingIds(tmdbIds) {
   const seen = new Set();
   return (Array.isArray(tmdbIds) ? tmdbIds : [])

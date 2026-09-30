@@ -16,6 +16,7 @@ import { loadImageHostHealth, providerHealth } from './repository.js';
 import { metricsSnapshot, observeCache, observeRequest } from './observability.js';
 import { assessWorkerHeartbeat } from './workerHealth.js';
 import {
+  buildCards,
   buildCountry,
   buildGenre,
   buildHome,
@@ -24,9 +25,15 @@ import {
   buildPerson,
   buildRecommendations,
   buildSearch,
-  buildTaxonomy
+  buildTaxonomy,
+  cardsCacheKey,
+  parseCardSlugs
 } from './viewmodels.js';
 import { normalizeCreditRole } from './people.js';
+import { createAccountHandler, isAccountPath } from './meApi.js';
+
+// Account routes are per-user and never cached: no Valkey, no getOrBuild.
+const handleAccountRoute = createAccountHandler();
 
 function page(value) {
   const parsed = Number(value);
@@ -144,6 +151,10 @@ async function healthPayload() {
 
 async function route(request, response) {
   const url = new URL(request.url || '/', 'http://blueflare.local');
+  if (isAccountPath(url.pathname)) {
+    await handleAccountRoute(request, response, url);
+    return;
+  }
   if (request.method === 'OPTIONS') {
     response.writeHead(204, corsHeaders(request));
     response.end();
@@ -201,6 +212,17 @@ async function route(request, response) {
       () => buildList(type, currentPage),
       300
     );
+    return;
+  }
+
+  if (url.pathname === '/api/cards') {
+    const parsed = parseCardSlugs(url.searchParams.get('slugs'));
+    if (parsed.error) {
+      json(response, request, 400, { error: parsed.error }, { 'cache-control': 'no-store' });
+      return;
+    }
+    // Worker invalidates by exact key and cannot enumerate these, so keep the TTL short.
+    await cachedJson(request, response, cardsCacheKey(parsed.slugs), () => buildCards(parsed.slugs), 60);
     return;
   }
 

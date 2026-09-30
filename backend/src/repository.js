@@ -833,6 +833,37 @@ export async function recordTmdbMatchFailure(movieId, message) {
   );
 }
 
+/**
+ * Overwrite a guessed tmdb_lookup_id that a cast-verified match contradicts.
+ *
+ * Only rows whose MDBList lookup actually used the guess (no tmdb_id, no
+ * imdb_id) lose their stored score and get re-queued: a wrong Rotten Tomatoes
+ * score is worse than none. Rows with an imdb_id keep their score because the
+ * guess never fed it. Non-conflicting rows are left alone to save MDBList budget.
+ * Bounded per call so a large first run spreads over several cycles.
+ */
+export async function correctGuessedLookupIds(limit = 200) {
+  const result = await pool.query(
+    'WITH todo AS (' +
+    '  SELECT id FROM movies ' +
+    "  WHERE catalog_state='ready' AND tmdb_id IS NULL AND tmdb_match_status='verified' " +
+    "    AND tmdb_lookup_status='matched' AND tmdb_lookup_id IS NOT NULL " +
+    '    AND tmdb_lookup_id::bigint <> tmdb_match_id ' +
+    "    AND (tmdb_match_media_type='movie') = (media_type='movie') " +
+    '  ORDER BY catalog_sort_at DESC NULLS LAST LIMIT $1' +
+    ') ' +
+    'UPDATE movies m SET tmdb_lookup_id=m.tmdb_match_id, ' +
+    "  mdblist_status=CASE WHEN COALESCE(m.imdb_id,'')='' THEN 'none' ELSE m.mdblist_status END, " +
+    "  mdblist_checked_at=CASE WHEN COALESCE(m.imdb_id,'')='' THEN NULL ELSE m.mdblist_checked_at END, " +
+    "  mdblist_tomatoes=CASE WHEN COALESCE(m.imdb_id,'')='' THEN NULL ELSE m.mdblist_tomatoes END, " +
+    "  mdblist_audience=CASE WHEN COALESCE(m.imdb_id,'')='' THEN NULL ELSE m.mdblist_audience END, " +
+    '  updated_at=now() ' +
+    'FROM todo WHERE m.id=todo.id RETURNING m.canonical_slug',
+    [Math.max(1, Math.floor(limit))]
+  );
+  return result.rows.map((row) => row.canonical_slug);
+}
+
 export async function findPersonBySlug(slug) {
   const result = await pool.query('SELECT * FROM people WHERE slug=$1 LIMIT 1', [slug]);
   return result.rows[0] || null;

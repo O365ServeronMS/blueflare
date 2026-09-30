@@ -23,6 +23,7 @@ import {
   listTmdbRecommendationCandidates,
   listTmdbCreditCandidates,
   listTmdbMatchCandidates,
+  correctGuessedLookupIds,
   recordTmdbMatch,
   recordTmdbMatchFailure,
   recordTmdbLookup,
@@ -693,6 +694,14 @@ async function syncCycle() {
       console.warn('[worker] tmdb match pass failed', error.message);
       return [];
     }));
+  }
+  if (!stopping && config.tmdbMatchEnabled) {
+    const corrected = await correctGuessedLookupIds().catch((error) => {
+      console.warn('[worker] tmdb lookup correction failed', error.message);
+      return [];
+    });
+    if (corrected.length) console.log('[worker] tmdb lookup corrected=' + corrected.length);
+    ratingChangedSlugs.push(...corrected);
   }
   if (!stopping) ratingChangedSlugs.push(...await refreshMdblistBackfill());
   if (ratingChangedSlugs.length) {

@@ -171,8 +171,16 @@ Mẫu Phase 0 đã loại ba quốc gia đó. Công cụ: `backend/tools/tmdb-ma
 **1.019 phim chưa verify thật** (ngoài 3 quốc gia): 640 (62,8%) verify được.
 Theo quốc gia: Âu Mỹ 85,3%, Anh 66,7%, Canada 75,0%, Pháp 63,6%, Đức 68,4%, Ấn Độ 56,1%, Việt Nam 36,4%,
 **Thái Lan 9,3%, Hàn Quốc 3,3%**. Hàn/Thái không nằm trong danh sách loại nhưng gần như không cứu được; pass sẽ tốn call cho chúng
-(xem `TMDB_MATCH_SKIP_COUNTRIES`, mặc định gồm `han-quoc`, `thai-lan` sau khi Steve xác nhận — hiện để mặc định 3 nước Steve chỉ định).
+(biến `TMDB_MATCH_SKIP_COUNTRIES`, mặc định chỉ `trung-quoc,hong-kong,nhat-ban` đúng như Steve chỉ định; **khuyến nghị** thêm `han-quoc,thai-lan` để đỡ tốn call — chờ Steve quyết).
 
 **Chỉnh lại ước lượng Phase 4:** đo trực tiếp thuật toán đoán tên cũ trên phim trong phạm vi: **95,1% (558/587)**, không phải 92%
 (con số 92% gồm cả Hoa/HK/Nhật). ⇒ khoảng 5% dòng `matched` trong phạm vi mang id sai, số tuyệt đối thấp hơn ước lượng ban đầu 1.200.
 Ngoài ra chỉ *sửa được* những dòng cast-verify được (số 98,4% khớp chỉ đo trên các dòng đó nên thiên lệch lạc quan).
+
+## 7. Triển khai (nhánh `feat/tmdb-identity-evidence`)
+
+- Phase 1: migration `019_tmdb_match.sql`, khoá `TMDB_MATCH_*`, `listTmdbMatchCandidates` / `recordTmdbMatch` / `recordTmdbMatchFailure`.
+- Phase 2: `refreshTmdbMatches()` trong worker, mặc định **tắt** (`TMDB_MATCH_ENABLED=false`). Khi verified, credits đã tải được ghi luôn.
+- Phase 3: `creditIdentity`, `listTmdbCreditCandidates`, `listPersonMovies` đọc thêm `tmdb_match_*` (chỉ khi `tmdb_id IS NULL`, `status='verified'`).
+- Phase 4: `correctGuessedLookupIds()` ghi đè `tmdb_lookup_id` sai bằng id đã verify, xoá điểm MDBList cũ và xếp hàng lấy lại (chỉ dòng không có `imdb_id`), tối đa 200 dòng/chu kỳ.
+- Chưa đo `EXPLAIN` của join `listPersonMovies` (không có DB thử); làm read-only sau khi migration lên production.

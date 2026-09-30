@@ -89,3 +89,18 @@ test('listTmdbCreditCandidates: includes verified matches only when tmdb_id is n
     assert.equal(Math.max(...[...sql.matchAll(/\$(\d+)/g)].map((m) => Number(m[1]))), params.length);
   } finally { c.restore(); }
 });
+
+import { correctGuessedLookupIds } from '../src/repository.js';
+
+test('correctGuessedLookupIds: touches only guess-fed rows and never tmdb_id', async () => {
+  const c = capture([{ canonical_slug: 'a' }, { canonical_slug: 'b' }]);
+  try {
+    assert.deepEqual(await correctGuessedLookupIds(10), ['a', 'b']);
+    const { sql, params } = c.calls[0];
+    assert.deepEqual(params, [10]);
+    assert.match(sql, /tmdb_id IS NULL AND tmdb_match_status='verified'/);
+    assert.match(sql, /tmdb_lookup_id::bigint <> tmdb_match_id/);
+    assert.match(sql, /COALESCE\(m\.imdb_id,''\)=''/);
+    assert.doesNotMatch(sql, /SET[^']*\btmdb_id=/);
+  } finally { c.restore(); }
+});

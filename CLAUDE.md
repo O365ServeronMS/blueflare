@@ -86,7 +86,7 @@ Codebase and runtime are separate directories (ADR-001): the repo lives at `/hom
 
 ## Playback and loading
 
-- Desktop/Android prefer iframe/embed; iOS prefers native HLS. MSE fallback dynamically imports only `hls.js/dist/hls.light.js`.
+- Desktop/Android prefer iframe/embed; iOS prefers native HLS. Signed-in users get HLS first whenever an HLS source exists, because embeds cannot report watch progress. MSE fallback dynamically imports only `hls.js/dist/hls.light.js`.
 - Never mount an embed iframe or autoplay media before an explicit Play action.
 - The first visible home hero is the only eager/high-priority image. Other posters/backdrops are lazy and preserve aspect ratio.
 - Keep client boundaries small; prefer Server Components and parallel data fetching.

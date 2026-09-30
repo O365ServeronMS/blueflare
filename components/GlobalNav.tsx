@@ -160,9 +160,9 @@ export function GlobalNav({ featureSearch = true, featureLocalLibrary = true }: 
                 </a>
               );
             })}
-            {/* Fixed 40px slot in every state so the nav never shifts. */}
+            {/* Fixed 40px slot in every state so the nav never shifts. Login is the SSR/loading default so it paints with the other buttons. */}
             <div ref={accountRef} className="relative h-11 w-10">
-              {account === "loading" ? null : account === "user" ? (
+              {account === "user" ? (
                 <>
                   <button
                     type="button"
@@ -256,12 +256,12 @@ export function GlobalNav({ featureSearch = true, featureLocalLibrary = true }: 
                 <LogOut className="h-4 w-4" />
                 Đăng xuất
               </button>
-            ) : account === "guest" ? (
+            ) : (
               <a href={loginHref} onClick={closePanels} className="flex min-h-11 items-center justify-center gap-2 rounded px-2 text-caption font-medium text-silver hover:bg-graphite hover:text-chalk-white">
                 <User className="h-4 w-4" />
                 Đăng nhập
               </a>
-            ) : null}
+            )}
           </div>
         </div>
       ) : null}

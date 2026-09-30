@@ -152,16 +152,14 @@ export function GlobalNav({ featureSearch = true, featureLocalLibrary = true }: 
           ) : null}
 
           <div className="hidden items-center md:flex">
-            {account !== "user"
-              ? visibleUtilityItems.map((item) => {
-                  const Icon = item.icon;
-                  return (
-                    <a key={item.href} href={item.href} aria-label={item.label} className="grid h-11 w-10 place-items-center text-silver transition-colors hover:text-chalk-white">
-                      <Icon className="h-[18px] w-[18px]" />
-                    </a>
-                  );
-                })
-              : null}
+            {visibleUtilityItems.map((item) => {
+              const Icon = item.icon;
+              return (
+                <a key={item.href} href={item.href} aria-label={item.label} className="grid h-11 w-10 place-items-center text-silver transition-colors hover:text-chalk-white">
+                  <Icon className="h-[18px] w-[18px]" />
+                </a>
+              );
+            })}
             {/* Fixed 40px slot in every state so the nav never shifts. */}
             <div ref={accountRef} className="relative h-11 w-10">
               {account === "loading" ? null : account === "user" ? (
@@ -178,17 +176,6 @@ export function GlobalNav({ featureSearch = true, featureLocalLibrary = true }: 
                   </button>
                   {accountOpen ? (
                     <div role="menu" aria-label="Tài khoản" className="absolute right-0 top-full z-50 mt-1 w-44 rounded border border-white/10 bg-black py-1 shadow-xl">
-                      {featureLocalLibrary
-                        ? utilityItems.map((item) => {
-                            const Icon = item.icon;
-                            return (
-                              <a key={item.href} role="menuitem" href={item.href} onClick={closePanels} className="flex min-h-10 items-center gap-3 px-4 text-control text-silver hover:bg-graphite hover:text-chalk-white">
-                                <Icon className="h-4 w-4" aria-hidden="true" />
-                                {item.label}
-                              </a>
-                            );
-                          })
-                        : null}
                       <button type="button" role="menuitem" onClick={logout} className="flex min-h-10 w-full items-center gap-3 px-4 text-left text-control text-silver hover:bg-graphite hover:text-chalk-white">
                         <LogOut className="h-4 w-4" aria-hidden="true" />
                         Đăng xuất

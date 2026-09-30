@@ -55,7 +55,7 @@ test('listTmdbMatchCandidates: parameters line up with placeholders', async () =
     assert.equal(rows.length, 1);
     const { sql, params } = c.calls[0];
     assert.match(sql, /tmdb_id IS NULL/);
-    assert.deepEqual(params[0], ['trung-quoc', 'hong-kong', 'nhat-ban']);
+    assert.deepEqual(params[0], ['trung-quoc', 'hong-kong', 'nhat-ban', 'han-quoc', 'thai-lan']);
     assert.equal(params[3], 5);
     const max = Math.max(...[...sql.matchAll(/\$(\d+)/g)].map((m) => Number(m[1])));
     assert.equal(max, params.length);

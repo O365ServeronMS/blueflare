@@ -88,7 +88,7 @@ export const config = Object.freeze({
   tmdbMatchRefreshMs: integer('TMDB_MATCH_REFRESH_MS', 30 * 24 * 60 * 60 * 1000, 60 * 60 * 1000),
   tmdbMatchRetryMs: integer('TMDB_MATCH_RETRY_MS', 6 * 60 * 60 * 1000, 60 * 1000),
   // Primary-country slugs left unmatched on purpose (cast names do not transliterate).
-  tmdbMatchSkipCountries: csv('TMDB_MATCH_SKIP_COUNTRIES', 'trung-quoc,hong-kong,nhat-ban'),
+  tmdbMatchSkipCountries: csv('TMDB_MATCH_SKIP_COUNTRIES', 'trung-quoc,hong-kong,nhat-ban,han-quoc,thai-lan'),
 
   // MDBList supplies both Rotten Tomatoes critic and audience percentages shown
   // on cards. Gated by the key list being non-empty, like TMDB above.

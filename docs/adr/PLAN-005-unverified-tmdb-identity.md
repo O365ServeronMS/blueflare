@@ -171,7 +171,7 @@ Mẫu Phase 0 đã loại ba quốc gia đó. Công cụ: `backend/tools/tmdb-ma
 **1.019 phim chưa verify thật** (ngoài 3 quốc gia): 640 (62,8%) verify được.
 Theo quốc gia: Âu Mỹ 85,3%, Anh 66,7%, Canada 75,0%, Pháp 63,6%, Đức 68,4%, Ấn Độ 56,1%, Việt Nam 36,4%,
 **Thái Lan 9,3%, Hàn Quốc 3,3%**. Hàn/Thái không nằm trong danh sách loại nhưng gần như không cứu được; pass sẽ tốn call cho chúng
-(biến `TMDB_MATCH_SKIP_COUNTRIES`, mặc định chỉ `trung-quoc,hong-kong,nhat-ban` đúng như Steve chỉ định; **khuyến nghị** thêm `han-quoc,thai-lan` để đỡ tốn call — chờ Steve quyết).
+(biến `TMDB_MATCH_SKIP_COUNTRIES`, mặc định `trung-quoc,hong-kong,nhat-ban,han-quoc,thai-lan`; Steve đã xác nhận thêm `han-quoc,thai-lan` vào mặc định).
 
 **Chỉnh lại ước lượng Phase 4:** đo trực tiếp thuật toán đoán tên cũ trên phim trong phạm vi: **95,1% (558/587)**, không phải 92%
 (con số 92% gồm cả Hoa/HK/Nhật). ⇒ khoảng 5% dòng `matched` trong phạm vi mang id sai, số tuyệt đối thấp hơn ước lượng ban đầu 1.200.

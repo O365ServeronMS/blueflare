@@ -671,12 +671,17 @@ export async function recordTmdbRecommendations(mediaType, tmdbId, status, lists
  */
 export async function listTmdbCreditCandidates(limit = config.tmdbCreditsLimit) {
   const result = await pool.query(
-    'WITH keys AS (' +
-    '  SELECT DISTINCT ON (m.tmdb_media_type, m.tmdb_id) m.tmdb_media_type AS media_type, ' +
-    '    m.tmdb_id, m.catalog_sort_at FROM movies m ' +
+    'WITH ids AS (' +
+    '  SELECT m.tmdb_media_type AS media_type, m.tmdb_id, m.catalog_sort_at FROM movies m ' +
     "  WHERE m.catalog_state='ready' AND m.tmdb_id IS NOT NULL " +
     "    AND m.tmdb_media_type IN ('movie','tv') " +
-    '  ORDER BY m.tmdb_media_type, m.tmdb_id, m.catalog_sort_at DESC NULLS LAST' +
+    '  UNION ALL ' +
+    '  SELECT m.tmdb_match_media_type, m.tmdb_match_id, m.catalog_sort_at FROM movies m ' +
+    "  WHERE m.catalog_state='ready' AND m.tmdb_id IS NULL AND m.tmdb_match_status='verified' " +
+    "    AND m.tmdb_match_media_type IN ('movie','tv') AND m.tmdb_match_id > 0" +
+    '), keys AS (' +
+    '  SELECT DISTINCT ON (media_type, tmdb_id) media_type, tmdb_id, catalog_sort_at FROM ids ' +
+    '  ORDER BY media_type, tmdb_id, catalog_sort_at DESC NULLS LAST' +
     ') ' +
     'SELECT keys.media_type, keys.tmdb_id FROM keys ' +
     'LEFT JOIN tmdb_credits_sync s ON s.media_type=keys.media_type AND s.tmdb_id=keys.tmdb_id ' +
@@ -863,15 +868,26 @@ export async function listPersonMovies(personId, options = {}) {
     roleFilter = ' AND c.role=$2';
   }
 
+  // Two equijoins instead of one OR join so each keeps its index: provider
+  // identities (tmdb_id) and cast-verified matches on rows that have none.
   const hits =
-    'WITH hits AS (' +
-    '  SELECT DISTINCT ON (c.media_type, c.tmdb_id) m.* FROM movie_credits c ' +
+    'WITH joined AS (' +
+    '  SELECT c.media_type AS credit_media_type, c.tmdb_id AS credit_tmdb_id, m.* FROM movie_credits c ' +
     '  JOIN movies m ON m.tmdb_id=c.tmdb_id AND m.tmdb_media_type=c.media_type ' +
     '  WHERE c.person_id=$1' + roleFilter +
     "    AND m.catalog_state='ready' AND m.canonical_slug<>'' " +
     '    AND ' + imagePresent('m') + ' AND ' + playableSourceExists('m') +
-    '  ORDER BY c.media_type, c.tmdb_id, m.tmdb_season_number DESC NULLS LAST, ' +
-    '    m.catalog_sort_at DESC NULLS LAST' +
+    '  UNION ALL ' +
+    '  SELECT c.media_type, c.tmdb_id, m.* FROM movie_credits c ' +
+    "  JOIN movies m ON m.tmdb_match_status='verified' AND m.tmdb_id IS NULL " +
+    '    AND m.tmdb_match_id=c.tmdb_id AND m.tmdb_match_media_type=c.media_type ' +
+    '  WHERE c.person_id=$1' + roleFilter +
+    "    AND m.catalog_state='ready' AND m.canonical_slug<>'' " +
+    '    AND ' + imagePresent('m') + ' AND ' + playableSourceExists('m') +
+    '), hits AS (' +
+    '  SELECT DISTINCT ON (credit_media_type, credit_tmdb_id) * FROM joined ' +
+    '  ORDER BY credit_media_type, credit_tmdb_id, tmdb_season_number DESC NULLS LAST, ' +
+    '    catalog_sort_at DESC NULLS LAST' +
     ') ';
 
   const count = await pool.query(hits + 'SELECT count(*)::integer AS count FROM hits', values);

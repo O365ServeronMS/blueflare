@@ -61,3 +61,31 @@ test('listTmdbMatchCandidates: parameters line up with placeholders', async () =
     assert.equal(max, params.length);
   } finally { c.restore(); }
 });
+
+import { listPersonMovies, listTmdbCreditCandidates } from '../src/repository.js';
+
+test('listPersonMovies: both joins present and placeholders match params', async () => {
+  for (const role of ['all', 'cast']) {
+    const c = capture([{ count: 0 }]);
+    try {
+      await listPersonMovies('p1', { role, page: 1 });
+      for (const { sql, params } of c.calls) {
+        assert.match(sql, /m\.tmdb_id=c\.tmdb_id/);
+        assert.match(sql, /m\.tmdb_match_id=c\.tmdb_id/);
+        assert.match(sql, /DISTINCT ON \(credit_media_type, credit_tmdb_id\)/);
+        const max = Math.max(...[...sql.matchAll(/\$(\d+)/g)].map((m) => Number(m[1])));
+        assert.equal(max, params.length);
+      }
+    } finally { c.restore(); }
+  }
+});
+
+test('listTmdbCreditCandidates: includes verified matches only when tmdb_id is null', async () => {
+  const c = capture([]);
+  try {
+    await listTmdbCreditCandidates(3);
+    const { sql, params } = c.calls[0];
+    assert.match(sql, /tmdb_id IS NULL AND m\.tmdb_match_status='verified'/);
+    assert.equal(Math.max(...[...sql.matchAll(/\$(\d+)/g)].map((m) => Number(m[1]))), params.length);
+  } finally { c.restore(); }
+});

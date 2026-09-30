@@ -94,3 +94,35 @@ test('normalizeCreditRole: anything else reads as all', () => {
   assert.equal(normalizeCreditRole('xyz'), 'all');
   assert.equal(normalizeCreditRole(undefined), 'all');
 });
+
+test('creditIdentity: a verified cast match is used when there is no provider tmdb_id', () => {
+  assert.deepEqual(
+    creditIdentity({
+      tmdb_id: null, tmdb_match_status: 'verified', tmdb_match_id: '55', tmdb_match_media_type: 'tv'
+    }),
+    { mediaType: 'tv', tmdbId: 55 }
+  );
+});
+
+test('creditIdentity: provider tmdb_id wins over a match', () => {
+  assert.deepEqual(
+    creditIdentity({
+      tmdb_id: 7, tmdb_media_type: 'movie',
+      tmdb_match_status: 'verified', tmdb_match_id: 55, tmdb_match_media_type: 'tv'
+    }),
+    { mediaType: 'movie', tmdbId: 7 }
+  );
+});
+
+test('creditIdentity: unverified or unsupported matches are ignored', () => {
+  for (const status of ['none', 'unverifiable', 'error', null]) {
+    assert.equal(
+      creditIdentity({ tmdb_id: null, tmdb_match_status: status, tmdb_match_id: 55, tmdb_match_media_type: 'movie' }),
+      null
+    );
+  }
+  assert.equal(
+    creditIdentity({ tmdb_id: null, tmdb_match_status: 'verified', tmdb_match_id: 55, tmdb_match_media_type: 'x' }),
+    null
+  );
+});

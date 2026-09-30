@@ -41,8 +41,8 @@ claude.local.md
 backend/data/images/
 
 # Per-machine coding-agent config, local state, and worktrees
-# (multi-GB if left untracked). CLAUDE.md and AGENTS.md are the tracked
-# instructions; anything under these directories is local only.
+# (multi-GB if left untracked). CLAUDE.md is the tracked
+# instruction file; anything under these directories is local only.
 .claude/
 .codex/
 

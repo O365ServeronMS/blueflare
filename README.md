@@ -110,7 +110,7 @@ public/            # Favicon, manifest, robots, sitemaps
 backend/           # VPS origin: API, worker, PostgreSQL, Valkey, images
 Dockerfile.frontend# Production standalone image
 deploy/            # compose.yml, Caddy, Cloudflare rules, backup service
-docs/              # Live specs; docs/archive/ holds superseded plans
+docs/              # Live specs and ADR-001
 ```
 
 🧭 Category context rides in `returnTo=<encoded path+search>` — page 2/3/etc. stays addressable and reload-safe.

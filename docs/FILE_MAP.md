@@ -1,8 +1,7 @@
 # Blueflare File Map
 
 This map describes the current Next.js frontend and repository-owned Docker
-origin. Historical static/Worker notes are retained only in explicitly marked
-archive documents.
+origin. Historical static/Worker notes live only in git history.
 
 ## Root and configuration
 

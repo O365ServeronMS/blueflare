@@ -7,7 +7,7 @@ import { comparableTitle, fetchTmdb, parseTmdbCredits, releaseYear } from './tmd
  * the catalog's own actor list also appears in that candidate's billed cast.
  * The title guess in `searchTmdbIdByTitle` is right about 92% of the time —
  * fine for a rating lookup, not for printing a cast on a movie page. Requiring
- * shared actors measured 98.8% on a backtest (see docs/adr/PLAN-005).
+ * shared actors measured 98.8% on a backtest (see git history, PLAN-005).
  *
  * Nothing here writes to the database; the result lands in `tmdb_match_*`,
  * never in `tmdb_id`, so it cannot reach the artwork pipeline.

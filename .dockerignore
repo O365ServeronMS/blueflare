@@ -6,6 +6,4 @@ backend/node_modules/
 dist/
 out/
 coverage/
-docs/current-ui-captures/
-docs/design-qa-captures/
 *.log

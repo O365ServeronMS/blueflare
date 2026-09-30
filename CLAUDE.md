@@ -140,8 +140,7 @@ Live — describes what is running:
 Historical — do **not** read as current state:
 
 - `docs/DECISIONS.md`: chronological decision log. Its UI/navigation/playback entries still explain today's behaviour; its Worker/KV/static-fetch entries describe architectures that no longer exist.
-- `docs/adr/`: accepted ADRs and their execution plans. Records of decisions as made, deliberately not rewritten when reality moves on.
-- `docs/archive/`: completed plans, superseded designs, dated audits, and an external HBO Max style reference that is **not** this product's design. Every file there carries an `ARCHIVED` banner explaining why.
+- `docs/adr/`: ADR-001 (runtime/codebase split), kept as a record of the decision. The execution plans (PLAN-001..008) and old archive were removed; git history holds them.
 
 If a document under `docs/` contradicts this file, this file is correct and the
 document is stale — fix or archive it rather than following it.

@@ -80,6 +80,16 @@ export const config = Object.freeze({
   tmdbCreditsRefreshMs: integer('TMDB_CREDITS_REFRESH_MS', 90 * 24 * 60 * 60 * 1000, 60 * 60 * 1000),
   tmdbCreditsRetryMs: integer('TMDB_CREDITS_RETRY_MS', 6 * 60 * 60 * 1000, 60 * 1000),
 
+  // Cast-verified TMDB identity for rows the provider gave no tmdb_id. Stored in
+  // tmdb_match_*, never in tmdb_id. Off by default: it costs ~7 TMDB calls per row.
+  tmdbMatchEnabled: boolean('TMDB_MATCH_ENABLED', false),
+  tmdbMatchLimit: integer('TMDB_MATCH_LIMIT', 60, 1),
+  tmdbMatchConcurrency: integer('TMDB_MATCH_CONCURRENCY', 2, 1),
+  tmdbMatchRefreshMs: integer('TMDB_MATCH_REFRESH_MS', 30 * 24 * 60 * 60 * 1000, 60 * 60 * 1000),
+  tmdbMatchRetryMs: integer('TMDB_MATCH_RETRY_MS', 6 * 60 * 60 * 1000, 60 * 1000),
+  // Primary-country slugs left unmatched on purpose (cast names do not transliterate).
+  tmdbMatchSkipCountries: csv('TMDB_MATCH_SKIP_COUNTRIES', 'trung-quoc,hong-kong,nhat-ban'),
+
   // MDBList supplies both Rotten Tomatoes critic and audience percentages shown
   // on cards. Gated by the key list being non-empty, like TMDB above.
   mdblistEnabled: boolean('MDBLIST_ENABLED', false),

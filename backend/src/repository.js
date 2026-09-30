@@ -767,6 +767,67 @@ export async function recordTmdbCreditsFailure(mediaType, tmdbId, status, messag
   );
 }
 
+/**
+ * Rows with no provider tmdb_id whose cast could corroborate a TMDB title.
+ * Never-checked rows first, newest first. 'verified' is final; 'none' and
+ * 'unverifiable' come back after the refresh window, 'error' after the retry one.
+ */
+export async function listTmdbMatchCandidates(limit = config.tmdbMatchLimit) {
+  const result = await pool.query(
+    'SELECT id, canonical_slug, original_title, media_type, year, actors FROM movies ' +
+    "WHERE catalog_state='ready' AND tmdb_id IS NULL " +
+    "  AND COALESCE(original_title,'') <> '' " +
+    "  AND jsonb_typeof(actors)='array' AND jsonb_array_length(actors) >= 2 " +
+    "  AND COALESCE(countries->0->>'slug','') <> ALL($1::text[]) " +
+    '  AND (tmdb_match_status IS NULL ' +
+    "    OR (tmdb_match_status IN ('none','unverifiable') " +
+    "        AND tmdb_match_checked_at < now() - ($2::bigint * interval '1 millisecond')) " +
+    "    OR (tmdb_match_status='error' " +
+    "        AND tmdb_match_checked_at < now() - ($3::bigint * interval '1 millisecond'))) " +
+    'ORDER BY (tmdb_match_status IS NULL) DESC, catalog_sort_at DESC NULLS LAST LIMIT $4',
+    [
+      config.tmdbMatchSkipCountries,
+      config.tmdbMatchRefreshMs,
+      config.tmdbMatchRetryMs,
+      Math.max(1, Math.floor(limit))
+    ]
+  );
+  return result.rows;
+}
+
+/**
+ * Store one verdict. Writes tmdb_match_* only: tmdb_id and tmdb_identity_status
+ * stay untouched so TMDB artwork can never replace catalog images through this.
+ */
+export async function recordTmdbMatch(movieId, verdict) {
+  const status = ['verified', 'none', 'unverifiable'].includes(verdict?.status) ? verdict.status : 'error';
+  const match = status === 'verified' ? verdict.match : null;
+  const updated = await pool.query(
+    'UPDATE movies SET tmdb_match_status=$2, tmdb_match_id=$3, tmdb_match_media_type=$4, ' +
+    'tmdb_match_evidence=$5::jsonb, tmdb_match_checked_at=now() ' +
+    'WHERE id=$1 RETURNING canonical_slug',
+    [
+      movieId,
+      status,
+      match?.tmdbId ?? null,
+      match?.mediaType ?? null,
+      verdict?.evidence == null ? null : JSON.stringify(verdict.evidence)
+    ]
+  );
+  return updated.rows[0] || null;
+}
+
+/** A failed lookup keeps any previous verified match; only the check time moves. */
+export async function recordTmdbMatchFailure(movieId, message) {
+  await pool.query(
+    "UPDATE movies SET tmdb_match_status=CASE WHEN tmdb_match_status='verified' THEN 'verified' ELSE 'error' END, " +
+    'tmdb_match_evidence=CASE WHEN tmdb_match_status=\'verified\' THEN tmdb_match_evidence ' +
+    'ELSE jsonb_build_object(\'error\', $2::text) END, ' +
+    'tmdb_match_checked_at=now() WHERE id=$1',
+    [movieId, String(message || 'unknown error').slice(0, 500)]
+  );
+}
+
 export async function findPersonBySlug(slug) {
   const result = await pool.query('SELECT * FROM people WHERE slug=$1 LIMIT 1', [slug]);
   return result.rows[0] || null;

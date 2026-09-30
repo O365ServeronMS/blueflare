@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
+import { TurnstileWidget } from "@/components/TurnstileWidget";
 import { safeInternalPath } from "@/lib/navigation";
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -9,6 +10,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   weak_password: "Mật khẩu cần từ 8 đến 128 ký tự.",
   invalid_email: "Email không hợp lệ. Kiểm tra lại địa chỉ và thử lại.",
   rate_limited: "Thử quá nhiều lần, hãy thử lại sau ít phút.",
+  captcha_failed: "Xác minh không thành công. Hãy thử lại.",
   busy: "Hệ thống đang bận, hãy thử lại sau ít giây."
 };
 const MAX_COOLDOWN_SECONDS = 60;
@@ -19,11 +21,14 @@ function retryAfterSeconds(res: Response) {
 }
 const FALLBACK_ERROR = "Không thể kết nối. Thử lại sau ít phút.";
 
-export function AuthForm({ mode, returnTo = "" }: { mode: "login" | "signup"; returnTo?: string }) {
+export function AuthForm({ mode, returnTo = "", turnstileSiteKey = "" }: { mode: "login" | "signup"; returnTo?: string; turnstileSiteKey?: string }) {
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   const [cooldown, setCooldown] = useState(0);
   const signup = mode === "signup";
+  const captcha = signup && Boolean(turnstileSiteKey);
+  const [captchaToken, setCaptchaToken] = useState("");
+  const [captchaReset, setCaptchaReset] = useState(0);
 
   useEffect(() => {
     if (cooldown <= 0) return;
@@ -34,6 +39,10 @@ export function AuthForm({ mode, returnTo = "" }: { mode: "login" | "signup"; re
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (pending || cooldown > 0) return;
+    if (captcha && !captchaToken) {
+      setError("Hãy hoàn tất bước xác minh trước khi tạo tài khoản.");
+      return;
+    }
     const form = new FormData(event.currentTarget);
     setPending(true);
     setError("");
@@ -43,7 +52,7 @@ export function AuthForm({ mode, returnTo = "" }: { mode: "login" | "signup"; re
         credentials: "include",
         cache: "no-store",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: String(form.get("email") || "").trim(), password: String(form.get("password") || "") })
+        body: JSON.stringify({ email: String(form.get("email") || "").trim(), password: String(form.get("password") || ""), ...(captcha ? { turnstileToken: captchaToken } : {}) })
       });
       if (res.ok) {
         // Re-sanitize on the client: returnTo is user-controlled input.
@@ -65,6 +74,7 @@ export function AuthForm({ mode, returnTo = "" }: { mode: "login" | "signup"; re
     } catch {
       setError(FALLBACK_ERROR);
     }
+    if (captcha) setCaptchaReset((n) => n + 1);
     setPending(false);
   }
 
@@ -91,6 +101,7 @@ export function AuthForm({ mode, returnTo = "" }: { mode: "login" | "signup"; re
         />
         {signup ? <p id="auth-password-hint" className="mt-2 text-caption text-ash">Từ 8 đến 128 ký tự.</p> : null}
       </div>
+      {captcha ? <TurnstileWidget siteKey={turnstileSiteKey} onToken={setCaptchaToken} resetKey={captchaReset} /> : null}
       <p role="alert" className={error ? "rounded border border-netflix-red/60 bg-netflix-red/10 px-4 py-3 text-control text-chalk-white" : "sr-only"}>{error}</p>
       <button
         type="submit"

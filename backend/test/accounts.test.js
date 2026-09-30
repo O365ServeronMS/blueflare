@@ -761,3 +761,43 @@ test('200 concurrent verifyPassword through the gate leave the threadpool respon
   console.log('fs.stat under flood (ms):', worst.map((n) => n.toFixed(1)).join(' '));
   assert.ok(Math.max(...worst) < 800, 'fs.stat waited ' + Math.max(...worst) + ' ms');
 });
+
+test('register requires a valid Turnstile token when a secret is configured', async () => {
+  const seen = [];
+  const verifier = (result) => ({ enabled: true, verify: async (token, ip) => { seen.push([token, ip]); return result; } });
+  const body = (token) => ({ email: 'ts@example.com', password: 'correct horse', ...(token ? { turnstileToken: token } : {}) });
+
+  await withApi({ handler: { turnstile: verifier({ ok: false }) } }, async ({ call, repo }) => {
+    const denied = await call('POST', '/api/auth/register', { body: body('bad'), headers: { 'x-forwarded-for': '9.9.9.9' } });
+    assert.equal(denied.status, 400);
+    assert.equal(denied.json.error, 'captcha_failed');
+    assert.deepEqual(seen[0], ['bad', '9.9.9.9']);
+  });
+  await withApi({ handler: { turnstile: verifier({ ok: false, unavailable: true }) } }, async ({ call }) => {
+    const down = await call('POST', '/api/auth/register', { body: body('t') });
+    assert.equal(down.status, 503);
+    assert.equal(down.json.error, 'busy');
+    assert.equal(down.headers.get('retry-after'), '2');
+  });
+  await withApi({ handler: { turnstile: verifier({ ok: true }) } }, async ({ call }) => {
+    assert.equal((await call('POST', '/api/auth/register', { body: body('good') })).status, 201);
+  });
+  await withApi({ handler: { turnstile: { enabled: false, verify: async () => { throw new Error('must not run'); } } } }, async ({ call }) => {
+    assert.equal((await call('POST', '/api/auth/register', { body: body() })).status, 201);
+  });
+});
+
+test('turnstile verifier posts secret+token to siteverify and maps outcomes', async () => {
+  const { createTurnstileVerifier } = await import('../src/turnstile.js');
+  const calls = [];
+  const make = (fetchImpl, secret = 's3cret') => createTurnstileVerifier({ secret, fetchImpl, logger: { warn() {} } });
+  const ok = make(async (url, init) => { calls.push([url, JSON.parse(init.body)]); return { ok: true, json: async () => ({ success: true }) }; });
+  assert.deepEqual(await ok.verify('tok', '1.2.3.4'), { ok: true });
+  assert.equal(calls[0][0], 'https://challenges.cloudflare.com/turnstile/v0/siteverify');
+  assert.deepEqual(calls[0][1], { secret: 's3cret', response: 'tok', remoteip: '1.2.3.4' });
+  assert.deepEqual(await make(async () => ({ ok: true, json: async () => ({ success: false }) })).verify('tok'), { ok: false });
+  assert.deepEqual(await ok.verify('', '1.2.3.4'), { ok: false });
+  assert.deepEqual(await ok.verify('x'.repeat(3000)), { ok: false });
+  assert.deepEqual(await make(async () => { throw new Error('net'); }).verify('tok'), { ok: false, unavailable: true });
+  assert.equal(make(async () => ({}), '').enabled, false);
+});

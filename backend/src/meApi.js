@@ -17,6 +17,7 @@ import {
 import { createHash } from 'node:crypto';
 import { redis } from './cache.js';
 import { createAuthLimits } from './authLimits.js';
+import { createTurnstileVerifier } from './turnstile.js';
 import * as meRepository from './meRepository.js';
 
 export const BODY_LIMIT_BYTES = 32 * 1024;
@@ -158,7 +159,8 @@ export function createAccountHandler({
   now = Date.now,
   logger = console,
   limits = createAuthLimits({ getClient: redis, now, logger }),
-  registerGlobalPerHour = registerGlobalLimit()
+  registerGlobalPerHour = registerGlobalLimit(),
+  turnstile = createTurnstileVerifier({ logger })
 } = {}) {
   const failures = new FailureTracker({ now });
 
@@ -202,6 +204,11 @@ export function createAccountHandler({
     // Checked before hashing, spent only by an account actually created, so
     // email_taken and malformed requests cannot burn the shared signup budget.
     limited(await limits.peek('register-global', 'all', registerGlobalPerHour, HOUR));
+    if (turnstile.enabled) {
+      const check = await turnstile.verify(body.turnstileToken, clientIp(request));
+      if (check.unavailable) throw new ApiError(503, 'busy', { 'retry-after': '2' });
+      if (!check.ok) throw new ApiError(400, 'captcha_failed');
+    }
     const user = await repo.createUser(email, await hashPassword(body.password));
     if (!user) throw new ApiError(409, 'email_taken');
     await limits.take('register-global', 'all', registerGlobalPerHour, HOUR);

@@ -2,11 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
-import { CircleUser, Clock3, Heart, LogOut, Menu, Search, User, X } from "lucide-react";
+import { CircleUser, Clock3, LayoutDashboard, Heart, LogOut, Menu, Search, User, X } from "lucide-react";
 import { SearchSuggest } from "@/components/SearchSuggest";
 import { BlueflareIcon } from "@/components/logo/BlueflareIcon";
 import { BlueflareWordmark } from "@/components/logo/BlueflareWordmark";
-import { useAccount } from "@/components/useAccount";
+import { useAccountDetails } from "@/components/useAccount";
 import { createReturnToPath, getActiveNavKey } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
 
@@ -38,7 +38,7 @@ export function GlobalNav({ featureSearch = true, featureLocalLibrary = true }: 
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const activeKey = getActiveNavKey(pathname, search);
-  const account = useAccount(pathname);
+  const { state: account, admin: isAdmin } = useAccountDetails(pathname);
   const [accountOpen, setAccountOpen] = useState(false);
   const accountRef = useRef<HTMLDivElement>(null);
   const onAuthPage = pathname === "/login" || pathname === "/signup";
@@ -176,6 +176,12 @@ export function GlobalNav({ featureSearch = true, featureLocalLibrary = true }: 
                   </button>
                   {accountOpen ? (
                     <div role="menu" aria-label="Tài khoản" className="absolute right-0 top-full z-50 mt-1 w-44 rounded border border-white/10 bg-black py-1 shadow-xl">
+                      {isAdmin ? (
+                        <a role="menuitem" href="/admin" onClick={closePanels} className="flex min-h-10 items-center gap-3 px-4 text-control text-silver hover:bg-graphite hover:text-chalk-white">
+                          <LayoutDashboard className="h-4 w-4" aria-hidden="true" />
+                          Admin Dashboard
+                        </a>
+                      ) : null}
                       <button type="button" role="menuitem" onClick={logout} className="flex min-h-10 w-full items-center gap-3 px-4 text-left text-control text-silver hover:bg-graphite hover:text-chalk-white">
                         <LogOut className="h-4 w-4" aria-hidden="true" />
                         Đăng xuất
@@ -239,6 +245,12 @@ export function GlobalNav({ featureSearch = true, featureLocalLibrary = true }: 
                 </a>
               );
             })}
+            {account === "user" && isAdmin ? (
+              <a href="/admin" onClick={closePanels} className="flex min-h-11 items-center justify-center gap-2 rounded px-2 text-caption font-medium text-silver hover:bg-graphite hover:text-chalk-white">
+                <LayoutDashboard className="h-4 w-4" />
+                Admin
+              </a>
+            ) : null}
             {account === "user" ? (
               <button type="button" onClick={logout} className="flex min-h-11 items-center justify-center gap-2 rounded px-2 text-caption font-medium text-silver hover:bg-graphite hover:text-chalk-white">
                 <LogOut className="h-4 w-4" />

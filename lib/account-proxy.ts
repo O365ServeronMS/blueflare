@@ -152,7 +152,20 @@ function safeSlug(value: string | undefined) {
 }
 
 /** Map /api/me/<segments> onto an allowed API path, or null when not allowed. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function resolveAdminPath(rest: string[]): { path: string; methods: string[] } | null {
+  const [section, id, action, ...extra] = rest;
+  if (section !== "users" || extra.length) return null;
+  if (id === undefined) return action === undefined ? { path: "/api/me/admin/users", methods: ["GET"] } : null;
+  if (!UUID.test(id)) return null;
+  if (action === undefined) return { path: `/api/me/admin/users/${id}`, methods: ["DELETE"] };
+  if (action === "sessions") return { path: `/api/me/admin/users/${id}/sessions`, methods: ["DELETE"] };
+  return null;
+}
+
 export function resolveMePath(segments: string[]): { path: string; methods: string[] } | null {
+  if (segments[0] === "admin") return resolveAdminPath(segments.slice(1));
   const [head, slug, ...extra] = segments;
   if (extra.length) return null;
   if (!head) return { path: "/api/me", methods: ["GET"] };
@@ -239,6 +252,19 @@ export async function handleLogout(request: Request) {
   return jsonResponse(204, undefined, {}, [clearedCookie()]);
 }
 
+// Only the admin user list takes a query string, and only q/page are forwarded.
+function adminQuery(request: Request, path: string) {
+  if (path !== "/api/me/admin/users") return "";
+  const url = new URL(request.url);
+  const out = new URLSearchParams();
+  const q = url.searchParams.get("q");
+  const page = url.searchParams.get("page");
+  if (q) out.set("q", q.slice(0, 100));
+  if (page && /^\d{1,5}$/.test(page)) out.set("page", page);
+  const text = out.toString();
+  return text ? `?${text}` : "";
+}
+
 export async function handleMe(request: Request, segments: string[]) {
   const method = request.method.toUpperCase();
   const target = resolveMePath(segments);
@@ -254,7 +280,7 @@ export async function handleMe(request: Request, segments: string[]) {
   }
   let upstream: Response;
   try {
-    upstream = await callApi(request, target.path, method, { token, body });
+    upstream = await callApi(request, target.path + adminQuery(request, target.path), method, { token, body });
   } catch {
     return UNAVAILABLE();
   }

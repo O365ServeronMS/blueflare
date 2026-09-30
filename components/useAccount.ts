@@ -10,23 +10,30 @@ export type AccountState = "loading" | "guest" | "user";
  * JSON) is treated as logged out.
  */
 export function useAccount(pathname: string): AccountState {
+  return useAccountDetails(pathname).state;
+}
+
+export function useAccountDetails(pathname: string): { state: AccountState; admin: boolean } {
   const [state, setState] = useState<AccountState>("loading");
+  const [admin, setAdmin] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
     fetch("/api/me", { credentials: "include", cache: "no-store", signal: controller.signal })
       .then(async (res) => {
-        if (!res.ok) return "guest" as const;
+        if (!res.ok) return { next: "guest" as const, admin: false };
         const body = await res.json().catch(() => null);
-        return body?.user ? ("user" as const) : ("guest" as const);
+        return body?.user ? { next: "user" as const, admin: body.admin === true } : { next: "guest" as const, admin: false };
       })
-      .catch(() => (controller.signal.aborted ? null : ("guest" as const)))
-      .then((next) => {
-        if (next) setState(next);
+      .catch(() => (controller.signal.aborted ? null : { next: "guest" as const, admin: false }))
+      .then((result) => {
+        if (!result) return;
+        setState(result.next);
+        setAdmin(result.admin);
       });
     return () => controller.abort();
     // Re-check after login/logout navigations (full page loads in practice).
   }, [pathname]);
 
-  return state;
+  return { state, admin };
 }

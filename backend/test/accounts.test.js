@@ -82,6 +82,21 @@ function fakeRepo({ movies = ['a', 'b', 'c'] } = {}) {
       state.history.set(userId, map);
       return true;
     },
+    async adminOverview() { return { users: state.users.size, new_7d: state.users.size, active_sessions: state.sessions.size }; },
+    async adminListUsers({ q = '' } = {}) {
+      const rows = [...state.users.values()].filter((u) => u.email.includes(q.toLowerCase())).map((u) => ({
+        id: u.id, email: u.email, created_at: new Date(), last_active: null,
+        sessions: [...state.sessions.values()].filter((x) => x.user_id === u.id).length, favorites: 0, history: 0
+      }));
+      return { total: rows.length, rows };
+    },
+    async adminFindUser(id) { const u = state.users.get(id); return u ? { id: u.id, email: u.email } : null; },
+    async adminRevokeSessions(id) {
+      let n = 0;
+      for (const [k, x] of state.sessions) if (x.user_id === id) { state.sessions.delete(k); n += 1; }
+      return n;
+    },
+    async adminDeleteUser(id) { return state.users.delete(id); },
     async importUserData(userId, favorites, history) {
       const fav = state.favorites.get(userId) || new Map();
       const his = state.history.get(userId) || new Map();
@@ -544,7 +559,7 @@ test('register, login, me, logout flow with uniform 401s', async () => {
     const login = await call('POST', '/api/auth/login', { body: { email: 'STEVE@example.com', password: 'correct horse' } });
     assert.equal(login.status, 200);
     const me = await call('GET', '/api/me', { token: login.json.token });
-    assert.deepEqual(me.json, { user: registered.json.user, imported: false });
+    assert.deepEqual(me.json, { user: registered.json.user, imported: false, admin: false });
 
     const out = await call('POST', '/api/auth/logout', { token: login.json.token });
     assert.equal(out.status, 204);
@@ -800,4 +815,61 @@ test('turnstile verifier posts secret+token to siteverify and maps outcomes', as
   assert.deepEqual(await ok.verify('x'.repeat(3000)), { ok: false });
   assert.deepEqual(await make(async () => { throw new Error('net'); }).verify('tok'), { ok: false, unavailable: true });
   assert.equal(make(async () => ({}), '').enabled, false);
+});
+
+const UID = (n) => '00000000-0000-4000-8000-00000000000' + n;
+
+test('admin routes: only ADMIN_EMAILS sessions, list/revoke/delete, admin is undeletable', async () => {
+  const repo = fakeRepo();
+  await withApi({ repo, handler: { admins: new Set(['boss@example.com']) } }, async ({ call }) => {
+    const boss = await signup(call, 'boss@example.com');
+    const user = await signup(call, 'user@example.com');
+    const bossMe = await call('GET', '/api/me', { token: boss.token });
+    assert.equal(bossMe.json.admin, true);
+    assert.equal((await call('GET', '/api/me', { token: user.token })).json.admin, false);
+
+    assert.equal((await call('GET', '/api/me/admin/users')).status, 401);
+    assert.equal((await call('GET', '/api/me/admin/users', { token: user.token })).status, 404);
+
+    const list = await call('GET', '/api/me/admin/users', { token: boss.token });
+    assert.equal(list.status, 200);
+    assert.equal(list.json.total, 2);
+    assert.ok(!JSON.stringify(list.json).includes('password'));
+    assert.equal(list.json.items.find((i) => i.email === 'boss@example.com').isAdmin, true);
+    assert.equal((await call('GET', '/api/me/admin/users?q=user@', { token: boss.token })).json.total, 1);
+
+    const uid = user.user.id;
+    assert.equal((await call('DELETE', '/api/me/admin/users/not-a-uuid', { token: boss.token })).status, 404);
+    assert.equal((await call('DELETE', '/api/me/admin/users/' + UID(9), { token: boss.token })).status, 404);
+
+    // uid is not a uuid in the fake repo; rewrite it so the route accepts it.
+    const realId = UID(1);
+    const entry = repo.state.users.get(uid);
+    repo.state.users.delete(uid); entry.id = realId; repo.state.users.set(realId, entry);
+    for (const s of repo.state.sessions.values()) if (s.user_id === uid) s.user_id = realId;
+
+    assert.equal((await call('POST', '/api/me/admin/users/' + realId, { token: boss.token })).status, 405);
+    const revoked = await call('DELETE', '/api/me/admin/users/' + realId + '/sessions', { token: boss.token });
+    assert.deepEqual(revoked.json, { revoked: 1 });
+    assert.equal((await call('GET', '/api/me', { token: user.token })).status, 401);
+
+    const bossId = bossMe.json.user.id;
+    const bossEntry = repo.state.users.get(bossId);
+    repo.state.users.delete(bossId); bossEntry.id = UID(2); repo.state.users.set(UID(2), bossEntry);
+    for (const s of repo.state.sessions.values()) if (s.user_id === bossId) s.user_id = UID(2);
+    const self = await call('DELETE', '/api/me/admin/users/' + UID(2), { token: boss.token });
+    assert.equal(self.status, 403);
+    assert.equal(self.json.error, 'cannot_delete_admin');
+
+    assert.equal((await call('DELETE', '/api/me/admin/users/' + realId, { token: boss.token })).status, 204);
+    assert.equal(repo.state.users.has(realId), false);
+  });
+});
+
+test('without ADMIN_EMAILS nobody is admin', async () => {
+  await withApi({ handler: { admins: new Set() } }, async ({ call }) => {
+    const u = await signup(call, 'x@example.com');
+    assert.equal((await call('GET', '/api/me', { token: u.token })).json.admin, false);
+    assert.equal((await call('GET', '/api/me/admin/users', { token: u.token })).status, 404);
+  });
 });

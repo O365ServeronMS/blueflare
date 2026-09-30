@@ -170,6 +170,13 @@ describe("path allow-list", () => {
     expect(resolveMePath(["import"])?.methods).toEqual(["POST"]);
     expect(resolveMePath(["history", "abc"])?.methods).toEqual(["PUT"]);
     expect(resolveMePath(["progress"])).toBeNull();
+    const id = "00000000-0000-4000-8000-000000000001";
+    expect(resolveMePath(["admin", "users"])).toEqual({ path: "/api/me/admin/users", methods: ["GET"] });
+    expect(resolveMePath(["admin", "users", id])?.methods).toEqual(["DELETE"]);
+    expect(resolveMePath(["admin", "users", id, "sessions"])?.methods).toEqual(["DELETE"]);
+    for (const bad of [["admin"], ["admin", "users", "x"], ["admin", "users", id, "other"], ["admin", "other"], ["admin", "users", id, "sessions", "z"]]) {
+      expect(resolveMePath(bad), JSON.stringify(bad)).toBeNull();
+    }
     expect(resolveMePath(["continue-watching"])).toBeNull();
     for (const bad of [
       ["internal", "revalidate"], ["admin"], ["favorites", "a", "b"], ["history", ".."], ["favorites", ""],

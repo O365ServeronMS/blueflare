@@ -197,3 +197,51 @@ export async function importUserData(userId, favorites, history) {
     client.release();
   }
 }
+
+// ---- admin (read/moderate accounts; never returns password hashes) ---------
+
+function likePattern(q) {
+  return '%' + q.replace(/[\\%_]/g, (c) => '\\' + c) + '%';
+}
+
+export async function adminOverview() {
+  const result = await pool.query(
+    'SELECT (SELECT count(*) FROM users)::int AS users, ' +
+    "(SELECT count(*) FROM users WHERE created_at > now() - interval '7 days')::int AS new_7d, " +
+    '(SELECT count(*) FROM sessions WHERE expires_at > now())::int AS active_sessions'
+  );
+  return result.rows[0];
+}
+
+export async function adminListUsers({ q = '', limit = 25, offset = 0 } = {}) {
+  const params = [];
+  let where = '';
+  if (q) { params.push(likePattern(q)); where = ` WHERE u.email ILIKE $${params.length} ESCAPE '\\'`; }
+  const total = await pool.query('SELECT count(*)::int AS n FROM users u' + where, params);
+  params.push(limit, offset);
+  const rows = await pool.query(
+    'SELECT u.id, u.email, u.created_at, ' +
+    '(SELECT count(*)::int FROM sessions s WHERE s.user_id=u.id AND s.expires_at > now()) AS sessions, ' +
+    '(SELECT max(s.renewed_at) FROM sessions s WHERE s.user_id=u.id) AS last_active, ' +
+    '(SELECT count(*)::int FROM user_favorites f WHERE f.user_id=u.id) AS favorites, ' +
+    '(SELECT count(*)::int FROM user_history h WHERE h.user_id=u.id) AS history ' +
+    'FROM users u' + where + ` ORDER BY u.created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params
+  );
+  return { total: total.rows[0].n, rows: rows.rows };
+}
+
+export async function adminFindUser(userId) {
+  const result = await pool.query('SELECT id, email FROM users WHERE id=$1', [userId]);
+  return result.rows[0] || null;
+}
+
+export async function adminRevokeSessions(userId) {
+  const result = await pool.query('DELETE FROM sessions WHERE user_id=$1', [userId]);
+  return result.rowCount;
+}
+
+export async function adminDeleteUser(userId) {
+  const result = await pool.query('DELETE FROM users WHERE id=$1', [userId]);
+  return result.rowCount > 0;
+}

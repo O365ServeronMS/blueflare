@@ -145,6 +145,12 @@ function send(response, status, payload, headers = {}) {
   response.end(body);
 }
 
+function adminEmails() {
+  return new Set(String(process.env.ADMIN_EMAILS || '').split(',').map((e) => normalizeEmail(e)).filter(Boolean));
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function isAccountPath(pathname) {
   return pathname === '/api/me' || pathname.startsWith('/api/me/') ||
     pathname.startsWith('/api/auth/');
@@ -160,7 +166,8 @@ export function createAccountHandler({
   logger = console,
   limits = createAuthLimits({ getClient: redis, now, logger }),
   registerGlobalPerHour = registerGlobalLimit(),
-  turnstile = createTurnstileVerifier({ logger })
+  turnstile = createTurnstileVerifier({ logger }),
+  admins = adminEmails()
 } = {}) {
   const failures = new FailureTracker({ now });
 
@@ -248,6 +255,58 @@ export function createAccountHandler({
     send(response, 200, await issueSession(user));
   }
 
+  // Admin = session email in ADMIN_EMAILS. Registration is unverified, so the
+  // admin account must exist (unique email) and must never be deletable here.
+  async function admin(request, response, rest) {
+    const session = await authenticate(request);
+    if (!admins.has(session.email)) throw new ApiError(404, 'not_found');
+    const method = request.method;
+    const url = new URL(request.url, 'http://x');
+    const [section, id, action, ...extra] = rest;
+    if (extra.length || section !== 'users') throw new ApiError(404, 'not_found');
+    if (!id) {
+      if (method !== 'GET') throw new ApiError(405, 'method_not_allowed', { allow: 'GET' });
+      const q = (url.searchParams.get('q') || '').trim().slice(0, 100);
+      const page = Math.min(Math.max(Number.parseInt(url.searchParams.get('page') || '1', 10) || 1, 1), 10000);
+      const limit = 25;
+      const [overview, list] = await Promise.all([
+        repo.adminOverview(),
+        repo.adminListUsers({ q, limit, offset: (page - 1) * limit })
+      ]);
+      send(response, 200, {
+        overview: { users: overview.users, new7d: overview.new_7d, activeSessions: overview.active_sessions },
+        total: list.total,
+        page,
+        pageSize: limit,
+        items: list.rows.map((row) => ({
+          id: row.id,
+          email: row.email,
+          createdAt: new Date(row.created_at).toISOString(),
+          lastActive: row.last_active ? new Date(row.last_active).toISOString() : null,
+          sessions: row.sessions,
+          favorites: row.favorites,
+          history: row.history,
+          isAdmin: admins.has(row.email)
+        }))
+      });
+      return;
+    }
+    if (!UUID_RE.test(id)) throw new ApiError(404, 'not_found');
+    const target = await repo.adminFindUser(id);
+    if (!target) throw new ApiError(404, 'not_found');
+    if (action === 'sessions') {
+      if (method !== 'DELETE') throw new ApiError(405, 'method_not_allowed', { allow: 'DELETE' });
+      send(response, 200, { revoked: await repo.adminRevokeSessions(id) });
+      return;
+    }
+    if (action) throw new ApiError(404, 'not_found');
+    if (method !== 'DELETE') throw new ApiError(405, 'method_not_allowed', { allow: 'DELETE' });
+    if (admins.has(target.email)) throw new ApiError(403, 'cannot_delete_admin');
+    await repo.adminDeleteUser(id);
+    logger.warn?.('[api] admin deleted user', id);
+    send(response, 204);
+  }
+
   async function handle(request, response, url) {
     const { pathname } = url;
     const method = request.method;
@@ -277,6 +336,7 @@ export function createAccountHandler({
     const segments = pathname.split('/').slice(3);
     const head = segments[0] || '';
     const rest = segments.slice(1);
+    if (head === 'admin') return admin(request, response, rest);
     const known = ['', 'favorites', 'history', 'import'];
     if (!known.includes(head) || rest.length > 1 || (rest.length && !['favorites', 'history'].includes(head))) {
       throw new ApiError(404, 'not_found');
@@ -299,7 +359,7 @@ export function createAccountHandler({
     const userId = session.userId;
 
     if (head === '') {
-      send(response, 200, { user: { id: userId, email: session.email }, imported: session.imported });
+      send(response, 200, { user: { id: userId, email: session.email }, imported: session.imported, admin: admins.has(session.email) });
       return;
     }
     if (head === 'favorites' && !rest.length) {

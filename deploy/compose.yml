@@ -32,6 +32,9 @@ services:
     # Trần cứng để một chu kỳ sync/autovacuum/backup không nuốt hết RAM host.
     # memswap_limit == mem_limit  ⇒  container không được swap: thà lỗi rõ ràng
     # còn hơn thrash âm thầm (checkpoint 270s là triệu chứng của swap thrash).
+    # /dev/shm mặc định của Docker là 64MB; parallel query dùng DSM ở đây và
+    # tràn thành "could not resize shared memory segment ... No space left".
+    shm_size: 256m
     mem_limit: 1536m
     mem_reservation: 512m
     memswap_limit: 1536m
@@ -99,15 +102,16 @@ services:
     build:
       context: ${BLUEFLARE_SRC:-/home/ubuntu/blueflare}/backend
     restart: unless-stopped
-    mem_limit: 512m
-    mem_reservation: 128m
-    cpus: 1.5
+    mem_limit: 2048m
+    mem_reservation: 256m
+    cpus: 3.0
     env_file: ${BLUEFLARE_ENV_FILE:-.env}
     environment:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL}
-      # V8 old-space cap dưới mem_limit để cgroup không OOM-kill khi heap phình.
-      NODE_OPTIONS: --max-old-space-size=384
+      # V8 old-space cap dưới mem_limit để cgroup không OOM-kill khi heap phình
+      # (chừa ~512MB cho sharp/libvips, buffer ảnh và stack ngoài heap).
+      NODE_OPTIONS: --max-old-space-size=1536
       FRONTEND_REVALIDATE_SECRET: ${FRONTEND_REVALIDATE_SECRET:-}
     depends_on:
       postgres:

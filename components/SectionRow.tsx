@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { MovieCard as MovieCardType } from "@/lib/types";
 import { getRailSlideTarget, type RailDirection } from "@/lib/rail-motion";
@@ -18,8 +18,7 @@ export function SectionRow({
   spotlight = false,
   itemLimit = 16,
   ranked = false,
-  slideDurationMs = 300,
-  renderCard
+  slideDurationMs = 300
 }: {
   title: string;
   href?: string;
@@ -29,8 +28,6 @@ export function SectionRow({
   itemLimit?: number;
   ranked?: boolean;
   slideDurationMs?: number;
-  /** Replaces the default card (used by the client-only continue-watching row). */
-  renderCard?: (movie: MovieCardType, index: number) => ReactNode;
 }) {
   const trackRef = useRef<HTMLDivElement>(null);
   const animationFrameRef = useRef<number | null>(null);
@@ -144,7 +141,7 @@ export function SectionRow({
       >
         {items.slice(0, itemLimit).map((movie, index) => (
           <div key={movie.slug} className="w-[32vw] min-w-[124px] max-w-[190px] shrink-0 snap-start sm:w-[22vw] lg:w-[13vw]">
-            {renderCard ? renderCard(movie, index) : <MovieCard movie={movie} compact returnTo={returnTo} rank={ranked ? index + 1 : undefined} />}
+            <MovieCard movie={movie} compact returnTo={returnTo} rank={ranked ? index + 1 : undefined} />
           </div>
         ))}
       </div>

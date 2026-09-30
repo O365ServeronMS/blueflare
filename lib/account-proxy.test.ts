@@ -140,15 +140,15 @@ describe("/api/me", () => {
     expect(init.headers["X-Forwarded-For"]).toBe("203.0.113.9");
   });
 
-  it("forwards body and method for progress writes and encodes slugs", async () => {
+  it("encodes slugs", async () => {
     fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
     const put = await handleMe(req("PUT", "/api/me/favorites/a", { ...sameOrigin, cookie: `bf_session=${TOKEN}` }), ["favorites", "a b/../?x"]);
     expect(put.status).toBe(404);
     const ok = await handleMe(req("PUT", "/api/me/favorites/x", { ...sameOrigin, cookie: `bf_session=${TOKEN}` }), ["favorites", "phim mới?"]);
     expect(ok.status).toBe(204);
     expect(fetchMock.mock.calls[0][0]).toBe(`http://api:3200/api/me/favorites/${encodeURIComponent("phim mới?")}`);
-    await handleMe(req("PUT", "/api/me/progress", { ...sameOrigin, cookie: `bf_session=${TOKEN}` }, '{"slug":"x"}'), ["progress"]);
-    expect(fetchMock.mock.calls[1][1].body).toBe('{"slug":"x"}');
+    await handleMe(req("PUT", "/api/me/history/x", { ...sameOrigin, cookie: `bf_session=${TOKEN}` }, '{"serverName":"S","episodeKey":"tap-1","episodeName":"Tập 1"}'), ["history", "x"]);
+    expect(fetchMock.mock.calls[1][1].body).toBe('{"serverName":"S","episodeKey":"tap-1","episodeName":"Tập 1"}');
     expect(fetchMock.mock.calls[1][1].method).toBe("PUT");
   });
 });
@@ -156,12 +156,13 @@ describe("/api/me", () => {
 describe("path allow-list", () => {
   it("accepts only contract shapes", () => {
     expect(resolveMePath([])).toEqual({ path: "/api/me", methods: ["GET"] });
-    expect(resolveMePath(["continue-watching"])?.path).toBe("/api/me/continue-watching");
     expect(resolveMePath(["import"])?.methods).toEqual(["POST"]);
-    expect(resolveMePath(["progress", "abc"])?.methods).toEqual(["DELETE"]);
+    expect(resolveMePath(["history", "abc"])?.methods).toEqual(["PUT"]);
+    expect(resolveMePath(["progress"])).toBeNull();
+    expect(resolveMePath(["continue-watching"])).toBeNull();
     for (const bad of [
-      ["internal", "revalidate"], ["admin"], ["favorites", "a", "b"], ["progress", ".."], ["favorites", ""],
-      ["continue-watching", "x"], ["import", "x"], ["constructor"], ["__proto__"], ["favorites", "a/b"], ["favorites", "a\nb"]
+      ["internal", "revalidate"], ["admin"], ["favorites", "a", "b"], ["history", ".."], ["favorites", ""],
+      ["import", "x"], ["constructor"], ["__proto__"], ["favorites", "a/b"], ["favorites", "a\nb"]
     ]) expect(resolveMePath(bad), JSON.stringify(bad)).toBeNull();
   });
 

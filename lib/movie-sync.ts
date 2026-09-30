@@ -6,9 +6,33 @@ export const LIST_LIMIT = 100;
 export const CARD_CACHE_LIMIT = 300;
 export const IMPORT_LOCK_TTL_MS = 60_000;
 
-export type StoredMovie = MovieCard & { savedAt: number };
-export type SlugEntry = { slug: string; savedAt: number };
-export type ImportPayload = { favorites: { slug: string; savedAt: number }[]; history: { slug: string; savedAt: number }[] };
+/** Last watched episode of a movie: server label, episode watch key, display name. */
+export type EpisodeRef = { server: string; key: string; name: string };
+export type StoredMovie = MovieCard & { savedAt: number; ep?: EpisodeRef };
+export type SlugEntry = { slug: string; savedAt: number; ep?: EpisodeRef };
+export type ImportEpisode = { serverName: string; episodeKey: string; episodeName: string };
+export type ImportPayload = {
+  favorites: { slug: string; savedAt: number }[];
+  history: { slug: string; savedAt: number; ep?: ImportEpisode }[];
+};
+
+export const EP_FIELD_MAX = 100;
+
+/** Validates untrusted input (old localStorage rows, server rows) into an EpisodeRef or undefined. */
+export function toEpisodeRef(value: unknown): EpisodeRef | undefined {
+  const v = value as { server?: unknown; key?: unknown; name?: unknown } | null | undefined;
+  if (!v || typeof v.key !== "string" || typeof v.name !== "string") return undefined;
+  const key = v.key.trim().slice(0, EP_FIELD_MAX);
+  const name = v.name.trim().slice(0, EP_FIELD_MAX);
+  if (!key || !name) return undefined;
+  const server = typeof v.server === "string" ? v.server.trim().slice(0, EP_FIELD_MAX) : "";
+  return { server, key, name };
+}
+
+/** Body for PUT /api/me/history/{slug}; serverName is omitted when unknown. */
+export function toEpisodeBody(ep: EpisodeRef): { serverName?: string; episodeKey: string; episodeName: string } {
+  return { ...(ep.server ? { serverName: ep.server } : {}), episodeKey: ep.key, episodeName: ep.name };
+}
 
 /** Accepts epoch ms, numeric or ISO strings; falls back to `fallback`. */
 export function toSavedAtMs(value: unknown, fallback = 0): number {
@@ -21,13 +45,14 @@ export function toSavedAtMs(value: unknown, fallback = 0): number {
 }
 
 /** Guest localStorage rows -> `{slug,savedAt}` (dedupe by slug, newest first, capped). */
-export function toSlugEntries(items: readonly { slug?: unknown; savedAt?: unknown }[], limit = LIST_LIMIT): SlugEntry[] {
+export function toSlugEntries(items: readonly { slug?: unknown; savedAt?: unknown; ep?: unknown }[], limit = LIST_LIMIT): SlugEntry[] {
   const seen = new Set<string>();
   const out: SlugEntry[] = [];
   for (const item of items) {
     if (!item || typeof item.slug !== "string" || !item.slug || seen.has(item.slug)) continue;
     seen.add(item.slug);
-    out.push({ slug: item.slug, savedAt: toSavedAtMs(item.savedAt) });
+    const ep = toEpisodeRef(item.ep);
+    out.push({ slug: item.slug, savedAt: toSavedAtMs(item.savedAt), ...(ep ? { ep } : {}) });
   }
   out.sort((a, b) => b.savedAt - a.savedAt);
   return out.slice(0, limit);
@@ -35,10 +60,13 @@ export function toSlugEntries(items: readonly { slug?: unknown; savedAt?: unknow
 
 /** Body for POST /api/me/import built from the guest lists. */
 export function buildImportPayload(
-  favorites: readonly { slug?: unknown; savedAt?: unknown }[],
-  history: readonly { slug?: unknown; savedAt?: unknown }[]
+  favorites: readonly { slug?: unknown; savedAt?: unknown; ep?: unknown }[],
+  history: readonly { slug?: unknown; savedAt?: unknown; ep?: unknown }[]
 ): ImportPayload {
-  return { favorites: toSlugEntries(favorites), history: toSlugEntries(history) };
+  return {
+    favorites: toSlugEntries(favorites).map(({ slug, savedAt }) => ({ slug, savedAt })),
+    history: toSlugEntries(history).map(({ slug, savedAt, ep }) => ({ slug, savedAt, ...(ep ? { ep: { serverName: ep.server, episodeKey: ep.key, episodeName: ep.name } } : {}) }))
+  };
 }
 
 /** Server list response -> entries. History rows use `watchedAt`, favorites `savedAt`. */
@@ -47,16 +75,26 @@ export function parseServerItems(body: unknown): SlugEntry[] {
   if (!Array.isArray(items)) return [];
   return toSlugEntries(
     items.map((row) => {
-      const r = (row || {}) as { slug?: unknown; savedAt?: unknown; watchedAt?: unknown };
-      return { slug: r.slug, savedAt: r.savedAt ?? r.watchedAt };
+      const r = (row || {}) as { slug?: unknown; savedAt?: unknown; watchedAt?: unknown; at?: unknown; serverName?: unknown; episodeKey?: unknown; episodeName?: unknown };
+      return { slug: r.slug, savedAt: r.savedAt ?? r.watchedAt ?? r.at, ep: { server: r.serverName, key: r.episodeKey, name: r.episodeName } };
     }),
     500
   );
 }
 
-/** Put `slug` at the head of the list (dedup). */
-export function pushToHead(list: readonly SlugEntry[], slug: string, now: number, limit = LIST_LIMIT): SlugEntry[] {
-  return [{ slug, savedAt: now }, ...list.filter((entry) => entry.slug !== slug)].slice(0, limit);
+/**
+ * Put `slug` at the head of the list (dedup). A plain re-add (no `ep`) keeps the
+ * episode already stored for that slug; a new `ep` replaces it.
+ */
+export function pushToHead(list: readonly SlugEntry[], slug: string, now: number, limit = LIST_LIMIT, ep?: EpisodeRef): SlugEntry[] {
+  const kept = ep ?? list.find((entry) => entry.slug === slug)?.ep;
+  return [{ slug, savedAt: now, ...(kept ? { ep: kept } : {}) }, ...list.filter((entry) => entry.slug !== slug)].slice(0, limit);
+}
+
+/** Guest history: put `movie` first, keeping its previous episode unless `ep` is given. */
+export function pushGuestHistory(list: readonly StoredMovie[], movie: MovieCard, now: number, ep?: EpisodeRef): StoredMovie[] {
+  const kept = ep ?? toEpisodeRef(list.find((item) => item.slug === movie.slug)?.ep);
+  return [{ ...movie, savedAt: now, ...(kept ? { ep: kept } : {}) }, ...list.filter((item) => item.slug !== movie.slug)];
 }
 
 export function removeSlug(list: readonly SlugEntry[], slug: string): SlugEntry[] {
@@ -80,7 +118,7 @@ export function resolveCards(entries: readonly SlugEntry[], cache: Readonly<Reco
   const out: StoredMovie[] = [];
   for (const entry of entries) {
     const card = cache[entry.slug];
-    if (card) out.push({ ...card, savedAt: entry.savedAt });
+    if (card) out.push({ ...card, savedAt: entry.savedAt, ...(entry.ep ? { ep: entry.ep } : {}) });
   }
   return out;
 }

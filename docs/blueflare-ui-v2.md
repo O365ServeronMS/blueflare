@@ -47,7 +47,7 @@ BaseLayout
 
 ## Home architecture
 
-The fixed navigation begins transparent and becomes near-black after scroll. The hero occupies roughly 74–82vh on desktop and 64–72vh on mobile, with a full-bleed backdrop, left and bottom fades, a short metadata row, two actions, and a restrained synopsis. The first rail overlaps the hero fade slightly. All sections after the hero are horizontal native-scroll rails, not fixed grids. Desktop exposes about five to six landscape cards; mobile exposes roughly 2.2 cards to signal continuation. A Continue Watching rail sits above "Phim đang được xem nhiều" only when signed in with progress data; its posters carry a red 3px progress bar on the bottom edge.
+The fixed navigation begins transparent and becomes near-black after scroll. The hero occupies roughly 74–82vh on desktop and 64–72vh on mobile, with a full-bleed backdrop, left and bottom fades, a short metadata row, two actions, and a restrained synopsis. The first rail overlaps the hero fade slightly. All sections after the hero are horizontal native-scroll rails, not fixed grids. Desktop exposes about five to six landscape cards; mobile exposes roughly 2.2 cards to signal continuation.
 
 ## Media behavior
 

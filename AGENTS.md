@@ -33,7 +33,7 @@ If `.codex/skills/blueflare-engineering/SKILL.md` exists on this machine, read a
 
 - Use `apply_patch` for edits; preserve unrelated dirty worktree changes.
 - Keep server/client boundaries narrow and parallelize independent server fetches.
-- Favorites/history stay in browser `localStorage` for guests and sync to the account only when signed in; watch progress for signed-in users lives in PostgreSQL. Account routes (`/api/auth/*`, `/api/me/*`) are per-user and never cached (no Valkey/`getOrBuild`), and `img.bluesia.net` returns 404 for them.
+- Favorites/history stay in browser `localStorage` for guests and sync to the account only when signed in; the last watched episode per movie lives on the `user_history` row in PostgreSQL for signed-in users. Account routes (`/api/auth/*`, `/api/me/*`) are per-user and never cached (no Valkey/`getOrBuild`), and `img.bluesia.net` returns 404 for them.
 - Preserve the rebuilt full-width cinematic shell, responsive gutters, compact mobile navigation, and existing playback ordering.
 - Never generate movie context with hash fragments; use `returnTo=<encoded path+search>`.
 - Keep the strict compact pagination window in `docs/PAGINATION.md`; do not replace it with endless scroll.

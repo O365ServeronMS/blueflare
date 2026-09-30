@@ -4,6 +4,7 @@ import {
   normalizedEpisodeSlug,
   episodeWatchKey,
   findEpisodeByWatchKey,
+  resolveServerIndex,
 } from "./episodes";
 import type { Episode, EpisodeServer } from "./types";
 
@@ -127,5 +128,23 @@ describe("findEpisodeByWatchKey", () => {
 
   test("rejects out-of-bounds numeric index", () => {
     expect(findEpisodeByWatchKey(server, "99")).toBe(episodes[0]);
+  });
+});
+
+describe("resolveServerIndex", () => {
+  const servers: EpisodeServer[] = [
+    { serverName: "A", serverData: [{ name: "Tập 1", slug: "tap-1" } as Episode] },
+    { serverName: "B", serverData: [{ name: "Tập 1", slug: "tap-1" } as Episode, { name: "Tập 2", slug: "tap-2" } as Episode] },
+  ];
+  test("matches by server name first", () => {
+    expect(resolveServerIndex(servers, "B", "tap-1")).toBe(1);
+  });
+  test("falls back to the first server holding the key", () => {
+    expect(resolveServerIndex(servers, "gone", "tap-2")).toBe(1);
+    expect(resolveServerIndex(servers, undefined, "tap-1")).toBe(0);
+  });
+  test("falls back to 0 when nothing matches", () => {
+    expect(resolveServerIndex(servers, "gone", "tap-9")).toBe(0);
+    expect(resolveServerIndex([], undefined, undefined)).toBe(0);
   });
 });

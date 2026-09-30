@@ -6,15 +6,18 @@ import {
   missingSlugs,
   parseCardsResponse,
   parseServerItems,
+  pushGuestHistory,
   pushToHead,
   removeSlug,
   resolveCards,
   runOptimistic,
+  toEpisodeBody,
   releaseLock,
   shouldImport,
   tryAcquireLock,
   upsertCard,
   LIST_LIMIT,
+  type EpisodeRef,
   type SlugEntry,
   type StoredMovie,
 } from "@/lib/movie-sync";
@@ -259,20 +262,23 @@ export async function toggleFavorite(movie: MovieCard): Promise<void> {
   );
 }
 
-export async function recordHistory(movie: MovieCard): Promise<void> {
+/**
+ * Record `movie` in history. Pass `ep` only on an explicit Play: it stores the
+ * last watched episode. A plain visit (no `ep`) keeps whatever episode is stored.
+ */
+export async function recordHistory(movie: MovieCard, ep?: EpisodeRef): Promise<void> {
   if (typeof window === "undefined") return;
   await start();
   if (mode === "user") {
     rememberCards([movie]);
     await optimisticServerWrite(
       "history",
-      pushToHead(server.history, movie.slug, Date.now()),
-      async () => (await api("PUT", `/api/me/history/${encodeURIComponent(movie.slug)}`)).ok
+      pushToHead(server.history, movie.slug, Date.now(), LIST_LIMIT, ep),
+      async () => (await api("PUT", `/api/me/history/${encodeURIComponent(movie.slug)}`, ep ? toEpisodeBody(ep) : undefined)).ok
     );
     return;
   }
-  const current = readGuestList("history").filter((item) => item.slug !== movie.slug);
-  writeGuestList("history", [{ ...movie, savedAt: Date.now() }, ...current]);
+  writeGuestList("history", pushGuestHistory(readGuestList("history"), movie, Date.now(), ep));
 }
 
 /** Replace a whole list (guest) or delete the removed slugs (account). */

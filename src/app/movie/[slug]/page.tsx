@@ -7,10 +7,10 @@ import { CastStrip } from "@/components/CastStrip";
 import { ExpandableSynopsis } from "@/components/ExpandableSynopsis";
 import { MovieActions } from "@/components/LocalMovieActions";
 import { MoviePlayer } from "@/components/MoviePlayer";
-import { ResumeActions } from "@/components/ResumeActions";
+import { LastWatchedBadge } from "@/components/LastWatchedBadge";
 import { RecommendationRail } from "@/components/RecommendationRail";
 import { getMovieServer } from "@/lib/catalog-server";
-import { episodeWatchKey, findEpisodeByWatchKey } from "@/lib/episodes";
+import { episodeWatchKey, findEpisodeByWatchKey, resolveServerIndex } from "@/lib/episodes";
 import { fallbackReturnToForSource, getBackHref, hrefWithReturnTo, inferNavSourceFromMovie, returnToFromSearchParams } from "@/lib/navigation";
 import { getDisplayRating, stripHtml } from "@/lib/utils";
 import { ScoreBadges } from "@/components/ScoreBadges";
@@ -76,8 +76,17 @@ export default async function MoviePage({ params, searchParams }: { params: Para
   for (const [key, value] of Object.entries(query)) {
     if (value !== undefined) urlParams.set(key, first(value));
   }
-  const requestedServer = Number(urlParams.get("server") || "0");
-  const serverIndex = Number.isInteger(requestedServer) && requestedServer >= 0 ? requestedServer : 0;
+  // Server resolution: `sn` (server name) wins, then an explicit `server` index, then
+  // the first server that contains `ep` (links from History carry only `ep`).
+  const serverName = urlParams.get("sn") || "";
+  const serverParam = urlParams.get("server");
+  const nameIndex = serverName ? movie.episodes.findIndex((item) => item.serverName === serverName) : -1;
+  const requestedServer = Number(serverParam || "0");
+  const serverIndex = nameIndex >= 0
+    ? nameIndex
+    : serverParam !== null
+      ? (Number.isInteger(requestedServer) && requestedServer >= 0 ? requestedServer : 0)
+      : resolveServerIndex(movie.episodes, undefined, urlParams.get("ep") || undefined);
   const server = movie.episodes[serverIndex] || movie.episodes[0];
   const episode = findEpisodeByWatchKey(server, urlParams.get("ep") || undefined);
   const activeEpisodeKey = episode ? episodeWatchKey(episode, server?.serverData.indexOf(episode) ?? 0) : "";
@@ -88,8 +97,6 @@ export default async function MoviePage({ params, searchParams }: { params: Para
   const displayRating = getDisplayRating(movie);
   const playerHref = hrefWithReturnTo(`/movie/${movie.slug}?server=${serverIndex}&ep=${encodeURIComponent(activeEpisodeKey)}&play=1#player`, returnTo, navSource);
 
-  const resumeHref = hrefWithReturnTo(`/movie/${movie.slug}?server=${serverIndex}&ep=${encodeURIComponent(activeEpisodeKey)}&play=1&resume=1#player`, returnTo, navSource);
-  const episodeKeys = (server?.serverData || []).map((item, index) => episodeWatchKey(item, index));
 
   return (
     <article className="pb-10">
@@ -116,7 +123,6 @@ export default async function MoviePage({ params, searchParams }: { params: Para
             />
             <div className="bf-hero-actions mt-6 flex flex-wrap items-center gap-3">
               <a href={playerHref} className="bf-play-cta"><Play className="h-5 w-5 fill-current" aria-hidden="true" />Phát</a>
-              <ResumeActions activeEpisodeKey={activeEpisodeKey} episodeKeys={episodeKeys} navSource={navSource} resumeHref={resumeHref} returnTo={returnTo} serverIndex={serverIndex} slug={movie.slug} />
               <MovieActions movie={movieCard} />
             </div>
           </div>
@@ -133,7 +139,7 @@ export default async function MoviePage({ params, searchParams }: { params: Para
           initialOpen={urlParams.get("play") === "1"}
           movie={movieCard}
           poster={movie.thumb || movie.poster}
-          resumeRequested={urlParams.get("resume") === "1"}
+          serverName={server?.serverName}
           title={`${movie.name} - ${episode?.name || "Tập phim"}`}
         />
       </section>
@@ -143,7 +149,7 @@ export default async function MoviePage({ params, searchParams }: { params: Para
           <section className="mt-10" aria-labelledby="episodes-heading">
             <h2 id="episodes-heading" className="text-heading font-bold text-white">Chọn nguồn Phát</h2>
             <div className="mt-5 space-y-5">
-              {movie.episodes.map((episodeServer, episodeServerIndex) => <div key={`srv-${episodeServerIndex}`}><h3 className="mb-2 text-control font-bold text-silver">{episodeServer.serverName}</h3><div className="no-scrollbar flex gap-2 overflow-x-auto pb-2">{episodeServer.serverData.map((item, itemIndex) => { const itemKey = episodeWatchKey(item, itemIndex); const active = episodeServerIndex === serverIndex && itemKey === activeEpisodeKey; const href = hrefWithReturnTo(`/movie/${movie.slug}?server=${episodeServerIndex}&ep=${encodeURIComponent(itemKey)}&play=1#player`, returnTo, navSource); return <a key={`${episodeServerIndex}-${itemKey}`} href={href} aria-current={active ? "true" : undefined} className={active ? "min-w-12 shrink-0 rounded bg-netflix-red px-3 py-2.5 text-center text-control font-bold text-white" : "min-w-12 shrink-0 rounded bg-graphite px-3 py-2.5 text-center text-control font-bold text-silver transition hover:bg-charcoal hover:text-white"}>{item.name || itemIndex + 1}</a>; })}</div></div>)}
+              {movie.episodes.map((episodeServer, episodeServerIndex) => <div key={`srv-${episodeServerIndex}`}><h3 className="mb-2 text-control font-bold text-silver">{episodeServer.serverName}</h3><div className="no-scrollbar flex gap-2 overflow-x-auto pb-2">{episodeServer.serverData.map((item, itemIndex) => { const itemKey = episodeWatchKey(item, itemIndex); const active = episodeServerIndex === serverIndex && itemKey === activeEpisodeKey; const href = hrefWithReturnTo(`/movie/${movie.slug}?server=${episodeServerIndex}&ep=${encodeURIComponent(itemKey)}&play=1#player`, returnTo, navSource); return <a key={`${episodeServerIndex}-${itemKey}`} href={href} aria-current={active ? "true" : undefined} className={active ? "min-w-12 shrink-0 rounded bg-netflix-red px-3 py-2.5 text-center text-control font-bold text-white" : "min-w-12 shrink-0 rounded bg-graphite px-3 py-2.5 text-center text-control font-bold text-silver transition hover:bg-charcoal hover:text-white"}>{item.name || itemIndex + 1}<LastWatchedBadge slug={movie.slug} serverName={episodeServer.serverName} episodeKey={itemKey} /></a>; })}</div></div>)}
             </div>
           </section>
         ) : null}

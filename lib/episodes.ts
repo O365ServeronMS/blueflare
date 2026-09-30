@@ -71,3 +71,23 @@ export function findEpisodeByWatchKey(server?: EpisodeServer, key?: string) {
 
   return server.serverData[0];
 }
+
+/** True only when `key` matches an episode of `server` (no first-episode fallback). */
+export function serverHasEpisodeKey(server: EpisodeServer | undefined, key?: string) {
+  const value = cleanText(key);
+  if (!value || !server) return false;
+  return server.serverData.some((episode, index) =>
+    [episodeWatchKey(episode, index), episode.slug, episode.name, episode.filename].map(cleanText).includes(value)
+  );
+}
+
+/** Server index for a stored watch: by serverName, else the first server holding the key, else 0. */
+export function resolveServerIndex(servers: readonly EpisodeServer[], serverName?: string, key?: string) {
+  const name = cleanText(serverName);
+  if (name) {
+    const byName = servers.findIndex((server) => cleanText(server.serverName) === name);
+    if (byName >= 0) return byName;
+  }
+  const byKey = servers.findIndex((server) => serverHasEpisodeKey(server, key));
+  return byKey >= 0 ? byKey : 0;
+}

@@ -99,91 +99,43 @@ export async function removeFavorite(userId, slug) {
   );
 }
 
-/**
- * Upsert the single progress row for (user, movie). The WHERE clause makes an
- * older write a no-op, so a delayed beacon cannot rewind newer progress.
- * Returns false when the slug is not a ready title.
- */
-export async function upsertProgress(userId, slug, progress) {
-  const result = await pool.query(
-    'INSERT INTO user_watch_progress ' +
-    '(user_id, movie_id, episode_key, position_sec, duration_sec, completed, updated_at) ' +
-    'SELECT $1, m.id, $3, $4, $5, $6, $7 FROM movies m WHERE m.canonical_slug=$2 AND ' + READY + ' ' +
-    'ON CONFLICT (user_id, movie_id) DO UPDATE SET ' +
-    'episode_key=EXCLUDED.episode_key, position_sec=EXCLUDED.position_sec, ' +
-    'duration_sec=EXCLUDED.duration_sec, completed=EXCLUDED.completed, updated_at=EXCLUDED.updated_at ' +
-    'WHERE user_watch_progress.updated_at <= EXCLUDED.updated_at ' +
-    'RETURNING movie_id',
-    [
-      userId, slug, progress.episodeKey, progress.positionSec, progress.durationSec,
-      progress.completed, progress.at
-    ]
-  );
-  if (result.rows.length) return true;
-  // Empty means an older write was ignored, or the movie is unknown.
-  return movieExists(slug);
-}
-
-export async function deleteProgress(userId, slug) {
-  await pool.query(
-    'DELETE FROM user_watch_progress WHERE user_id=$1 AND movie_id=' +
-    '(SELECT id FROM movies WHERE canonical_slug=$2)',
-    [userId, slug]
-  );
-}
-
-/** Newest first; over-fetches so the JS filter can still fill 20 cards. */
-export async function listContinueRows(userId, limit = 60) {
-  const result = await pool.query(
-    'SELECT m.*, p.episode_key AS p_episode_key, p.position_sec AS p_position_sec, ' +
-    'p.duration_sec AS p_duration_sec, p.completed AS p_completed, p.updated_at AS p_updated_at ' +
-    'FROM user_watch_progress p JOIN movies m ON m.id=p.movie_id ' +
-    'WHERE p.user_id=$1 AND ' + READY + " AND m.canonical_slug<>'' " +
-    'ORDER BY p.updated_at DESC LIMIT $2',
-    [userId, limit]
-  );
-  return result.rows;
-}
-
-/** movie id -> streams arrays, ordered by provider priority. */
-export async function streamsForMovies(movieIds) {
-  const byMovie = new Map();
-  if (!movieIds.length) return byMovie;
-  const result = await pool.query(
-    'SELECT movie_id, streams FROM movie_provider_sources ' +
-    'WHERE movie_id = ANY($1::uuid[]) AND availability=true ORDER BY priority ASC, provider ASC',
-    [movieIds]
-  );
-  for (const row of result.rows) {
-    if (!byMovie.has(row.movie_id)) byMovie.set(row.movie_id, []);
-    if (Array.isArray(row.streams)) byMovie.get(row.movie_id).push(...row.streams);
-  }
-  return byMovie;
-}
-
 export async function listHistory(userId, limit = 100) {
   const result = await pool.query(
-    'SELECT m.canonical_slug AS slug, h.watched_at AS at FROM user_history h ' +
-    'JOIN movies m ON m.id=h.movie_id ' +
+    'SELECT m.canonical_slug AS slug, h.watched_at AS at, h.server_name, h.episode_key, h.episode_name ' +
+    'FROM user_history h JOIN movies m ON m.id=h.movie_id ' +
     "WHERE h.user_id=$1 AND m.canonical_slug<>'' ORDER BY h.watched_at DESC LIMIT $2",
     [userId, limit]
   );
-  return result.rows;
+  return result.rows.map((row) => ({
+    slug: row.slug,
+    at: row.at,
+    serverName: row.server_name ?? null,
+    episodeKey: row.episode_key ?? null,
+    episodeName: row.episode_name ?? null
+  }));
 }
 
-export async function touchHistory(userId, slug) {
+/**
+ * `ep` is { serverName, episodeKey, episodeName } or null. A plain touch (null)
+ * keeps the episode already stored; a given ep replaces all three columns.
+ */
+export async function touchHistory(userId, slug, ep = null) {
   const result = await pool.query(
-    'INSERT INTO user_history (user_id, movie_id, watched_at) ' +
-    'SELECT $1, m.id, now() FROM movies m WHERE m.canonical_slug=$2 AND ' + READY + ' ' +
-    'ON CONFLICT (user_id, movie_id) DO UPDATE SET watched_at=now() RETURNING movie_id',
-    [userId, slug]
+    'INSERT INTO user_history (user_id, movie_id, watched_at, server_name, episode_key, episode_name) ' +
+    'SELECT $1, m.id, now(), $3, $4, $5 FROM movies m WHERE m.canonical_slug=$2 AND ' + READY + ' ' +
+    'ON CONFLICT (user_id, movie_id) DO UPDATE SET watched_at=now(), ' +
+    'server_name=CASE WHEN EXCLUDED.episode_key IS NOT NULL THEN EXCLUDED.server_name ELSE user_history.server_name END, ' +
+    'episode_name=CASE WHEN EXCLUDED.episode_key IS NOT NULL THEN EXCLUDED.episode_name ELSE user_history.episode_name END, ' +
+    'episode_key=COALESCE(EXCLUDED.episode_key, user_history.episode_key) ' +
+    'RETURNING movie_id',
+    [userId, slug, ep?.serverName ?? null, ep?.episodeKey ?? null, ep?.episodeName ?? null]
   );
   return result.rows.length > 0;
 }
 
 /**
  * Merge localStorage data. `favorites` and `history` are already validated,
- * de-duplicated and capped: [{ slug, at: Date }]. Runs in one transaction and
+ * de-duplicated and capped: [{ slug, at: Date, ep? }] (history ep = { serverName, episodeKey, episodeName }). Runs in one transaction and
  * is safe to repeat: favorites keep their first savedAt, history keeps the
  * newest watchedAt. Returns how many slugs were known per list.
  */
@@ -204,14 +156,31 @@ export async function importUserData(userId, favorites, history) {
       counts.favorites = result.rows.length;
     }
     if (history.length) {
+      // The episode columns follow the newer watched_at; an older or equal
+      // incoming row, or one without an episode, keeps what is stored.
       const result = await client.query(
-        'INSERT INTO user_history (user_id, movie_id, watched_at) ' +
-        'SELECT $1, m.id, i.at FROM unnest($2::text[], $3::timestamptz[]) AS i(slug, at) ' +
+        'INSERT INTO user_history (user_id, movie_id, watched_at, server_name, episode_key, episode_name) ' +
+        'SELECT $1, m.id, i.at, i.server_name, i.episode_key, i.episode_name ' +
+        'FROM unnest($2::text[], $3::timestamptz[], $4::text[], $5::text[], $6::text[]) ' +
+        'AS i(slug, at, server_name, episode_key, episode_name) ' +
         'JOIN movies m ON m.canonical_slug=i.slug AND ' + READY + ' ' +
         'ON CONFLICT (user_id, movie_id) DO UPDATE SET ' +
+        'server_name=CASE WHEN EXCLUDED.watched_at > user_history.watched_at AND EXCLUDED.episode_key IS NOT NULL ' +
+        'THEN EXCLUDED.server_name ELSE user_history.server_name END, ' +
+        'episode_name=CASE WHEN EXCLUDED.watched_at > user_history.watched_at AND EXCLUDED.episode_key IS NOT NULL ' +
+        'THEN EXCLUDED.episode_name ELSE user_history.episode_name END, ' +
+        'episode_key=CASE WHEN EXCLUDED.watched_at > user_history.watched_at AND EXCLUDED.episode_key IS NOT NULL ' +
+        'THEN EXCLUDED.episode_key ELSE user_history.episode_key END, ' +
         'watched_at=GREATEST(user_history.watched_at, EXCLUDED.watched_at) ' +
         'RETURNING movie_id',
-        [userId, history.map((item) => item.slug), history.map((item) => item.at)]
+        [
+          userId,
+          history.map((item) => item.slug),
+          history.map((item) => item.at),
+          history.map((item) => item.ep?.serverName ?? null),
+          history.map((item) => item.ep?.episodeKey ?? null),
+          history.map((item) => item.ep?.episodeName ?? null)
+        ]
       );
       counts.history = result.rows.length;
     }

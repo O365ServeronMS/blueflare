@@ -13,8 +13,8 @@ import {
   toggleFavorite,
   type ListKey,
 } from "@/lib/movie-store";
+import type { EpisodeRef, StoredMovie } from "@/lib/movie-sync";
 
-type StoredMovie = MovieCard & { savedAt: number };
 
 function useStoredMovies(list: ListKey) {
   const snapshot = useSyncExternalStore(
@@ -26,8 +26,15 @@ function useStoredMovies(list: ListKey) {
   return useMemo(() => parseSnapshot(snapshot), [snapshot]);
 }
 
-export function addHistory(movie: MovieCard) {
-  void recordHistory(movie);
+/** Records the movie in history; pass `ep` only when the user pressed Play on that episode. */
+export function addHistory(movie: MovieCard, ep?: EpisodeRef) {
+  void recordHistory(movie, ep);
+}
+
+/** Last watched episode stored for `slug`, or undefined. Client-only, never affects server output. */
+export function useLastEpisode(slug: string): EpisodeRef | undefined {
+  const { items } = useStoredMovies("history");
+  return useMemo(() => items.find((item) => item.slug === slug)?.ep, [items, slug]);
 }
 
 export function useLocalMovies(key: ListKey) {

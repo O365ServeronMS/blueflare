@@ -1,14 +1,11 @@
 "use client";
 
 import { X } from "lucide-react";
-import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { useAccount } from "@/components/useAccount";
-import { useContinueItem } from "@/components/useContinueItem";
-import { resumeTarget } from "@/lib/continue-watching";
 import { HlsVideo } from "@/components/HlsVideo";
 import { IframePlayerFacade } from "@/components/IframePlayerFacade";
 import { NowPlayingMetadata } from "@/components/NowPlayingMetadata";
+import { addHistory } from "@/components/LocalMovieActions";
 import { WatchRecorder } from "@/components/WatchRecorder";
 import {
   normalizePlaybackUrl,
@@ -28,8 +25,7 @@ type MoviePlayerProps = {
   movie: MovieCard;
   poster?: string;
   preferredMode?: "iframe" | "hls";
-  /** True when the user opened the page via "Xem tiếp từ ...". */
-  resumeRequested?: boolean;
+  serverName?: string;
   title: string;
 };
 
@@ -43,18 +39,15 @@ export function MoviePlayer({
   movie,
   poster,
   preferredMode,
-  resumeRequested = false,
+  serverName = "",
   title,
 }: MoviePlayerProps) {
-  const account = useAccount(usePathname());
-  const loggedIn = account === "user";
-  const continueItem = useContinueItem(movie.slug, loggedIn && resumeRequested);
-  const startAtSec = resumeRequested ? resumeTarget(continueItem, episodeKey) ?? undefined : undefined;
   const [isOpen, setIsOpen] = useState(initialOpen);
   const [playbackSource, setPlaybackSource] = useState<PlaybackSource | null>(null);
   const playerRef = useRef<HTMLDivElement | null>(null);
   const iframeFailedRef = useRef(false);
   const nativeHlsFailedRef = useRef(false);
+  const recordedRef = useRef("");
 
   useEffect(() => {
     if (!isOpen) {
@@ -78,6 +71,17 @@ export function MoviePlayer({
 
     setPlaybackSource(resolvePlaybackSource({ iframeUrl: embedSrc, hlsUrl: hlsSrc }, probe));
   }, [embedSrc, hlsSrc, isOpen, preferredMode]);
+
+  // Called on an explicit Play (iframe facade button or the HLS video controls).
+  // De-duplicated per server+episode so pause/resume does not re-send the write.
+  function recordPlay() {
+    const name = (episodeName || "").trim();
+    if (!episodeKey || !name) return;
+    const id = `${serverName}|${episodeKey}`;
+    if (recordedRef.current === id) return;
+    recordedRef.current = id;
+    addHistory(movie, { server: serverName, key: episodeKey, name });
+  }
 
   function handleIframeError() {
     iframeFailedRef.current = true;
@@ -125,7 +129,7 @@ export function MoviePlayer({
           </div>
           <div className="aspect-video w-full bg-black">
             {playbackSource?.mode === "iframe" && playbackSource.iframeUrl ? (
-              <IframePlayerFacade onError={handleIframeError} src={playbackSource.iframeUrl} poster={poster} title={title} />
+              <IframePlayerFacade onError={handleIframeError} onPlay={recordPlay} src={playbackSource.iframeUrl} poster={poster} title={title} />
             ) : (playbackSource?.mode === "native-hls" || playbackSource?.mode === "hls-js") && playbackSource.hlsUrl ? (
               <>
                 <NowPlayingMetadata name={movie.name} originName={movie.originName} type={movie.type} episodeName={episodeName} artworkSrc={poster} />
@@ -134,8 +138,7 @@ export function MoviePlayer({
                   onPlaybackFailure={handleHlsError}
                   src={playbackSource.hlsUrl}
                   poster={poster}
-                  progress={loggedIn && episodeKey ? { slug: movie.slug, episodeKey } : null}
-                  startAtSec={startAtSec}
+                  onPlay={recordPlay}
                 />
               </>
             ) : playbackSource === null ? (

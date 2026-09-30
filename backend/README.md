@@ -135,8 +135,8 @@ The target is any S3-compatible store, so changing provider is an env change
 rather than a code change — `BACKUP_S3_*` in `.env.example` lists the endpoint
 and region for R2, Backblaze B2, Wasabi, AWS S3 and MinIO.
 
-The dump also carries user accounts, sessions and watch progress (tables from
-migration `020_users_sessions.sql`); a restore brings them back with the catalog.
+The dump also carries user accounts, sessions and per-title watch history (tables from
+migrations `020_users_sessions.sql` and `021_history_episode.sql`); a restore brings them back with the catalog.
 
 For a backup outside the schedule:
 
@@ -283,7 +283,7 @@ means the Cache Rule is not active or the token used to create it lacks
 - GET /api/categories
 - GET /api/countries
 - GET /api/cards?slugs=a,b (public, cached 60s, key = sorted slug list)
-- /api/auth/* and /api/me/* (accounts, sessions, watch progress; never cached; reachable only via the Next proxy, 404 on img.bluesia.net)
+- /api/auth/* and /api/me/* (accounts, sessions, favorites, history with last episode; never cached; reachable only via the Next proxy, 404 on img.bluesia.net)
 - GET /i/:variant/:sha256.webp?url=...&sig=...
 
 Only image variants m (480 x 720) and d (1280 x 720) exist. Their identity is

@@ -1,6 +1,8 @@
 # PLAN-006 — Tài khoản, yêu thích đồng bộ, hàng "Phim đang xem"
 
 Trạng thái: **ĐÃ CÀI ĐẶT (2026-09-30), CHƯA COMMIT/DEPLOY.** Phase 0–7 xong; `scripts/verify.sh` 11/11 qua.
+
+> Phần tiến độ/resume/hàng "Phim đang xem" đã bị thay bởi PLAN-007 (lịch sử theo tập); phần tài khoản, yêu thích, đồng bộ vẫn giữ.
 Chưa làm: chạy thử migration 020 trên DB tạm, áp rule `@account` vào Caddyfile đang chạy, kiểm thử trình duyệt thật (nav, form, vạch đỏ, resume), deploy. Backend gap đã bù bằng `GET /api/cards`.
 Ngày lập: 2026-09-30.
 

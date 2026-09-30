@@ -8,7 +8,7 @@ where they disagree, this file wins.
 
 FilmBluesia (`phim.bluesia.net`) is a Next.js 16 + React 19 App Router application rendered by a Node 24 standalone container on the VPS. Caddy terminates the public site and reverse-proxies to `127.0.0.1:3100`; Cloudflare is only the normal DNS/TLS/proxy/CDN layer. There is no Astro, frontend Worker, Pages Function, SSR edge runtime, or static-host rewrite.
 
-The repository also owns `backend/`: API, provider sync worker, PostgreSQL, Valkey, and the image cache behind `img.bluesia.net`. Server Components call the API through the Docker network (`INTERNAL_CATALOG_URL`); browser components own playback. Favorites/history stay in browser `localStorage` for guests and sync to the account when signed in; watch progress lives in PostgreSQL for signed-in users. NguonC is primary metadata, KKPhim fills gaps and alternate streams. Video bytes are never proxied.
+The repository also owns `backend/`: API, provider sync worker, PostgreSQL, Valkey, and the image cache behind `img.bluesia.net`. Server Components call the API through the Docker network (`INTERNAL_CATALOG_URL`); browser components own playback. Favorites/history stay in browser `localStorage` for guests and sync to the account when signed in; the last watched episode per movie lives on the history row in PostgreSQL for signed-in users. NguonC is primary metadata, KKPhim fills gaps and alternate streams. Video bytes are never proxied.
 
 ## The running stack
 
@@ -69,7 +69,7 @@ Codebase and runtime are separate directories (ADR-001): the repo lives at `/hom
 - `lib/playback.ts`: device/source ordering; keep it centralized.
 - `src/styles/globals.css`: shared design tokens and Tailwind styles. Accent is red `#e4312a`.
 - `backend/src/`: `server.js` (API + sweep scheduler), `worker.js` (sync + rating enrichment + prewarm), `mdblist.js` + `mdblistRatingsSync.js` (batched Rotten Tomatoes scores), `images.js` + `imageStore.js` (cache origin), `prewarm.js`, `imageCacheSweep.js`, `concurrency.js`, `repository.js`, `recommendations.js`, `people.js` (cast/director slug + identity), `viewmodels.js`, `cache.js`, `auth.js` (password hashing + sessions), `meApi.js` (`/api/auth/*` + `/api/me/*` handler, never cached), `meRepository.js`.
-- `lib/account-proxy.ts`: same-origin proxy to the API (`bf_session` cookie, Origin check, real client IP, hardcoded Cloudflare IP ranges). `lib/progress*.ts`, `continue-watching.ts`, `movie-sync.ts`, `movie-store.ts`: watch progress and favorites/history sync. Components: `AuthForm`, `ContinueWatchingRow`, `ResumeActions`, `useAccount`, `useContinueItem`, `useProgressReporter`.
+- `lib/account-proxy.ts`: same-origin proxy to the API (`bf_session` cookie, Origin check, real client IP, hardcoded Cloudflare IP ranges). `movie-sync.ts`, `movie-store.ts`: favorites/history sync incl. last watched episode. Components: `AuthForm`, `LastWatchedBadge`, `useAccount`.
 - Cloudflare IP ranges in `lib/account-proxy.ts` are hardcoded; refresh them from cloudflare.com/ips when they change. Stale ranges only make the proxy fall back to the peer address.
 - `deploy/`: canonical `compose.yml`, Cloudflare rules, `backup/` (backup service image), and operational scripts (`sync-stack.sh`, `apply-env.sh`, `backup-postgres.sh`, `bootstrap-vps.sh`). The two Caddy site blocks live inline in `bootstrap-vps.sh`, not as separate files.
 
@@ -94,7 +94,7 @@ Codebase and runtime are separate directories (ADR-001): the repo lives at `/hom
 ## Backup and recovery
 
 PostgreSQL is the only irreplaceable state, including user accounts, sessions and
-watch progress (migration 020), all covered by the same dump. The image cache rebuilds itself from
+per-title watch history with the last episode (migrations 020, 021), all covered by the same dump. The image cache rebuilds itself from
 `image_assets`; Valkey is disposable; the frontend is stateless.
 
 The `backup` service dumps, verifies with `pg_restore --list`, uploads to an

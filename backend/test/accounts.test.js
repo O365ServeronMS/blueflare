@@ -13,11 +13,7 @@ import {
   newToken,
   verifyPassword
 } from '../src/auth.js';
-import {
-  buildContinueItems,
-  createAccountHandler,
-  nextEpisodeKey
-} from '../src/meApi.js';
+import { createAccountHandler } from '../src/meApi.js';
 import { pool } from '../src/db.js';
 import * as meRepository from '../src/meRepository.js';
 
@@ -26,7 +22,7 @@ import * as meRepository from '../src/meRepository.js';
 function fakeRepo({ movies = ['a', 'b', 'c'] } = {}) {
   const state = {
     users: new Map(), sessions: new Map(), favorites: new Map(),
-    history: new Map(), progress: new Map(), imported: new Set(), renewed: 0,
+    history: new Map(), imported: new Set(), renewed: 0,
     clock: () => new Date()
   };
   const bySlug = new Set(movies);
@@ -68,23 +64,16 @@ function fakeRepo({ movies = ['a', 'b', 'c'] } = {}) {
       return true;
     },
     async removeFavorite(userId, slug) { state.favorites.get(userId)?.delete(slug); },
-    async upsertProgress(userId, slug, p) {
-      if (!bySlug.has(slug)) return false;
-      const key = userId + slug;
-      const old = state.progress.get(key);
-      if (!old || old.at <= p.at) state.progress.set(key, p);
-      return true;
-    },
-    async deleteProgress(userId, slug) { state.progress.delete(userId + slug); },
-    async listContinueRows() { return []; },
-    async streamsForMovies() { return new Map(); },
     async listHistory(userId) {
-      return [...(state.history.get(userId) || new Map())].map(([slug, at]) => ({ slug, at }));
+      return [...(state.history.get(userId) || new Map())].map(([slug, h]) => ({
+        slug, at: h.at, serverName: h.serverName ?? null, episodeKey: h.episodeKey ?? null, episodeName: h.episodeName ?? null
+      }));
     },
-    async touchHistory(userId, slug) {
+    async touchHistory(userId, slug, ep = null) {
       if (!bySlug.has(slug)) return false;
       const map = state.history.get(userId) || new Map();
-      map.set(slug, new Date());
+      const old = map.get(slug) || {};
+      map.set(slug, { ...(ep ? { serverName: ep.serverName, episodeKey: ep.episodeKey, episodeName: ep.episodeName } : old), at: new Date() });
       state.history.set(userId, map);
       return true;
     },
@@ -93,7 +82,13 @@ function fakeRepo({ movies = ['a', 'b', 'c'] } = {}) {
       const his = state.history.get(userId) || new Map();
       let f = 0; let h = 0;
       for (const item of favorites) if (bySlug.has(item.slug)) { f += 1; if (!fav.has(item.slug)) fav.set(item.slug, item.at); }
-      for (const item of history) if (bySlug.has(item.slug)) { h += 1; his.set(item.slug, item.at); }
+      for (const item of history) {
+        if (!bySlug.has(item.slug)) continue;
+        h += 1;
+        const old = his.get(item.slug);
+        if (!old || (item.at > old.at && item.ep)) his.set(item.slug, { ...(item.ep || {}), at: item.at });
+        else if (item.at > old.at) his.set(item.slug, { ...old, at: item.at });
+      }
       state.favorites.set(userId, fav);
       state.history.set(userId, his);
       state.imported.add(userId);
@@ -307,7 +302,7 @@ test('me routes require a Bearer token and account paths refuse caching or odd i
     assert.equal((await call('GET', '/api/me', { token: 'x'.repeat(43) })).status, 401);
     assert.equal((await call('GET', '/api/me/unknown')).status, 404);
     assert.equal((await call('GET', '/api/auth/login')).status, 405);
-    const options = await call('OPTIONS', '/api/me/progress');
+    const options = await call('OPTIONS', '/api/me/history/a');
     assert.equal(options.status, 204);
     assert.equal(options.headers.get('cache-control'), 'no-store');
     const bad = await call('POST', '/api/auth/login', { raw: '{nope', headers: { 'content-type': 'application/json' } });
@@ -338,123 +333,102 @@ test('favorites and history writes are idempotent; unknown movies are 404', asyn
   });
 });
 
-// ---- progress --------------------------------------------------------------
+// ---- episode history -------------------------------------------------------
 
-test('progress: completed at >=0.9, validation, delete, older client writes ignored', async () => {
-  await withApi({}, async ({ call, repo, clock }) => {
+test('history stores and returns the last episode; a plain touch keeps it', async () => {
+  await withApi({}, async ({ call }) => {
     const { token } = await signup(call);
-    const put = (body) => call('PUT', '/api/me/progress', { token, body: { slug: 'a', episodeKey: 'tap-1', ...body } });
-    assert.equal((await put({ positionSec: 89, durationSec: 100 })).status, 204);
-    assert.equal(repo.state.progress.get('u1a').completed, false);
-    assert.equal((await put({ positionSec: 90, durationSec: 100 })).status, 204);
-    assert.equal(repo.state.progress.get('u1a').completed, true);
-
-    // A delayed write stamped earlier than the stored one loses.
-    const stored = repo.state.progress.get('u1a').at.getTime();
-    await put({ positionSec: 10, durationSec: 100, updatedAt: stored - 5000 });
-    assert.equal(repo.state.progress.get('u1a').positionSec, 90);
-    // A far-future stamp is clamped to now + 60s.
-    await put({ positionSec: 20, durationSec: 100, updatedAt: clock.now() + 1e12 });
-    assert.equal(repo.state.progress.get('u1a').at.getTime(), clock.now() + 60000);
-
-    for (const bad of [
-      { positionSec: -1, durationSec: 100 }, { positionSec: 1, durationSec: 0 },
-      { positionSec: '5', durationSec: 100 }, { positionSec: 500, durationSec: 100 },
-      { positionSec: 1, durationSec: 1e9 }, { positionSec: 1, durationSec: 100, episodeKey: '' }
-    ]) {
-      const res = await put(bad);
-      assert.equal(res.status, 422, JSON.stringify(bad));
-      assert.equal(res.json.error, 'invalid_progress');
-    }
-    assert.equal((await call('PUT', '/api/me/progress', { token, body: { slug: 'nope', episodeKey: 'e', positionSec: 1, durationSec: 10 } })).status, 404);
-    assert.equal((await call('DELETE', '/api/me/progress/a', { token })).status, 204);
-    assert.equal(repo.state.progress.has('u1a'), false);
-    assert.equal((await call('DELETE', '/api/me/progress/a', { token })).status, 204);
+    const ep = { serverName: ' Vietsub #1 ', episodeKey: 'tap-5', episodeName: 'Tập 5' };
+    assert.equal((await call('PUT', '/api/me/history/a', { token, body: ep })).status, 204);
+    let item = (await call('GET', '/api/me/history', { token })).json.items[0];
+    assert.deepEqual(
+      { s: item.serverName, k: item.episodeKey, n: item.episodeName },
+      { s: 'Vietsub #1', k: 'tap-5', n: 'Tập 5' }
+    );
+    assert.ok(!Number.isNaN(Date.parse(item.watchedAt)));
+    assert.equal((await call('PUT', '/api/me/history/a', { token })).status, 204);
+    item = (await call('GET', '/api/me/history', { token })).json.items[0];
+    assert.equal(item.episodeKey, 'tap-5');
+    // serverName is optional.
+    assert.equal((await call('PUT', '/api/me/history/a', { token, body: { episodeKey: 'tap-6', episodeName: 'Tập 6' } })).status, 204);
+    item = (await call('GET', '/api/me/history', { token })).json.items[0];
+    assert.deepEqual([item.serverName, item.episodeKey], [null, 'tap-6']);
+    // A movie with no episode reads back nulls.
+    await call('PUT', '/api/me/history/b', { token });
+    const b = (await call('GET', '/api/me/history', { token })).json.items.find((x) => x.slug === 'b');
+    assert.deepEqual([b.serverName, b.episodeKey, b.episodeName], [null, null, null]);
   });
 });
 
-test('upsertProgress SQL only overwrites when the incoming write is not older', async () => {
+test('history episode validation returns 400 and stores nothing', async () => {
+  await withApi({}, async ({ call, repo }) => {
+    const { token } = await signup(call);
+    const ok = { serverName: 'S', episodeKey: 'k', episodeName: 'N' };
+    for (const bad of [
+      { ...ok, episodeName: undefined },
+      { ...ok, episodeKey: undefined },
+      { serverName: 'S' },
+      { ...ok, serverName: 5 },
+      { ...ok, serverName: '   ' },
+      { ...ok, episodeKey: 'x'.repeat(101) },
+      { ...ok, episodeName: 'x'.repeat(101) },
+      { ...ok, serverName: 'x'.repeat(101) },
+      { ...ok, episodeKey: 'a\u0000b' },
+      { ...ok, episodeName: 'line\nbreak' },
+      { ...ok, episodeKey: ['k'] }
+    ]) {
+      const res = await call('PUT', '/api/me/history/a', { token, body: bad });
+      assert.equal(res.status, 400, JSON.stringify(bad));
+      assert.equal(res.json.error, 'invalid_episode');
+    }
+    assert.equal(repo.state.history.get('u1'), undefined);
+    const edge = { ...ok, episodeKey: 'x'.repeat(100) };
+    assert.equal((await call('PUT', '/api/me/history/a', { token, body: edge })).status, 204);
+  });
+});
+
+test('import carries episodes, drops invalid ep, and an older import does not overwrite', async () => {
+  await withApi({}, async ({ call }) => {
+    const { token } = await signup(call);
+    const ep = (n) => ({ serverName: 'S', episodeKey: 'tap-' + n, episodeName: 'Tập ' + n });
+    const res = await call('POST', '/api/me/import', { token, body: { history: [
+      { slug: 'a', savedAt: '2026-05-01T00:00:00Z', ep: ep(3) },
+      { slug: 'b', savedAt: '2026-05-01T00:00:00Z', ep: { episodeKey: 'only-key' } }
+    ] } });
+    assert.equal(res.status, 200);
+    assert.equal(res.json.history, 2);
+    const find = async (slug) => (await call('GET', '/api/me/history', { token })).json.items.find((x) => x.slug === slug);
+    assert.equal((await find('a')).episodeKey, 'tap-3');
+    assert.equal((await find('b')).episodeKey, null);
+    await call('POST', '/api/me/import', { token, body: { history: [{ slug: 'a', savedAt: '2026-01-01T00:00:00Z', ep: ep(1) }] } });
+    const a = await find('a');
+    assert.equal(a.episodeKey, 'tap-3');
+    assert.equal(a.watchedAt, '2026-05-01T00:00:00.000Z');
+    await call('POST', '/api/me/import', { token, body: { history: [{ slug: 'a', savedAt: '2026-06-01T00:00:00Z', ep: ep(9) }] } });
+    assert.equal((await find('a')).episodeKey, 'tap-9');
+  });
+});
+
+test('progress and continue-watching routes are gone', async () => {
+  await withApi({}, async ({ call }) => {
+    const { token } = await signup(call);
+    assert.equal((await call('PUT', '/api/me/progress', { token, body: {} })).status, 404);
+    assert.equal((await call('DELETE', '/api/me/progress/a', { token })).status, 404);
+    assert.equal((await call('GET', '/api/me/continue-watching', { token })).status, 404);
+  });
+});
+
+test('touchHistory SQL keeps stored episode columns when ep is null', async () => {
   const calls = [];
   const original = pool.query;
   pool.query = async (sql, params) => { calls.push({ sql, params }); return { rows: [{ movie_id: 'm' }] }; };
   try {
-    const at = new Date();
-    assert.equal(await meRepository.upsertProgress('u', 'a', {
-      episodeKey: 'e', positionSec: 5, durationSec: 10, completed: false, at
-    }), true);
-    assert.match(calls[0].sql, /ON CONFLICT \(user_id, movie_id\) DO UPDATE/);
-    assert.match(calls[0].sql, /WHERE user_watch_progress\.updated_at <= EXCLUDED\.updated_at/);
-    assert.deepEqual(calls[0].params, ['u', 'a', 'e', 5, 10, false, at]);
+    assert.equal(await meRepository.touchHistory('u', 'a'), true);
+    assert.deepEqual(calls[0].params, ['u', 'a', null, null, null]);
+    assert.match(calls[0].sql, /COALESCE\(EXCLUDED\.episode_key, user_history\.episode_key\)/);
+    await meRepository.touchHistory('u', 'a', { serverName: 'S', episodeKey: 'k', episodeName: 'N' });
+    assert.deepEqual(calls[1].params, ['u', 'a', 'S', 'k', 'N']);
   } finally { pool.query = original; }
-});
-
-// ---- continue-watching -----------------------------------------------------
-
-function progressRow(n, { position = 50, duration = 100, completed = false, key = 'tap-1', ageMin = n } = {}) {
-  return {
-    id: 'id' + n, canonical_slug: 's' + n, title: 'T' + n,
-    p_episode_key: key, p_position_sec: position, p_duration_sec: duration, p_completed: completed,
-    p_updated_at: new Date(Date.UTC(2026, 8, 30) - ageMin * 60000)
-  };
-}
-
-const series = [{ server_name: 'S', server_data: [{ slug: 'tap-1' }, { slug: 'tap-2' }, { slug: 'tap-3' }] }];
-
-test('nextEpisodeKey follows stored server data and stops at the last episode', () => {
-  assert.equal(nextEpisodeKey(series, 'tap-1'), 'tap-2');
-  assert.equal(nextEpisodeKey(series, 'tap-3'), null);
-  assert.equal(nextEpisodeKey(series, 'missing'), null);
-  assert.equal(nextEpisodeKey(series, '1'), 'tap-3');
-  assert.equal(nextEpisodeKey([{ server_data: [{ slug: 'full' }] }], 'full'), null);
-  // A second server that has more episodes supplies the next one.
-  const two = [{ server_data: [{ slug: 'tap-1' }] }, ...series];
-  assert.equal(nextEpisodeKey(two, 'tap-1'), 'tap-2');
-  assert.equal(nextEpisodeKey(undefined, 'tap-1'), null);
-});
-
-test('continue-watching hides <2%, keeps card shape, advances or drops completed, caps at 20', () => {
-  const toCard = (row) => ({ slug: row.canonical_slug });
-  const rows = [
-    progressRow(1, { position: 1, duration: 100 }),
-    progressRow(2, { position: 2, duration: 100 }),
-    progressRow(3, { position: 95, duration: 100, completed: true, key: 'tap-1' }),
-    progressRow(4, { position: 95, duration: 100, completed: true, key: 'tap-3' }),
-    progressRow(5, { position: 30, duration: 60 })
-  ];
-  const streams = new Map([['id3', series], ['id4', series]]);
-  const items = buildContinueItems(rows, streams, toCard);
-  assert.deepEqual(items.map((item) => item.movie.slug), ['s2', 's3', 's5']);
-  assert.equal(items[0].progress, 0.02);
-  assert.deepEqual(
-    { e: items[1].episodeKey, p: items[1].progress, pos: items[1].positionSec },
-    { e: 'tap-2', p: 0, pos: 0 }
-  );
-  assert.equal(items[2].progress, 0.5);
-  assert.ok(!Number.isNaN(Date.parse(items[2].updatedAt)));
-
-  const many = Array.from({ length: 40 }, (_, i) => progressRow(i + 10));
-  assert.equal(buildContinueItems(many, new Map(), toCard).length, 20);
-});
-
-test('continue-watching reuses the /api/list movie card', async () => {
-  const { card } = await import('../src/viewmodels.js');
-  const row = progressRow(1);
-  const [item] = buildContinueItems([row], new Map());
-  assert.deepEqual(item.movie, card(row));
-  assert.equal(item.movie.slug, 's1');
-});
-
-test('GET continue-watching serves the built items with no-store', async () => {
-  const repo = fakeRepo();
-  repo.listContinueRows = async () => [progressRow(1, { position: 50, duration: 100 })];
-  await withApi({ repo }, async ({ call }) => {
-    const { token } = await signup(call);
-    const res = await call('GET', '/api/me/continue-watching', { token });
-    assert.equal(res.status, 200);
-    assert.equal(res.headers.get('cache-control'), 'no-store');
-    assert.equal(res.json.items[0].movie.slug, 's1');
-    assert.equal(res.json.items[0].progress, 0.5);
-  });
 });
 
 // ---- import ----------------------------------------------------------------
@@ -504,5 +478,6 @@ test('importUserData SQL is one transaction that never overwrites existing favor
     assert.equal(queries.at(-1), 'COMMIT');
     assert.match(queries[1], /user_favorites.*ON CONFLICT \(user_id, movie_id\) DO UPDATE SET user_id=user_favorites\.user_id/s);
     assert.match(queries[2], /GREATEST\(user_history\.watched_at/);
+    assert.match(queries[2], /EXCLUDED\.watched_at > user_history\.watched_at/);
   } finally { pool.connect = original; }
 });

@@ -6,7 +6,10 @@ import {
   missingSlugs,
   parseCardsResponse,
   parseServerItems,
+  pushGuestHistory,
   pushToHead,
+  toEpisodeRef,
+  toSlugEntries,
   releaseLock,
   removeSlug,
   resolveCards,
@@ -127,5 +130,50 @@ describe("card resolution helpers", () => {
   test("parseCardsResponse drops malformed items", () => {
     expect(parseCardsResponse({ items: [{ slug: "a" }, null, { slug: 3 }, {}] })).toEqual([{ slug: "a" }]);
     expect(parseCardsResponse(null)).toEqual([]);
+  });
+});
+
+describe("episode history", () => {
+  const ep = { server: "Vietsub #1", key: "tap-5", name: "Tập 5" };
+  test("old rows without ep still parse and stay ep-free", () => {
+    expect(toSlugEntries([{ slug: "a", savedAt: 1 }])).toEqual([{ slug: "a", savedAt: 1 }]);
+    expect(toEpisodeRef(undefined)).toBeUndefined();
+    expect(toEpisodeRef({ server: 1, key: "k" })).toBeUndefined();
+  });
+  test("toEpisodeRef trims, caps at 100 and needs key+name", () => {
+    expect(toEpisodeRef({ server: " S ", key: " k ", name: "n".repeat(150) })).toEqual({ server: "S", key: "k", name: "n".repeat(100) });
+    expect(toEpisodeRef({ key: "k", name: "" })).toBeUndefined();
+    expect(toEpisodeRef({ key: "k", name: "n" })).toEqual({ server: "", key: "k", name: "n" });
+  });
+  test("pushToHead keeps ep on a plain re-add and replaces it on a new ep", () => {
+    const list = pushToHead([], "a", 1, 100, ep);
+    expect(pushToHead(list, "a", 2)[0]).toEqual({ slug: "a", savedAt: 2, ep });
+    const next = { server: "Vietsub #1", key: "tap-6", name: "Tập 6" };
+    expect(pushToHead(list, "a", 3, 100, next)[0].ep).toEqual(next);
+  });
+  test("pushGuestHistory keeps stored ep without one and tolerates old rows", () => {
+    const first = pushGuestHistory([{ ...card("old"), savedAt: 0 }], card("a"), 1, ep);
+    expect(first.map((m) => m.slug)).toEqual(["a", "old"]);
+    expect(first[0].ep).toEqual(ep);
+    expect(pushGuestHistory(first, card("a"), 2)[0].ep).toEqual(ep);
+    expect(pushGuestHistory(first, card("old"), 2)[0]).not.toHaveProperty("ep");
+  });
+  test("server rows map serverName/episodeKey/episodeName and null means no ep", () => {
+    const out = parseServerItems({ items: [
+      { slug: "a", at: 5, serverName: "S", episodeKey: "k", episodeName: "Tập 1" },
+      { slug: "b", at: 4, serverName: null, episodeKey: null, episodeName: null },
+    ] });
+    expect(out[0]).toEqual({ slug: "a", savedAt: 5, ep: { server: "S", key: "k", name: "Tập 1" } });
+    expect(out[1]).toEqual({ slug: "b", savedAt: 4 });
+  });
+  test("resolveCards carries ep", () => {
+    const cache = upsertCard({}, card("a"));
+    expect(resolveCards([{ slug: "a", savedAt: 3, ep }], cache)[0].ep).toEqual(ep);
+  });
+  test("import payload carries ep for history only", () => {
+    const payload = buildImportPayload([{ slug: "a", savedAt: 1, ep }], [{ slug: "a", savedAt: 1, ep }, { slug: "b", savedAt: 0 }]);
+    expect(payload.favorites).toEqual([{ slug: "a", savedAt: 1 }]);
+    expect(payload.history[0]).toEqual({ slug: "a", savedAt: 1, ep: { serverName: "Vietsub #1", episodeKey: "tap-5", episodeName: "Tập 5" } });
+    expect(payload.history[1]).toEqual({ slug: "b", savedAt: 0 });
   });
 });

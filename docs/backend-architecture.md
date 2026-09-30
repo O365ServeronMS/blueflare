@@ -40,7 +40,7 @@ provides normal DNS/proxy/CDN caching only; there is no frontend Worker.
 
 ## Accounts
 
-User accounts, sessions and watch progress live in PostgreSQL (migration 020).
+User accounts, sessions and the last watched episode per title (`user_history`) live in PostgreSQL (migrations 020, 021).
 `auth.js` handles password hashing and sessions; `meApi.js` serves `/api/auth/*`
 and `/api/me/*`, always uncached (no Valkey). Browsers reach them only through the
 Next proxy on `phim.bluesia.net` (`bf_session` cookie, HttpOnly, SameSite=Lax);

@@ -5,12 +5,14 @@ import { Play } from "lucide-react";
 
 type IframePlayerFacadeProps = {
   onError?: () => void;
+  /** Fired once per explicit Play press, before the iframe mounts. */
+  onPlay?: () => void;
   src: string;
   poster?: string;
   title: string;
 };
 
-export function IframePlayerFacade({ onError, src, poster, title }: IframePlayerFacadeProps) {
+export function IframePlayerFacade({ onError, onPlay, src, poster, title }: IframePlayerFacadeProps) {
   const [isPlaying, setIsPlaying] = useState(false);
 
   if (isPlaying) {
@@ -32,7 +34,10 @@ export function IframePlayerFacade({ onError, src, poster, title }: IframePlayer
     <button
       type="button"
       aria-label={`Phát ${title}`}
-      onClick={() => setIsPlaying(true)}
+      onClick={() => {
+        onPlay?.();
+        setIsPlaying(true);
+      }}
       className="group relative block h-full w-full cursor-pointer overflow-hidden bg-deep-space text-left transition duration-300 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-white"
     >
       {poster ? (

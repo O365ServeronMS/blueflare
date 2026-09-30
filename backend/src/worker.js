@@ -22,6 +22,10 @@ import {
   listTmdbLookupCandidates,
   listTmdbRecommendationCandidates,
   listTmdbCreditCandidates,
+  listTmdbMatchCandidates,
+  correctGuessedLookupIds,
+  recordTmdbMatch,
+  recordTmdbMatchFailure,
   recordTmdbLookup,
   recordTmdbRecommendations,
   recordTmdbCredits,
@@ -55,6 +59,7 @@ import { createLocalImageStore } from './imageStore.js';
 import { deadImageHosts, setLearnedDeadHosts } from './imageHostRegistry.js';
 import { probeUrl } from './imageHostHealth.js';
 import { runImageHostCheck } from './imageHostCheck.js';
+import { findCastVerifiedMatch } from './tmdbMatch.js';
 import { backfillMdblistRatings, formatMdblistStats, syncMdblistRatings } from './mdblistRatingsSync.js';
 import {
   fetchTmdbCredits,
@@ -510,6 +515,55 @@ async function refreshTmdbRecommendations() {
 }
 
 /**
+ * Cast-verify a TMDB identity for rows the provider gave no tmdb_id.
+ *
+ * Writes tmdb_match_* only, never tmdb_id (see migration 019). On a verified
+ * match the credits the matcher already fetched are stored right away so the
+ * cast strip needs no second TMDB call; if that write fails the credits pass
+ * picks the identity up later. Returns slugs of newly verified rows, whose
+ * detail payload just gained a cast strip.
+ */
+async function refreshTmdbMatches() {
+  if (!config.tmdbEnabled || !config.tmdbMatchEnabled || !config.tmdbApiKey) return [];
+  const candidates = await listTmdbMatchCandidates();
+  if (!candidates.length) return [];
+
+  const counts = { verified: 0, none: 0, unverifiable: 0, error: 0 };
+  const changed = [];
+  await mapLimit(candidates, config.tmdbMatchConcurrency, async (movie) => {
+    try {
+      const verdict = await findCastVerifiedMatch({
+        original_title: movie.original_title,
+        media_type: movie.media_type,
+        year: movie.year,
+        actors: movie.actors
+      });
+      counts[verdict.status] += 1;
+      const row = await recordTmdbMatch(movie.id, verdict);
+      if (verdict.status === 'verified' && verdict.match) {
+        if (verdict.credits) {
+          const { mediaType, tmdbId } = verdict.match;
+          const status = verdict.credits.cast.length || verdict.credits.directors.length ? 'ok' : 'empty';
+          await recordTmdbCredits(mediaType, tmdbId, { ...verdict.credits, status }).catch((error) => {
+            console.warn('[worker] tmdb match credits write failed for ' + movie.canonical_slug, error.message);
+          });
+        }
+        if (row?.canonical_slug) changed.push(row.canonical_slug);
+      }
+    } catch (error) {
+      counts.error += 1;
+      console.warn('[worker] TMDB match failed for ' + movie.canonical_slug, error.message);
+      await recordTmdbMatchFailure(movie.id, error.message).catch(() => {});
+    }
+  });
+
+  console.log('[worker] tmdb match checked=' + candidates.length +
+    ' verified=' + counts.verified + ' none=' + counts.none +
+    ' unverifiable=' + counts.unverifiable + ' error=' + counts.error);
+  return changed;
+}
+
+/**
  * Fetch TMDB cast/director credits for the detail-page cast strip and the
  * person pages.
  *
@@ -634,6 +688,20 @@ async function syncCycle() {
     await refreshTmdbCredits().catch((error) => {
       console.warn('[worker] tmdb credits pass failed', error.message);
     });
+  }
+  if (!stopping) {
+    ratingChangedSlugs.push(...await refreshTmdbMatches().catch((error) => {
+      console.warn('[worker] tmdb match pass failed', error.message);
+      return [];
+    }));
+  }
+  if (!stopping && config.tmdbMatchEnabled) {
+    const corrected = await correctGuessedLookupIds().catch((error) => {
+      console.warn('[worker] tmdb lookup correction failed', error.message);
+      return [];
+    });
+    if (corrected.length) console.log('[worker] tmdb lookup corrected=' + corrected.length);
+    ratingChangedSlugs.push(...corrected);
   }
   if (!stopping) ratingChangedSlugs.push(...await refreshMdblistBackfill());
   if (ratingChangedSlugs.length) {

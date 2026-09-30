@@ -43,9 +43,15 @@ export function personSlug(name, tmdbPersonId) {
 export function creditIdentity(row) {
   if (!row) return null;
   const tmdbId = positiveId(row.tmdb_id);
-  if (!tmdbId) return null;
-  if (row.tmdb_media_type !== 'movie' && row.tmdb_media_type !== 'tv') return null;
-  return { mediaType: row.tmdb_media_type, tmdbId };
+  if (tmdbId) {
+    if (row.tmdb_media_type !== 'movie' && row.tmdb_media_type !== 'tv') return null;
+    return { mediaType: row.tmdb_media_type, tmdbId };
+  }
+  // No provider id: fall back to a cast-verified match, never to a guessed lookup id.
+  const matchId = row.tmdb_match_status === 'verified' ? positiveId(row.tmdb_match_id) : 0;
+  if (!matchId) return null;
+  if (row.tmdb_match_media_type !== 'movie' && row.tmdb_match_media_type !== 'tv') return null;
+  return { mediaType: row.tmdb_match_media_type, tmdbId: matchId };
 }
 
 /** 'cast' | 'director' | 'all'; anything else reads as 'all'. */

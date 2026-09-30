@@ -671,12 +671,17 @@ export async function recordTmdbRecommendations(mediaType, tmdbId, status, lists
  */
 export async function listTmdbCreditCandidates(limit = config.tmdbCreditsLimit) {
   const result = await pool.query(
-    'WITH keys AS (' +
-    '  SELECT DISTINCT ON (m.tmdb_media_type, m.tmdb_id) m.tmdb_media_type AS media_type, ' +
-    '    m.tmdb_id, m.catalog_sort_at FROM movies m ' +
+    'WITH ids AS (' +
+    '  SELECT m.tmdb_media_type AS media_type, m.tmdb_id, m.catalog_sort_at FROM movies m ' +
     "  WHERE m.catalog_state='ready' AND m.tmdb_id IS NOT NULL " +
     "    AND m.tmdb_media_type IN ('movie','tv') " +
-    '  ORDER BY m.tmdb_media_type, m.tmdb_id, m.catalog_sort_at DESC NULLS LAST' +
+    '  UNION ALL ' +
+    '  SELECT m.tmdb_match_media_type, m.tmdb_match_id, m.catalog_sort_at FROM movies m ' +
+    "  WHERE m.catalog_state='ready' AND m.tmdb_id IS NULL AND m.tmdb_match_status='verified' " +
+    "    AND m.tmdb_match_media_type IN ('movie','tv') AND m.tmdb_match_id > 0" +
+    '), keys AS (' +
+    '  SELECT DISTINCT ON (media_type, tmdb_id) media_type, tmdb_id, catalog_sort_at FROM ids ' +
+    '  ORDER BY media_type, tmdb_id, catalog_sort_at DESC NULLS LAST' +
     ') ' +
     'SELECT keys.media_type, keys.tmdb_id FROM keys ' +
     'LEFT JOIN tmdb_credits_sync s ON s.media_type=keys.media_type AND s.tmdb_id=keys.tmdb_id ' +
@@ -767,6 +772,98 @@ export async function recordTmdbCreditsFailure(mediaType, tmdbId, status, messag
   );
 }
 
+/**
+ * Rows with no provider tmdb_id whose cast could corroborate a TMDB title.
+ * Never-checked rows first, newest first. 'verified' is final; 'none' and
+ * 'unverifiable' come back after the refresh window, 'error' after the retry one.
+ */
+export async function listTmdbMatchCandidates(limit = config.tmdbMatchLimit) {
+  const result = await pool.query(
+    'SELECT id, canonical_slug, original_title, media_type, year, actors FROM movies ' +
+    "WHERE catalog_state='ready' AND tmdb_id IS NULL " +
+    "  AND COALESCE(original_title,'') <> '' " +
+    "  AND jsonb_typeof(actors)='array' AND jsonb_array_length(actors) >= 2 " +
+    "  AND COALESCE(countries->0->>'slug','') <> ALL($1::text[]) " +
+    '  AND (tmdb_match_status IS NULL ' +
+    "    OR (tmdb_match_status IN ('none','unverifiable') " +
+    "        AND tmdb_match_checked_at < now() - ($2::bigint * interval '1 millisecond')) " +
+    "    OR (tmdb_match_status='error' " +
+    "        AND tmdb_match_checked_at < now() - ($3::bigint * interval '1 millisecond'))) " +
+    'ORDER BY (tmdb_match_status IS NULL) DESC, catalog_sort_at DESC NULLS LAST LIMIT $4',
+    [
+      config.tmdbMatchSkipCountries,
+      config.tmdbMatchRefreshMs,
+      config.tmdbMatchRetryMs,
+      Math.max(1, Math.floor(limit))
+    ]
+  );
+  return result.rows;
+}
+
+/**
+ * Store one verdict. Writes tmdb_match_* only: tmdb_id and tmdb_identity_status
+ * stay untouched so TMDB artwork can never replace catalog images through this.
+ */
+export async function recordTmdbMatch(movieId, verdict) {
+  const status = ['verified', 'none', 'unverifiable'].includes(verdict?.status) ? verdict.status : 'error';
+  const match = status === 'verified' ? verdict.match : null;
+  const updated = await pool.query(
+    'UPDATE movies SET tmdb_match_status=$2, tmdb_match_id=$3, tmdb_match_media_type=$4, ' +
+    'tmdb_match_evidence=$5::jsonb, tmdb_match_checked_at=now() ' +
+    'WHERE id=$1 RETURNING canonical_slug',
+    [
+      movieId,
+      status,
+      match?.tmdbId ?? null,
+      match?.mediaType ?? null,
+      verdict?.evidence == null ? null : JSON.stringify(verdict.evidence)
+    ]
+  );
+  return updated.rows[0] || null;
+}
+
+/** A failed lookup keeps any previous verified match; only the check time moves. */
+export async function recordTmdbMatchFailure(movieId, message) {
+  await pool.query(
+    "UPDATE movies SET tmdb_match_status=CASE WHEN tmdb_match_status='verified' THEN 'verified' ELSE 'error' END, " +
+    'tmdb_match_evidence=CASE WHEN tmdb_match_status=\'verified\' THEN tmdb_match_evidence ' +
+    'ELSE jsonb_build_object(\'error\', $2::text) END, ' +
+    'tmdb_match_checked_at=now() WHERE id=$1',
+    [movieId, String(message || 'unknown error').slice(0, 500)]
+  );
+}
+
+/**
+ * Overwrite a guessed tmdb_lookup_id that a cast-verified match contradicts.
+ *
+ * Only rows whose MDBList lookup actually used the guess (no tmdb_id, no
+ * imdb_id) lose their stored score and get re-queued: a wrong Rotten Tomatoes
+ * score is worse than none. Rows with an imdb_id keep their score because the
+ * guess never fed it. Non-conflicting rows are left alone to save MDBList budget.
+ * Bounded per call so a large first run spreads over several cycles.
+ */
+export async function correctGuessedLookupIds(limit = 200) {
+  const result = await pool.query(
+    'WITH todo AS (' +
+    '  SELECT id FROM movies ' +
+    "  WHERE catalog_state='ready' AND tmdb_id IS NULL AND tmdb_match_status='verified' " +
+    "    AND tmdb_lookup_status='matched' AND tmdb_lookup_id IS NOT NULL " +
+    '    AND tmdb_lookup_id::bigint <> tmdb_match_id ' +
+    "    AND (tmdb_match_media_type='movie') = (media_type='movie') " +
+    '  ORDER BY catalog_sort_at DESC NULLS LAST LIMIT $1' +
+    ') ' +
+    'UPDATE movies m SET tmdb_lookup_id=m.tmdb_match_id, ' +
+    "  mdblist_status=CASE WHEN COALESCE(m.imdb_id,'')='' THEN 'none' ELSE m.mdblist_status END, " +
+    "  mdblist_checked_at=CASE WHEN COALESCE(m.imdb_id,'')='' THEN NULL ELSE m.mdblist_checked_at END, " +
+    "  mdblist_tomatoes=CASE WHEN COALESCE(m.imdb_id,'')='' THEN NULL ELSE m.mdblist_tomatoes END, " +
+    "  mdblist_audience=CASE WHEN COALESCE(m.imdb_id,'')='' THEN NULL ELSE m.mdblist_audience END, " +
+    '  updated_at=now() ' +
+    'FROM todo WHERE m.id=todo.id RETURNING m.canonical_slug',
+    [Math.max(1, Math.floor(limit))]
+  );
+  return result.rows.map((row) => row.canonical_slug);
+}
+
 export async function findPersonBySlug(slug) {
   const result = await pool.query('SELECT * FROM people WHERE slug=$1 LIMIT 1', [slug]);
   return result.rows[0] || null;
@@ -802,15 +899,26 @@ export async function listPersonMovies(personId, options = {}) {
     roleFilter = ' AND c.role=$2';
   }
 
+  // Two equijoins instead of one OR join so each keeps its index: provider
+  // identities (tmdb_id) and cast-verified matches on rows that have none.
   const hits =
-    'WITH hits AS (' +
-    '  SELECT DISTINCT ON (c.media_type, c.tmdb_id) m.* FROM movie_credits c ' +
+    'WITH joined AS (' +
+    '  SELECT c.media_type AS credit_media_type, c.tmdb_id AS credit_tmdb_id, m.* FROM movie_credits c ' +
     '  JOIN movies m ON m.tmdb_id=c.tmdb_id AND m.tmdb_media_type=c.media_type ' +
     '  WHERE c.person_id=$1' + roleFilter +
     "    AND m.catalog_state='ready' AND m.canonical_slug<>'' " +
     '    AND ' + imagePresent('m') + ' AND ' + playableSourceExists('m') +
-    '  ORDER BY c.media_type, c.tmdb_id, m.tmdb_season_number DESC NULLS LAST, ' +
-    '    m.catalog_sort_at DESC NULLS LAST' +
+    '  UNION ALL ' +
+    '  SELECT c.media_type, c.tmdb_id, m.* FROM movie_credits c ' +
+    "  JOIN movies m ON m.tmdb_match_status='verified' AND m.tmdb_id IS NULL " +
+    '    AND m.tmdb_match_id=c.tmdb_id AND m.tmdb_match_media_type=c.media_type ' +
+    '  WHERE c.person_id=$1' + roleFilter +
+    "    AND m.catalog_state='ready' AND m.canonical_slug<>'' " +
+    '    AND ' + imagePresent('m') + ' AND ' + playableSourceExists('m') +
+    '), hits AS (' +
+    '  SELECT DISTINCT ON (credit_media_type, credit_tmdb_id) * FROM joined ' +
+    '  ORDER BY credit_media_type, credit_tmdb_id, tmdb_season_number DESC NULLS LAST, ' +
+    '    catalog_sort_at DESC NULLS LAST' +
     ') ';
 
   const count = await pool.query(hits + 'SELECT count(*)::integer AS count FROM hits', values);

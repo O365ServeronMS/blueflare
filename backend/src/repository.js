@@ -7,6 +7,7 @@ import {
 import {
   isControlledFuzzyMatch,
   normalizeTitle,
+  reconcileSourceIdentity,
   slugify
 } from './identity.js';
 import { mergeRecommendationIds, recommendationSource, combineRecommendationRows, RECOMMENDATION_LIMIT } from './recommendations.js';
@@ -357,6 +358,19 @@ export async function upsertCanonical(incoming) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    const existingBySlug = (await client.query(
+      'SELECT provider_movie_id FROM movie_provider_sources WHERE provider=$1 AND provider_slug=$2 LIMIT 1',
+      [incoming.provider, incoming.providerSlug]
+    )).rows[0];
+    const reconciled = reconcileSourceIdentity(incoming, existingBySlug);
+    if (reconciled.rekeyFrom) {
+      await client.query(
+        'UPDATE movie_provider_sources SET provider_movie_id=$3, updated_at=now() ' +
+        'WHERE provider=$1 AND provider_movie_id=$2',
+        [incoming.provider, reconciled.rekeyFrom, reconciled.providerMovieId]
+      );
+    }
+    incoming = { ...incoming, providerMovieId: reconciled.providerMovieId };
     const sourceMovie = await findBySource(client, incoming);
     const strongIdentityMovie = await findStrongIdentity(client, incoming);
     const identity = tmdbIdentity(incoming);
@@ -414,6 +428,17 @@ export async function upsertCanonical(incoming) {
 
   }
 }
+export async function listStoredSourceStates(provider, slugs) {
+  if (!slugs.length) return [];
+  const result = await pool.query(
+    'SELECT provider_slug, provider_updated_at, streams FROM movie_provider_sources ' +
+    "WHERE provider=$1 AND provider_slug = ANY($2::text[]) AND availability " +
+    "AND jsonb_array_length(streams) > 0",
+    [provider, slugs]
+  );
+  return result.rows;
+}
+
 export async function listTmdbImageCandidates(limit = config.tmdbImageSyncLimit) {
   const result = await pool.query(
     "SELECT * FROM movies WHERE tmdb_identity_status IN ('pending', 'retry') AND tmdb_id IS NOT NULL " +

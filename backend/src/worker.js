@@ -10,6 +10,8 @@ import { mapLimit } from './concurrency.js';
 import { closeDatabase, migrate } from './db.js';
 import { revalidateFrontend } from './frontendRevalidation.js';
 import { normalizeKkphim, normalizeNguonc } from './normalize.js';
+import { collectHeroTrending } from './heroTrending.js';
+import { unchangedSlugs } from './syncSkip.js';
 import { KkphimProvider } from './providers/KkphimProvider.js';
 import { NguoncProvider } from './providers/NguoncProvider.js';
 import {
@@ -39,7 +41,8 @@ import {
   withHeroTrendingRefreshLock,
   getMovieInvalidationDimensions,
   getMdblistBackfillCursor,
-  saveMdblistBackfillCursor
+  saveMdblistBackfillCursor,
+  listStoredSourceStates
 } from './repository.js';
 import { formatPrewarmStats, prewarmImages } from './prewarm.js';
 import { backfillMdblistRatings, formatMdblistStats, syncMdblistRatings } from './mdblistRatingsSync.js';
@@ -90,9 +93,17 @@ async function syncPage(provider, page) {
   const items = provider.listItems(list.data);
   let imported = 0;
   let failed = 0;
+  let skipped = 0;
   const changedSlugs = [];
+  const stored = await listStoredSourceStates(provider.name, items.map((item) => item.slug));
+  const unchanged = unchangedSlugs(items, stored);
+  const hasGoodSource = new Set(stored.map((row) => row.provider_slug));
 
   await mapLimit(items, config.syncConcurrency, async (item) => {
+    if (unchanged.has(item.slug)) {
+      skipped += 1;
+      return;
+    }
     let normalized;
     try {
       const detail = await provider.detail(item.slug);
@@ -103,6 +114,8 @@ async function syncPage(provider, page) {
         '[worker] ' + provider.name + ' detail failed for ' + item.slug,
         error.message
       );
+      // Fallback tóm tắt không có stream: không được ghi đè nguồn đã có dữ liệu tốt.
+      if (hasGoodSource.has(item.slug)) return;
       normalized = summaryFallback(provider, item);
     }
     try {
@@ -121,6 +134,7 @@ async function syncPage(provider, page) {
   return {
     imported,
     failed,
+    skipped,
     status: list.status,
     itemCount: items.length,
     pageHash: pageHash(items),
@@ -132,6 +146,7 @@ async function syncPage(provider, page) {
 async function syncHead(provider) {
   let imported = 0;
   let failed = 0;
+  let skipped = 0;
   let status = 200;
   const changedSlugs = [];
   for (let page = 1; page <= config.syncPagesPerRun; page += 1) {
@@ -139,11 +154,12 @@ async function syncHead(provider) {
     const result = await syncPage(provider, page);
     imported += result.imported;
     failed += result.failed;
+    skipped += result.skipped;
     changedSlugs.push(...result.changedSlugs);
     status = result.status;
     if (!result.itemCount) break;
   }
-  return { imported, failed, status, changedSlugs };
+  return { imported, failed, skipped, status, changedSlugs };
 }
 
 async function syncBackfill(provider) {
@@ -197,6 +213,7 @@ async function syncProvider(provider) {
     await recordProviderSuccess(provider.name, Date.now() - started, head.status, head.failed);
     console.log(
       '[worker] ' + provider.name + ' head imported=' + head.imported +
+      ' skippedUnchanged=' + head.skipped +
       ' detailFailures=' + head.failed + ' durationMs=' + (Date.now() - started)
     );
     return head;
@@ -241,8 +258,13 @@ async function refreshHeroTrendingIfDue() {
       let candidateIds = [];
       let matches = [];
       try {
-        candidateIds = await fetchTrendingMovieIds();
-        matches = await resolveTrendingMovieCandidates(candidateIds, config.heroTrendingLimit);
+        ({ candidateIds, matches } = await collectHeroTrending({
+          fetchIds: (options) => fetchTrendingMovieIds(options),
+          resolve: resolveTrendingMovieCandidates,
+          limit: config.heroTrendingLimit,
+          pages: config.heroTrendingCandidatePages,
+          maxPages: config.heroTrendingMaxCandidatePages
+        }));
         if (matches.length !== config.heroTrendingLimit) {
           throw new Error('TMDB Trending matched ' + matches.length + ' of ' + config.heroTrendingLimit + ' playable catalog movies');
         }

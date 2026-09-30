@@ -46,3 +46,17 @@ export function isControlledFuzzyMatch(candidate, incoming, threshold = 0.96) {
   const titleScore = titleSimilarity(candidate.title, incoming.title);
   return Math.max(originalScore, titleScore) >= threshold;
 }
+
+// Trả về id nguồn nên dùng khi slug đã tồn tại dưới một provider_movie_id khác.
+// Bản tóm tắt (fallback khi detail lỗi) không có id thật nên providerMovieId
+// bị suy ra từ slug; giữ id cũ để không đụng UNIQUE (provider, provider_slug).
+// Id thật khác id cũ nghĩa là provider cấp lại id cho cùng slug: đổi khóa hàng cũ.
+export function reconcileSourceIdentity(incoming, existing) {
+  if (!existing || existing.provider_movie_id === incoming.providerMovieId) {
+    return { providerMovieId: incoming.providerMovieId, rekeyFrom: null };
+  }
+  if (incoming.providerMovieId === incoming.providerSlug) {
+    return { providerMovieId: existing.provider_movie_id, rekeyFrom: null };
+  }
+  return { providerMovieId: incoming.providerMovieId, rekeyFrom: existing.provider_movie_id };
+}

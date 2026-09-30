@@ -38,6 +38,7 @@ export const config = Object.freeze({
   // keep the floor at 1 so the env value actually takes effect below 24.
   heroTrendingLimit: Math.min(24, integer('HERO_TRENDING_LIMIT', 24, 1)),
   heroTrendingCandidatePages: integer('HERO_TRENDING_CANDIDATE_PAGES', 3, 1),
+  heroTrendingMaxCandidatePages: integer('HERO_TRENDING_MAX_CANDIDATE_PAGES', 8, 1),
   heroTrendingRefreshMs: integer('HERO_TRENDING_REFRESH_MS', 60 * 60 * 1000, 60 * 1000),
   databaseUrl: process.env.DATABASE_URL || 'postgres://blueflare:blueflare@postgres:5432/blueflare',
   // Master switch for all TMDB calls (trending hero + image sync + image fallback).

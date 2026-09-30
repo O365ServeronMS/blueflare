@@ -7,6 +7,7 @@ import { createReadStream } from 'node:fs';
 import { rename, stat, unlink } from 'node:fs/promises';
 import sharp from 'sharp';
 import { config } from './config.js';
+import { createFailureMemo, ImageSourceError } from './imageSourceFailure.js';
 import { createLocalImageStore } from './imageStore.js';
 import { observeCache } from './observability.js';
 import { pool } from './db.js';
@@ -67,7 +68,14 @@ function secureEqual(left, right) {
 
 const imageStore = createLocalImageStore(config.imageCacheDir);
 const imageInFlight = new Map();
+const sourceFailures = createFailureMemo();
 const assetIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function respondSourceFailure(response, failure) {
+  const headers = { 'cache-control': 'no-store' };
+  if (failure.retryAfterSeconds) headers['retry-after'] = String(failure.retryAfterSeconds);
+  response.writeHead(failure.responseStatus, headers).end();
+}
 
 async function fetchSource(url) {
   const parsed = new URL(url);
@@ -82,7 +90,7 @@ async function fetchSource(url) {
       signal: controller.signal
     });
     if (!response.ok) {
-      throw new Error('Image source returned HTTP ' + response.status);
+      throw new ImageSourceError(response.status);
     }
     const length = Number(response.headers.get('content-length') || 0);
     if (length > 20 * 1024 * 1024) {
@@ -114,6 +122,11 @@ export async function serveSignedImage(request, response, pathname, searchParams
     let cacheStatus = filename ? 'IMAGE-DISK-HIT' : 'IMAGE-DISK-MISS';
     if (!filename) {
       const key = variant + ':' + assetId;
+      const remembered = sourceFailures.get(key);
+      if (remembered) {
+        respondSourceFailure(response, remembered);
+        return true;
+      }
       let pending = imageInFlight.get(key);
       if (!pending) {
         pending = (async () => {
@@ -136,7 +149,19 @@ export async function serveSignedImage(request, response, pathname, searchParams
         imageInFlight.set(key, pending);
         pending.finally(() => imageInFlight.delete(key)).catch(() => {});
       }
-      filename = await pending;
+      try {
+        filename = await pending;
+      } catch (error) {
+        if (!(error instanceof ImageSourceError)) throw error;
+        if (sourceFailures.remember(key, error.status)) {
+          console.warn(
+            '[api] image source unavailable asset=' + assetId + ' variant=' + variant +
+            ' status=' + error.status + ' host=' + new URL(assetResult.rows[0].source_url).hostname
+          );
+        }
+        respondSourceFailure(response, sourceFailures.get(key));
+        return true;
+      }
       cacheStatus = 'IMAGE-BUILD';
     }
     observeCache(cacheStatus);

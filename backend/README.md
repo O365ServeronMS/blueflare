@@ -65,6 +65,12 @@ advances one or more low-priority backfill pages per provider. Backfill starts
 after the head pages, persists its position in `crawl_checkpoints`, and resumes
 after a restart. Browser requests never wait for a provider crawl.
 
+A list item whose `modified` time equals the stored `provider_updated_at` (and
+whose stored source already has streams) is skipped without a detail fetch; the
+head log reports it as `skippedUnchanged`. When a detail fetch fails, an existing
+source with streams is left untouched instead of being overwritten by the
+list-item summary.
+
 Catalog lists only expose `catalog_state=ready` rows. Their order is
 `catalog_sort_at` (the provider's update timestamp), then year and slug; an old
 record discovered during backfill cannot appear as a newly updated movie merely

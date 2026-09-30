@@ -5,7 +5,8 @@ import {
   slugify,
   mediaFamily,
   titleSimilarity,
-  isControlledFuzzyMatch
+  isControlledFuzzyMatch,
+  reconcileSourceIdentity
 } from '../src/identity.js';
 
 test('normalizeTitle strips Vietnamese diacritics', () => {
@@ -127,4 +128,22 @@ test('isControlledFuzzyMatch respects custom threshold', () => {
   const incoming = { title: 'Film ABD', originalTitle: 'Film ABD', year: 2025, mediaType: 'movie' };
   assert.equal(isControlledFuzzyMatch(candidate, incoming, score - 0.01), true);
   assert.equal(isControlledFuzzyMatch(candidate, incoming, score + 0.01), false);
+});
+
+test('reconcileSourceIdentity: fallback id (=slug) reuses the stored provider id', () => {
+  const incoming = { providerMovieId: 'can-nha-ma-quai', providerSlug: 'can-nha-ma-quai' };
+  const result = reconcileSourceIdentity(incoming, { provider_movie_id: '4ac9ae07' });
+  assert.deepEqual(result, { providerMovieId: '4ac9ae07', rekeyFrom: null });
+});
+
+test('reconcileSourceIdentity: a different real id for the same slug rekeys the row', () => {
+  const incoming = { providerMovieId: 'new-id', providerSlug: 'can-nha-ma-quai' };
+  const result = reconcileSourceIdentity(incoming, { provider_movie_id: 'old-id' });
+  assert.deepEqual(result, { providerMovieId: 'new-id', rekeyFrom: 'old-id' });
+});
+
+test('reconcileSourceIdentity: unchanged when the slug is new or the id matches', () => {
+  const incoming = { providerMovieId: 'abc', providerSlug: 'x' };
+  assert.deepEqual(reconcileSourceIdentity(incoming, undefined), { providerMovieId: 'abc', rekeyFrom: null });
+  assert.deepEqual(reconcileSourceIdentity(incoming, { provider_movie_id: 'abc' }), { providerMovieId: 'abc', rekeyFrom: null });
 });

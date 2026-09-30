@@ -41,13 +41,13 @@ BaseLayout
 │   │   ├── EpisodeSelector
 │   │   ├── EditorialMetadata
 │   │   └── RelatedRail
-│   └── Search / LocalLibrary / Settings / Error
+│   └── Search / LocalLibrary / Login / Signup / Error
 └── GlobalFooter
 ```
 
 ## Home architecture
 
-The fixed navigation begins transparent and becomes near-black after scroll. The hero occupies roughly 74–82vh on desktop and 64–72vh on mobile, with a full-bleed backdrop, left and bottom fades, a short metadata row, two actions, and a restrained synopsis. The first rail overlaps the hero fade slightly. All sections after the hero are horizontal native-scroll rails, not fixed grids. Desktop exposes about five to six landscape cards; mobile exposes roughly 2.2 cards to signal continuation.
+The fixed navigation begins transparent and becomes near-black after scroll. The hero occupies roughly 74–82vh on desktop and 64–72vh on mobile, with a full-bleed backdrop, left and bottom fades, a short metadata row, two actions, and a restrained synopsis. The first rail overlaps the hero fade slightly. All sections after the hero are horizontal native-scroll rails, not fixed grids. Desktop exposes about five to six landscape cards; mobile exposes roughly 2.2 cards to signal continuation. A Continue Watching rail sits above "Phim đang được xem nhiều" only when signed in with progress data; its posters carry a red 3px progress bar on the bottom edge.
 
 ## Media behavior
 
@@ -120,6 +120,6 @@ Horizontal page gutters are fluid from 16px mobile to 4vw desktop. The content c
 2. Remove the 720px shell and bottom navigation; introduce global responsive navigation and footer.
 3. Rebuild media cards and rails, then make the homepage the reference implementation.
 4. Recompose detail/player/episodes without touching playback source selection.
-5. Rebuild list, search, local library, settings, and 404 with the same primitives.
+5. Rebuild list, search, local library, login/signup, and 404 with the same primitives.
 6. Remove old blue-token usage and legacy visual components after route migration.
 7. Build and run visual/interaction QA at the required responsive widths.

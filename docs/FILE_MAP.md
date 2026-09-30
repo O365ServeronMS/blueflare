@@ -20,9 +20,11 @@ archive documents.
 - `src/app/movie/[slug]/page.tsx`: server-rendered detail/player shell and episode state.
 - `src/app/person/[slug]/page.tsx`: paginated filmography for a verified TMDB cast/director identity.
 - `src/app/favorites/page.tsx`, `history/page.tsx`: browser-local libraries.
-- `src/app/settings/page.tsx`, `not-found.tsx`, `error.tsx`: information/recovery screens.
+- `src/app/login/`, `signup/`: account forms (`AuthForm`).
+- `src/app/not-found.tsx`, `error.tsx`: information/recovery screens.
 - `src/app/healthz/route.ts`: container health probe.
 - `src/app/api/internal/revalidate/route.ts`: secret-protected targeted render-cache invalidation.
+- `src/app/api/auth/*`, `api/me/*`: same-origin account proxy routes (uncached) via `lib/account-proxy.ts`.
 
 ## Frontend components and libraries
 
@@ -32,6 +34,9 @@ archive documents.
 - `lib/catalog-server.ts`: cached server API helpers and cache tags.
 - `lib/navigation.ts`: `returnTo` and category-context policy.
 - `lib/playback.ts`: centralized device/source priority and URL validation.
+- `lib/account-proxy.ts`: proxy to the API (`bf_session` cookie, Origin check, real client IP, hardcoded Cloudflare IP ranges).
+- `lib/progress.ts`, `progress-report.ts`, `continue-watching.ts`, `movie-sync.ts`, `movie-store.ts`: watch progress, continue-watching and favorites/history sync.
+- `components/` account pieces: AuthForm, ContinueWatchingRow, ResumeActions, useAccount, useContinueItem, useProgressReporter.
 - `lib/episodes.ts`, `lib/types.ts`, `lib/utils.ts`: shared helpers and models.
 
 ## Docker backend and deployment
@@ -49,8 +54,9 @@ trong git; thư mục stack giữ bản copy, đồng bộ bằng `deploy/sync-s
 - `backend/src/`: provider sync, canonical merge, ViewModels, cache, image cache origin.
   Job nền: `prewarm.js` (worker làm ấm cache ảnh), `imageCacheSweep.js` (API dọn/evict cache).
   `people.js`: slug/identity thuần cho metadata cast/director lấy từ TMDB.
+  Tài khoản: `auth.js` (hash mật khẩu + session), `meApi.js` (`/api/auth/*`, `/api/me/*`, không cache), `meRepository.js`; migration `020_users_sessions.sql`.
 - `deploy/bootstrap-vps.sh`: dựng VPS trắng; hai site block Caddy (`phim` → 3100,
-  `img` → 3200) nằm inline trong script, không còn file `.caddy` riêng.
+  `img` → 3200, kèm rule `@account` trả 404 cho `/api/auth/*` và `/api/me*`) nằm inline trong script, không còn file `.caddy` riêng.
 - `deploy/cloudflare-frontend-static-rule.json`: optional normal Cloudflare cache rule for immutable `/_next/static/` assets.
 - `scripts/deploy.sh`: deploy `main` đã push — chỉ build service mà diff chạm tới, tag
   image cũ thành `:prev`, tạo lại container, chờ healthy + smoke, tự rollback nếu hỏng.

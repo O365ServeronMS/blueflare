@@ -14,6 +14,7 @@
   origin TTL and shared two-variant cache contract.
 - API JSON: cache according to Blueflare response headers and Valkey state; do
   not cache health or internal revalidation requests.
+- Account routes (`/api/auth/*`, `/api/me/*`) are excluded: 404 on the img host, `no-store` on the phim host. `GET /api/cards?slugs=` is public and cacheable (60s).
 - Search and user-local pages should remain bypass/no-store where applicable.
 
 Verify with repeated requests and inspect `CF-Cache-Status`, `Age`, and the

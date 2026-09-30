@@ -135,6 +135,9 @@ The target is any S3-compatible store, so changing provider is an env change
 rather than a code change — `BACKUP_S3_*` in `.env.example` lists the endpoint
 and region for R2, Backblaze B2, Wasabi, AWS S3 and MinIO.
 
+The dump also carries user accounts, sessions and watch progress (tables from
+migration `020_users_sessions.sql`); a restore brings them back with the catalog.
+
 For a backup outside the schedule:
 
     /opt/stacks/blueflare/deploy/backup-postgres.sh
@@ -177,10 +180,16 @@ writable `/var/log/caddy` owned by the `caddy` user, which turns reload into a
 two-step sudo dance and once caused a silent reload failure. `journalctl -u
 caddy` is enough for this single-VPS setup.
 
-The image site block is just a proxy to the API port:
+The image site block proxies to the API port and 404s the account routes
+(`bootstrap-vps.sh` skips an existing block, so add the `@account` rule to an
+already-deployed Caddyfile by hand):
 
     img.bluesia.net {
         encode zstd gzip
+
+        # Tài khoản chỉ đi qua proxy Next của phim.bluesia.net (cookie, Origin, IP thật).
+        @account path /api/auth/* /api/me /api/me/*
+        respond @account 404
 
         reverse_proxy 127.0.0.1:3200
     }
@@ -273,6 +282,8 @@ means the Cache Rule is not active or the token used to create it lacks
 - GET /api/recommendations/:canonicalSlug
 - GET /api/categories
 - GET /api/countries
+- GET /api/cards?slugs=a,b (public, cached 60s, key = sorted slug list)
+- /api/auth/* and /api/me/* (accounts, sessions, watch progress; never cached; reachable only via the Next proxy, 404 on img.bluesia.net)
 - GET /i/:variant/:sha256.webp?url=...&sig=...
 
 Only image variants m (480 x 720) and d (1280 x 720) exist. Their identity is

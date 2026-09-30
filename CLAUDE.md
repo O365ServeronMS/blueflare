@@ -8,7 +8,7 @@ where they disagree, this file wins.
 
 FilmBluesia (`phim.bluesia.net`) is a Next.js 16 + React 19 App Router application rendered by a Node 24 standalone container on the VPS. Caddy terminates the public site and reverse-proxies to `127.0.0.1:3100`; Cloudflare is only the normal DNS/TLS/proxy/CDN layer. There is no Astro, frontend Worker, Pages Function, SSR edge runtime, or static-host rewrite.
 
-The repository also owns `backend/`: API, provider sync worker, PostgreSQL, Valkey, and the image cache behind `img.bluesia.net`. Server Components call the API through the Docker network (`INTERNAL_CATALOG_URL`); browser components own playback and browser `localStorage` state. NguonC is primary metadata, KKPhim fills gaps and alternate streams. Video bytes are never proxied.
+The repository also owns `backend/`: API, provider sync worker, PostgreSQL, Valkey, and the image cache behind `img.bluesia.net`. Server Components call the API through the Docker network (`INTERNAL_CATALOG_URL`); browser components own playback. Favorites/history stay in browser `localStorage` for guests and sync to the account when signed in; watch progress lives in PostgreSQL for signed-in users. NguonC is primary metadata, KKPhim fills gaps and alternate streams. Video bytes are never proxied.
 
 ## The running stack
 
@@ -62,13 +62,15 @@ Codebase and runtime are separate directories (ADR-001): the repo lives at `/hom
 
 ## Source map
 
-- `src/app/`: App Router pages (`/`, `/list/[type]`, `/search`, `/movie/[slug]`, `/person/[slug]`, local libraries, `/healthz`, internal revalidation).
+- `src/app/`: App Router pages incl. `api/auth/*` and `api/me/*` (same-origin account proxy) (`/`, `/list/[type]`, `/search`, `/movie/[slug]`, `/person/[slug]`, `/login`, `/signup`, local libraries, `/healthz`, internal revalidation).
 - `components/`: shared React UI, navigation, cards, `CastStrip.tsx`, pagination, playback.
 - `lib/catalog.ts`: browser-safe catalog client; `lib/catalog-server.ts`: cached server API helpers.
 - `lib/navigation.ts`: returnTo/page URL contracts.
 - `lib/playback.ts`: device/source ordering; keep it centralized.
 - `src/styles/globals.css`: shared design tokens and Tailwind styles. Accent is red `#e4312a`.
-- `backend/src/`: `server.js` (API + sweep scheduler), `worker.js` (sync + rating enrichment + prewarm), `mdblist.js` + `mdblistRatingsSync.js` (batched Rotten Tomatoes scores), `images.js` + `imageStore.js` (cache origin), `prewarm.js`, `imageCacheSweep.js`, `concurrency.js`, `repository.js`, `recommendations.js`, `people.js` (cast/director slug + identity), `viewmodels.js`, `cache.js`.
+- `backend/src/`: `server.js` (API + sweep scheduler), `worker.js` (sync + rating enrichment + prewarm), `mdblist.js` + `mdblistRatingsSync.js` (batched Rotten Tomatoes scores), `images.js` + `imageStore.js` (cache origin), `prewarm.js`, `imageCacheSweep.js`, `concurrency.js`, `repository.js`, `recommendations.js`, `people.js` (cast/director slug + identity), `viewmodels.js`, `cache.js`, `auth.js` (password hashing + sessions), `meApi.js` (`/api/auth/*` + `/api/me/*` handler, never cached), `meRepository.js`.
+- `lib/account-proxy.ts`: same-origin proxy to the API (`bf_session` cookie, Origin check, real client IP, hardcoded Cloudflare IP ranges). `lib/progress*.ts`, `continue-watching.ts`, `movie-sync.ts`, `movie-store.ts`: watch progress and favorites/history sync. Components: `AuthForm`, `ContinueWatchingRow`, `ResumeActions`, `useAccount`, `useContinueItem`, `useProgressReporter`.
+- Cloudflare IP ranges in `lib/account-proxy.ts` are hardcoded; refresh them from cloudflare.com/ips when they change. Stale ranges only make the proxy fall back to the peer address.
 - `deploy/`: canonical `compose.yml`, Cloudflare rules, `backup/` (backup service image), and operational scripts (`sync-stack.sh`, `apply-env.sh`, `backup-postgres.sh`, `bootstrap-vps.sh`). The two Caddy site blocks live inline in `bootstrap-vps.sh`, not as separate files.
 
 ## Data, cache, and navigation invariants
@@ -78,6 +80,7 @@ Codebase and runtime are separate directories (ADR-001): the repo lives at `/hom
 - Pagination is the compact Netflix-style window defined in `docs/PAGINATION.md`; page links must retain type and filters.
 - Images are served as exactly two variants: `/i/m/` portrait (480x720) and `/i/d/` landscape (1280x720). Live URLs are **path-only and keyed by `image_assets.id`** (`/i/{m,d}/<uuid>.webp`). An older HMAC-signed `?url=&sig=` form still exists in `images.js` for backward compatibility, but nothing emits it — do not build new callers on it, and never create a third variant.
 - `/data/images` has exactly one writer: the `api` service. Anything else that needs it mounts read-only.
+- Account routes (`/api/auth/*`, `/api/me/*`) are per-user and uncached (no Valkey/`getOrBuild`), reachable only through the Next proxy on `phim.bluesia.net`; `img.bluesia.net` returns 404 for them via a Caddy rule in `bootstrap-vps.sh` (an already-deployed Caddyfile must be edited by hand: `inject_caddy_block` skips existing blocks). Session cookie `bf_session` is HttpOnly, SameSite=Lax. `GET /api/cards?slugs=` is public, cached 60s, keyed by the sorted slug list only.
 - Next render-cache tags and Valkey/API cache keys must not vary by `returnTo`, cookies, authorization, user agent, or analytics parameters.
 - `/api/internal/revalidate` is POST-only, secret-protected, and not public through Caddy. The worker sends deduplicated tags in sequential batches of at most 32; the route hard-expires each tag so changed detail data cannot remain stale.
 
@@ -90,7 +93,8 @@ Codebase and runtime are separate directories (ADR-001): the repo lives at `/hom
 
 ## Backup and recovery
 
-PostgreSQL is the only irreplaceable state. The image cache rebuilds itself from
+PostgreSQL is the only irreplaceable state, including user accounts, sessions and
+watch progress (migration 020), all covered by the same dump. The image cache rebuilds itself from
 `image_assets`; Valkey is disposable; the frontend is stateless.
 
 The `backup` service dumps, verifies with `pg_restore --list`, uploads to an

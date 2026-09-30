@@ -36,6 +36,15 @@ provides normal DNS/proxy/CDN caching only; there is no frontend Worker.
 - Next server helpers use tagged render-cache entries; the protected internal
   revalidation route invalidates only affected tags.
 - Search is request-specific and is not put in the public render cache.
+- `GET /api/cards?slugs=` is cached 60s in Valkey, keyed only by the sorted slug list.
+
+## Accounts
+
+User accounts, sessions and watch progress live in PostgreSQL (migration 020).
+`auth.js` handles password hashing and sessions; `meApi.js` serves `/api/auth/*`
+and `/api/me/*`, always uncached (no Valkey). Browsers reach them only through the
+Next proxy on `phim.bluesia.net` (`bf_session` cookie, HttpOnly, SameSite=Lax);
+Caddy returns 404 for these paths on `img.bluesia.net`.
 
 ## API contract: people/credits
 

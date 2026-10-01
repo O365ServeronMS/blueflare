@@ -54,6 +54,7 @@ import {
   sampleImageSourceUrls,
   purgeDeadHostImages
 } from './repository.js';
+import { mergeDuplicate, planCatalogMerges } from './duplicateMergeRepository.js';
 import { formatPrewarmStats, prewarmImages } from './prewarm.js';
 import { createLocalImageStore } from './imageStore.js';
 import { deadImageHosts, setLearnedDeadHosts } from './imageHostRegistry.js';
@@ -633,6 +634,42 @@ async function prewarmHotImages() {
   else console.log(line);
 }
 
+/**
+ * Fold NguonC-only rows into the KKPhim row of the same work, at most
+ * `mergeBatchLimit` per cycle. Runs inside the sync cycle, before invalidation,
+ * so the returned slugs (survivor and dropped alias) are flushed with the rest.
+ */
+async function reconcileDuplicates() {
+  const mode = config.mergeDuplicatesMode;
+  if (mode === 'off' || stopping) return [];
+  const { pairs, ambiguous } = await planCatalogMerges();
+  if (mode === 'dry-run') {
+    const sample = pairs.slice(0, 5).map((pair) => pair.drop.canonical_slug + '->' + pair.keep.canonical_slug).join(' ');
+    console.log('[worker] duplicate merge dry-run pairs=' + pairs.length + ' ambiguous=' + ambiguous.length + ' sample=' + sample);
+    return [];
+  }
+  const slugs = [];
+  let merged = 0;
+  let skipped = 0;
+  for (const pair of pairs.slice(0, config.mergeBatchLimit)) {
+    if (stopping) break;
+    try {
+      const result = await mergeDuplicate(pair.keep.id, pair.drop.id);
+      if (result.merged) {
+        merged += 1;
+        slugs.push(result.keptSlug, result.droppedSlug);
+      } else {
+        skipped += 1;
+      }
+    } catch (error) {
+      skipped += 1;
+      console.warn('[worker] duplicate merge failed ' + pair.drop.canonical_slug + ': ' + error.message);
+    }
+  }
+  console.log('[worker] duplicate merge merged=' + merged + ' skipped=' + skipped + ' remaining=' + Math.max(0, pairs.length - merged));
+  return slugs;
+}
+
 async function syncCycle() {
   const headResults = [];
   if (config.syncEnabled) {
@@ -661,7 +698,12 @@ async function syncCycle() {
     console.warn('[worker] tmdb image fallback pass failed', error.message);
     return [];
   });
+  const mergedSlugs = await reconcileDuplicates().catch((error) => {
+    console.warn('[worker] duplicate merge pass failed', error.message);
+    return [];
+  });
   const changedSlugs = [...new Set([
+    ...mergedSlugs,
     ...headResults.flatMap((result) => result.changedSlugs),
     ...backfillResults.flatMap((result) => result.changedSlugs),
     ...healedImageSlugs,

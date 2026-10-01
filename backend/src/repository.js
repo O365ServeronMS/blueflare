@@ -14,6 +14,7 @@ import {
 } from './identity.js';
 import { mergeRecommendationIds, recommendationSource, combineRecommendationRows, RECOMMENDATION_LIMIT } from './recommendations.js';
 import { personSlug } from './people.js';
+import { episodeTotalsCompatible, nguoncSeason, slugsAgree } from './duplicateMerge.js';
 
 async function ensureImageAsset(client, sourceUrl) {
   const normalized = normalizeAllowedImageSourceUrl(sourceUrl);
@@ -182,6 +183,18 @@ async function findIdentity(client, incoming) {
       [incoming.imdbId, incoming.mediaType]
     );
     if (result.rowCount) return result.rows[0];
+  }
+
+  if (incoming.provider === 'nguonc' && incoming.year && incoming.normalizedOriginalTitle) {
+    const season = nguoncSeason({ title: incoming.title, canonical_slug: incoming.providerSlug }) ?? 1;
+    const result = await client.query(
+      'SELECT * FROM movies WHERE normalized_original_title = $1 AND year = $2 AND media_type = $3 ' +
+      "AND tmdb_season_number = $4 AND catalog_state = 'ready' LIMIT 2",
+      [incoming.normalizedOriginalTitle, incoming.year, incoming.mediaType, season]
+    );
+    const candidate = result.rowCount === 1 ? result.rows[0] : null;
+    if (candidate && slugsAgree(candidate, { canonical_slug: incoming.providerSlug }) &&
+      episodeTotalsCompatible(candidate, { episode_total: incoming.episodeTotal })) return candidate;
   }
 
   if (incoming.year && incoming.normalizedOriginalTitle) {
@@ -1303,7 +1316,22 @@ export async function listReadyBySlugs(slugs) {
     "SELECT * FROM movies WHERE catalog_state = 'ready' AND canonical_slug = ANY($1::text[])",
     [slugs]
   );
-  return result.rows;
+  const found = new Set(result.rows.map((row) => row.canonical_slug));
+  const missing = slugs.filter((slug) => !found.has(slug));
+  if (!missing.length) return result.rows;
+  const aliased = await pool.query(
+    'SELECT a.slug AS alias_slug, m.* FROM movie_slug_aliases a JOIN movies m ON m.id=a.movie_id ' +
+    "WHERE m.catalog_state='ready' AND a.slug = ANY($1::text[])",
+    [missing]
+  );
+  const taken = new Set(found);
+  const extra = [];
+  for (const { alias_slug: aliasSlug, ...row } of aliased.rows) {
+    if (taken.has(aliasSlug)) continue;
+    taken.add(aliasSlug);
+    extra.push({ ...row, canonical_slug: aliasSlug });
+  }
+  return [...result.rows, ...extra];
 }
 
 function validTrendingIds(tmdbIds) {
@@ -1425,7 +1453,14 @@ export async function findMovie(slug) {
     'ORDER BY season_match DESC, canonical_slug_match DESC, m.catalog_sort_at DESC NULLS LAST, m.canonical_slug ASC LIMIT 1',
     [slug]
   );
-  const movie = movieResult.rows[0];
+  let movie = movieResult.rows[0];
+  if (!movie) {
+    const aliased = await pool.query(
+      "SELECT m.* FROM movie_slug_aliases a JOIN movies m ON m.id=a.movie_id WHERE a.slug=$1 AND m.catalog_state='ready'",
+      [slug]
+    );
+    movie = aliased.rows[0];
+  }
   if (!movie) return null;
   const sources = await pool.query(
     'SELECT * FROM movie_provider_sources WHERE movie_id=$1 AND availability=true ' +

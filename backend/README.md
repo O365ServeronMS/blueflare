@@ -136,6 +136,15 @@ one is added, keep its object keys aligned with the local cache identity,
 `images/v2/{variant}/{hash-prefix}/{sha256}.webp`, and do not change the public
 `img.bluesia.net/i/{m|d}/…` URL contract.
 
+## Duplicate merge (NguonC + KKPhim)
+
+`MERGE_DUPLICATES_MODE=dry-run` logs `pairs=`/`ambiguous=` each sync cycle; `apply` merges up to
+`MERGE_BATCH_LIMIT` pairs per cycle. A pair needs equal normalized original title, year and media
+type, a compatible season, episode totals within 1.5x, agreeing slug bases, and must be one-to-one.
+Undo one merge by hand from `movie_merges` (`dropped_row`, `moved_source_ids`, `favorites`, `history`);
+delete the matching `movie_slug_aliases` row. `tools/merge-backtest.mjs` is the read-only precision
+check, `tools/merge-duplicates.mjs --apply` runs the merge against a scratch `DATABASE_URL`.
+
 ## Backup and restore
 
 The `backup` service takes a scheduled offsite backup: `pg_dump -Fc`, verified

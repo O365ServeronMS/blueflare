@@ -82,6 +82,11 @@ export const config = Object.freeze({
 
   // Cast-verified TMDB identity for rows the provider gave no tmdb_id. Stored in
   // tmdb_match_*, never in tmdb_id. Off by default: it costs ~7 TMDB calls per row.
+  // NguonC-only rows folded into the KKPhim row of the same work: off | dry-run | apply.
+  mergeDuplicatesMode: ['off', 'dry-run', 'apply'].includes(process.env.MERGE_DUPLICATES_MODE)
+    ? process.env.MERGE_DUPLICATES_MODE
+    : 'off',
+  mergeBatchLimit: integer('MERGE_BATCH_LIMIT', 50, 1),
   tmdbMatchEnabled: boolean('TMDB_MATCH_ENABLED', false),
   tmdbMatchLimit: integer('TMDB_MATCH_LIMIT', 60, 1),
   tmdbMatchConcurrency: integer('TMDB_MATCH_CONCURRENCY', 2, 1),

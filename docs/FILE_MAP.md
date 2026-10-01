@@ -7,7 +7,7 @@ origin. Historical static/Worker notes live only in git history.
 
 - `package.json`: Next.js/React commands and runtime dependencies.
 - `next.config.ts`: standalone output, render-cache mode, and response headers.
-- `Dockerfile.frontend`: Node 24 production image for the standalone server.
+- `Dockerfile.frontend`: Node 24 production image: `src/server/cluster.mjs` balancer plus the Next standalone workers.
 - `tsconfig.json`, `postcss.config.mjs`: TypeScript and Tailwind/PostCSS setup.
 - `CLAUDE.md`: authoritative architecture and implementation guide.
 

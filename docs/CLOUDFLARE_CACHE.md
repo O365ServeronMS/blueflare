@@ -8,8 +8,13 @@
 
 - `/_next/static/*`: immutable, fingerprinted assets; use the scoped cache rule
   in `backend/deploy/cloudflare-frontend-static-rule.json` (one year).
-- Public HTML: cache only after measuring route safety and excluding RSC, search,
-  private/local-state routes, and query variants that change representation.
+- Public HTML (`/`, `/list/*`, `/movie/*`, `/person/*`): 10 minutes at the edge, 60 s in the
+  browser, via `deploy/cloudflare-frontend-document-rule.json` (`override_origin`, so the origin's
+  `no-store` header is ignored on these paths only). RSC and prefetch representations, search,
+  login/signup, favorites/history and `/admin` are excluded by the rule expression. Applied by
+  hand in the dashboard (Rules > Cache Rules); until it is, `CF-Cache-Status` is `DYNAMIC` and
+  every HTML request is rendered by the origin. After a sync the edge copy can lag by up to
+  10 minutes: Next tags are expired at the origin immediately, but the edge is not purged.
 - `/i/m/*` and `/i/d/*`: owned and signed by `img.bluesia.net`; retain its
   origin TTL and shared two-variant cache contract.
 - API JSON: cache according to Blueflare response headers and Valkey state; do

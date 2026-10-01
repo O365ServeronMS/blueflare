@@ -8,12 +8,12 @@
 
 - `/_next/static/*`: immutable, fingerprinted assets; use the scoped cache rule
   in `backend/deploy/cloudflare-frontend-static-rule.json` (one year).
-- Public HTML (`/`, `/list/*`, `/movie/*`, `/person/*`): 10 minutes at the edge, 60 s in the
-  browser, via `deploy/cloudflare-frontend-document-rule.json` (`override_origin`, so the origin's
-  `no-store` header is ignored on these paths only). RSC and prefetch representations, search,
-  login/signup, favorites/history and `/admin` are excluded by the rule expression. Applied by
-  hand in the dashboard (Rules > Cache Rules); until it is, `CF-Cache-Status` is `DYNAMIC` and
-  every HTML request is rendered by the origin. After a sync the edge copy can lag by up to
+- Public HTML (`/`, `/list/*`, `/movie/*`, `/person/*`): the origin decides. `next.config.ts` sends
+  `public, max-age=60, s-maxage=600` (10 min at the edge, 60 s in the browser) for full documents only;
+  requests carrying `RSC`/`Next-Router-Prefetch` headers or a `_rsc` query keep `no-store`, as do search,
+  login/signup, favorites/history and `/admin`. Cloudflare must honour the origin's Cache-Control for
+  these paths (a Cache Rule "eligible for cache, use origin TTL"); with plain Standard cache level HTML is
+  never stored and `CF-Cache-Status` stays `DYNAMIC`. After a sync the edge copy can lag by up to
   10 minutes: Next tags are expired at the origin immediately, but the edge is not purged.
 - `/i/m/*` and `/i/d/*`: owned and signed by `img.bluesia.net`; retain its
   origin TTL and shared two-variant cache contract.

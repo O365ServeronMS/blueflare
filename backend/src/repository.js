@@ -1417,10 +1417,12 @@ export async function withHeroTrendingRefreshLock(callback) {
 
 export async function findMovie(slug) {
   const movieResult = await pool.query(
-    'SELECT DISTINCT m.*, (m.canonical_slug=$1) AS canonical_slug_match FROM movies m ' +
-    'LEFT JOIN movie_provider_sources s ON s.movie_id=m.id ' +
-    "WHERE m.catalog_state='ready' AND (m.canonical_slug=$1 OR s.provider_slug=$1) " +
-    'ORDER BY canonical_slug_match DESC, m.catalog_sort_at DESC NULLS LAST, m.canonical_slug ASC LIMIT 1',
+    'SELECT m.*, (m.canonical_slug=$1) AS canonical_slug_match, ' +
+    'EXISTS (SELECT 1 FROM movie_provider_sources t WHERE t.movie_id=m.id AND t.provider_slug=$1 ' +
+    "AND t.metadata->>'tmdb_season' = m.tmdb_season_number::text) AS season_match FROM movies m " +
+    "WHERE m.catalog_state='ready' AND (m.canonical_slug=$1 OR EXISTS " +
+    '(SELECT 1 FROM movie_provider_sources s WHERE s.movie_id=m.id AND s.provider_slug=$1)) ' +
+    'ORDER BY season_match DESC, canonical_slug_match DESC, m.catalog_sort_at DESC NULLS LAST, m.canonical_slug ASC LIMIT 1',
     [slug]
   );
   const movie = movieResult.rows[0];

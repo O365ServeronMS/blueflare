@@ -65,3 +65,19 @@ test('slug bases must agree and slug seasons must not conflict', () => {
   const kk = row({ canonical_slug: 'stargate-sg1-phan-10', tmdb_season_number: 1 });
   assert.equal(planDuplicateMerges([row({ canonical_slug: 'stargate-sg1-phan-1' })], [kk]).pairs.length, 0);
 });
+
+test('a KKPhim source slug equal to the NguonC slug pairs and renames a stale canonical slug', () => {
+  const kk = row({ canonical_slug: 'hoan-vi-phan-5', tmdb_season_number: 1, source_slugs: ['hoan-vi-phan-1'] });
+  const nguonc = row({ canonical_slug: 'hoan-vi-phan-1', title: 'Hoán vị (Phần 1)' });
+  const { pairs } = planDuplicateMerges([nguonc], [kk]);
+  assert.equal(pairs.length, 1);
+  assert.equal(pairs[0].evidence, 'source');
+  assert.equal(pairs[0].renameTo, 'hoan-vi-phan-1');
+});
+
+test('two shared cast names pair differently named rows; one does not', () => {
+  const kk = (people) => row({ canonical_slug: 'ten-khac', tmdb_season_number: 1, actors: people });
+  const nguonc = (people) => row({ canonical_slug: 'ten-viet', actors: people });
+  assert.equal(planDuplicateMerges([nguonc(['A', 'B', 'C'])], [kk(['b', 'c'])]).pairs[0].evidence, 'cast');
+  assert.equal(planDuplicateMerges([nguonc(['A', 'B'])], [kk(['B', 'Z'])]).pairs.length, 0);
+});

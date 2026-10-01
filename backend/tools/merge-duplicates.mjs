@@ -19,7 +19,7 @@ if (apply) {
   let merged = 0;
   const skipped = [];
   for (const pair of pairs.slice(0, limit)) {
-    const result = await mergeDuplicate(pair.keep.id, pair.drop.id);
+    const result = await mergeDuplicate(pair.keep.id, pair.drop.id, pair.renameTo);
     if (result.merged) merged += 1; else skipped.push(result.reason);
   }
   console.log(JSON.stringify({ merged, skipped: skipped.length }));

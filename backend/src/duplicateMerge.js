@@ -3,7 +3,9 @@
  * Pure: callers load the candidate rows and apply the pairs.
  *
  * A pair needs equal normalized original title, year and media type, a compatible
- * season, and must be one-to-one in both directions; anything else is reported as
+ * season and episode total, one piece of identity evidence (agreeing slugs, the
+ * NguonC slug equal to a KKPhim source slug, or two shared cast/director names),
+ * and must be one-to-one in both directions; anything else is reported as
  * ambiguous and left alone.
  */
 
@@ -62,16 +64,63 @@ function slugSeason(row) {
   return match ? Number(match[1]) : null;
 }
 
-function seasonCompatible(nguonc, kk) {
-  const kkSlugSeason = slugSeason(kk);
-  const nguoncSlugSeason = slugSeason(nguonc);
-  if (kkSlugSeason !== null && nguoncSlugSeason !== null && kkSlugSeason !== nguoncSlugSeason) return false;
+function tmdbSeasonCompatible(nguonc, kk) {
   const wanted = nguoncSeason(nguonc);
   const have = kk.tmdb_season_number ?? null;
   if (wanted !== null) return have === wanted;
   return have === null || have === 1;
 }
 
+function seasonCompatible(nguonc, kk) {
+  const kkSlugSeason = slugSeason(kk);
+  const nguoncSlugSeason = slugSeason(nguonc);
+  if (kkSlugSeason !== null && nguoncSlugSeason !== null && kkSlugSeason !== nguoncSlugSeason) return false;
+  return tmdbSeasonCompatible(nguonc, kk);
+}
+
+const stripYear = (slug) => String(slug || '').replace(/-(?:19|20)\d{2}$/u, '');
+
+function personNames(row) {
+  const names = new Set();
+  for (const list of [row.actors, row.directors]) {
+    for (const item of Array.isArray(list) ? list : []) {
+      const name = String(typeof item === 'string' ? item : item?.name || '').trim().toLowerCase();
+      if (name) names.add(name);
+    }
+  }
+  return names;
+}
+
+export function sharedPeople(a, b) {
+  const known = personNames(a);
+  let shared = 0;
+  for (const name of personNames(b)) if (known.has(name)) shared += 1;
+  return shared;
+}
+
+// The KKPhim row's own source slug is what the provider calls the title, so it
+// stays trustworthy even when the row's canonical slug was scrambled by the old
+// season collapse.
+function sourceSlugMatches(nguonc, kk) {
+  const wanted = stripYear(nguonc.canonical_slug);
+  return (kk.source_slugs || []).some((slug) => stripYear(slug) === wanted);
+}
+
+function evidence(nguonc, kk) {
+  if (!tmdbSeasonCompatible(nguonc, kk) || !episodeTotalsCompatible(nguonc, kk)) return null;
+  if (seasonCompatible(nguonc, kk) && slugsAgree(nguonc, kk)) return 'slug';
+  if (sourceSlugMatches(nguonc, kk)) return 'source';
+  if (sharedPeople(nguonc, kk) >= 2) return 'cast';
+  return null;
+}
+
+// A canonical slug whose season suffix contradicts the row's own season is stale.
+function renameTarget(nguonc, kk, how) {
+  if (how === 'slug') return null;
+  const stale = slugSeason(kk);
+  if (stale === null || stale === (kk.tmdb_season_number ?? null)) return null;
+  return slugSeason(nguonc) === (kk.tmdb_season_number ?? null) ? nguonc.canonical_slug : null;
+}
 
 export function planDuplicateMerges(nguoncRows, kkRows) {
   const kkByKey = new Map();
@@ -86,7 +135,7 @@ export function planDuplicateMerges(nguoncRows, kkRows) {
   const claimed = new Map();
   for (const row of nguoncRows) {
     const key = groupKey(row);
-    const found = key ? (kkByKey.get(key) || []).filter((kk) => seasonCompatible(row, kk) && episodeTotalsCompatible(row, kk) && slugsAgree(row, kk)) : [];
+    const found = key ? (kkByKey.get(key) || []).filter((kk) => evidence(row, kk) !== null) : [];
     if (!found.length) continue;
     candidates.set(row.id, found);
     for (const kk of found) claimed.set(kk.id, (claimed.get(kk.id) || 0) + 1);
@@ -96,7 +145,10 @@ export function planDuplicateMerges(nguoncRows, kkRows) {
   for (const row of nguoncRows) {
     const found = candidates.get(row.id);
     if (!found) continue;
-    if (found.length === 1 && claimed.get(found[0].id) === 1) pairs.push({ keep: found[0], drop: row });
+    if (found.length === 1 && claimed.get(found[0].id) === 1) {
+      const how = evidence(row, found[0]);
+      pairs.push({ keep: found[0], drop: row, evidence: how, renameTo: renameTarget(row, found[0], how) });
+    }
     else ambiguous.push({ drop: row, candidates: found });
   }
   return { pairs, ambiguous };

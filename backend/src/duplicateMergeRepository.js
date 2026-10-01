@@ -3,7 +3,8 @@ import { mergedMovie } from './repository.js';
 import { planDuplicateMerges } from './duplicateMerge.js';
 
 const COLUMNS = 'm.id, m.canonical_slug, m.title, m.normalized_original_title, m.year, m.media_type, ' +
-  'm.tmdb_season_number, m.tmdb_identity_status, m.episode_total, m.episode_current';
+  'm.tmdb_season_number, m.tmdb_identity_status, m.episode_total, m.episode_current, m.actors, m.directors, ' +
+  '(SELECT array_agg(provider_slug) FROM movie_provider_sources WHERE movie_id=m.id) AS source_slugs';
 const candidateSql = (having) =>
   'SELECT ' + COLUMNS + ' FROM movies m JOIN movie_provider_sources s ON s.movie_id=m.id ' +
   "WHERE m.catalog_state='ready' GROUP BY m.id HAVING " + having;
@@ -46,10 +47,11 @@ function incomingFromRow(row) {
 
 /**
  * Fold the NguonC-only row `dropId` into the KKPhim-only row `keepId`.
+ * With `renameTo` the survivor takes that slug and the old one becomes an alias.
  * Returns { merged:false, reason } when either row no longer looks as planned,
  * or { merged:true, keptSlug, droppedSlug } after one committed transaction.
  */
-export async function mergeDuplicate(keepId, dropId) {
+export async function mergeDuplicate(keepId, dropId, renameTo = null) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -125,8 +127,18 @@ export async function mergeDuplicate(keepId, dropId) {
       'INSERT INTO movie_slug_aliases (slug, movie_id) VALUES ($1,$2) ' +
       'ON CONFLICT (slug) DO UPDATE SET movie_id=EXCLUDED.movie_id', [drop.canonical_slug, keepId]
     );
+    let keptSlug = keep.canonical_slug;
+    if (renameTo && renameTo !== keptSlug) {
+      await client.query('DELETE FROM movie_slug_aliases WHERE slug=$1', [renameTo]);
+      await client.query('UPDATE movies SET canonical_slug=$2 WHERE id=$1', [keepId, renameTo]);
+      await client.query(
+        'INSERT INTO movie_slug_aliases (slug, movie_id) VALUES ($1,$2) ON CONFLICT (slug) DO UPDATE SET movie_id=EXCLUDED.movie_id',
+        [keptSlug, keepId]
+      );
+      keptSlug = renameTo;
+    }
     await client.query('COMMIT');
-    return { merged: true, keptSlug: keep.canonical_slug, droppedSlug: drop.canonical_slug };
+    return { merged: true, keptSlug, droppedSlug: drop.canonical_slug, previousSlug: keep.canonical_slug };
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     throw error;

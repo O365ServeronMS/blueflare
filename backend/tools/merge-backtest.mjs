@@ -1,33 +1,18 @@
 #!/usr/bin/env node
 /**
- * Read-only backtest of planDuplicateMerges against the live catalog.
+ * Read-only backtest of the duplicate-merge planner against the live catalog.
  *   node tools/merge-backtest.mjs [sampleSize]
  */
 import { pool } from '../src/db.js';
-import { planDuplicateMerges } from '../src/duplicateMerge.js';
+import { planCatalogMerges } from '../src/duplicateMergeRepository.js';
 
-const sample = Number(process.argv[2]) || 40;
-const COLUMNS = 'm.id, m.canonical_slug, m.title, m.normalized_original_title, m.year, m.media_type, ' +
-  'm.tmdb_season_number, m.tmdb_identity_status, m.episode_total, m.episode_current';
-const SQL = (having) =>
-  'SELECT ' + COLUMNS + ' FROM movies m JOIN movie_provider_sources s ON s.movie_id=m.id ' +
-  "WHERE m.catalog_state='ready' GROUP BY m.id HAVING " + having;
-
-const nguonc = (await pool.query(SQL("bool_or(s.provider='nguonc') AND NOT bool_or(s.provider='kkphim')"))).rows;
-const kk = (await pool.query(SQL("bool_or(s.provider='kkphim') AND NOT bool_or(s.provider='nguonc')"))).rows;
-const { pairs, ambiguous } = planDuplicateMerges(nguonc, kk);
-const totals = (p) => [p.keep.episode_total, p.drop.episode_total];
-const totalMismatch = pairs.filter((p) => {
-  const [a, b] = totals(p).map((v) => Number(String(v || '').match(/\d+/)?.[0]));
-  return a && b && a !== b;
-});
-console.log(JSON.stringify({ nguoncOnly: nguonc.length, kkOnly: kk.length, pairs: pairs.length, ambiguous: ambiguous.length, episodeTotalDiffers: totalMismatch.length }));
-const pick = [...pairs].sort(() => Math.random() - 0.5).slice(0, sample);
-for (const p of pick) {
-  console.log([p.drop.title, '|', p.keep.title, '| s' + p.keep.tmdb_season_number, '|', p.drop.year, '|', p.drop.episode_total, 'vs', p.keep.episode_total].join(' '));
+const sample = Number(process.argv[2]) || 30;
+const { pairs, ambiguous } = await planCatalogMerges();
+const byEvidence = {};
+for (const pair of pairs) byEvidence[pair.evidence] = (byEvidence[pair.evidence] || 0) + 1;
+console.log(JSON.stringify({ pairs: pairs.length, ambiguous: ambiguous.length, byEvidence, renames: pairs.filter((p) => p.renameTo).length }));
+for (const pair of [...pairs].sort(() => Math.random() - 0.5).slice(0, sample)) {
+  console.log([pair.evidence, pair.drop.canonical_slug, '=>', pair.keep.canonical_slug, pair.renameTo ? '(rename ' + pair.renameTo + ')' : '', 's' + pair.keep.tmdb_season_number, pair.drop.episode_total + 'vs' + pair.keep.episode_total].join(' '));
 }
-console.log('--- episode_total differs (first 15) ---');
-for (const p of totalMismatch.slice(0, 15)) console.log([p.drop.canonical_slug, '|', p.keep.canonical_slug, '|', p.drop.episode_total, 'vs', p.keep.episode_total].join(' '));
-console.log('--- ambiguous (first 8) ---');
-for (const a of ambiguous.slice(0, 8)) console.log(a.drop.canonical_slug, '->', a.candidates.map((c) => c.canonical_slug).join(', '));
+for (const a of ambiguous.slice(0, 8)) console.log('ambiguous', a.drop.canonical_slug, '->', a.candidates.map((c) => c.canonical_slug).join(', '));
 await pool.end();

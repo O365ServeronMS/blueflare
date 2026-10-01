@@ -654,10 +654,10 @@ async function reconcileDuplicates() {
   for (const pair of pairs.slice(0, config.mergeBatchLimit)) {
     if (stopping) break;
     try {
-      const result = await mergeDuplicate(pair.keep.id, pair.drop.id);
+      const result = await mergeDuplicate(pair.keep.id, pair.drop.id, pair.renameTo);
       if (result.merged) {
         merged += 1;
-        slugs.push(result.keptSlug, result.droppedSlug);
+        slugs.push(result.keptSlug, result.droppedSlug, result.previousSlug);
       } else {
         skipped += 1;
       }

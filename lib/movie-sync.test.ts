@@ -120,7 +120,7 @@ describe("import lock", () => {
 describe("card resolution helpers", () => {
   test("missingSlugs skips cached and in-flight, dedupes", () => {
     const entries = [{ slug: "a", savedAt: 1 }, { slug: "b", savedAt: 1 }, { slug: "a", savedAt: 2 }, { slug: "c", savedAt: 1 }];
-    const cache = { b: { slug: "b" } } as unknown as Record<string, MovieCard>;
+    const cache = { b: card("b") } as Record<string, MovieCard>;
     expect(missingSlugs(entries, cache, new Set(["c"]))).toEqual(["a"]);
   });
   test("chunk splits into batches of at most 60", () => {
@@ -128,8 +128,22 @@ describe("card resolution helpers", () => {
     expect(parts.map((p) => p.length)).toEqual([60, 60, 10]);
   });
   test("parseCardsResponse drops malformed items", () => {
-    expect(parseCardsResponse({ items: [{ slug: "a" }, null, { slug: 3 }, {}] })).toEqual([{ slug: "a" }]);
+    expect(parseCardsResponse({ items: [{ slug: "a" }, null, { slug: 3 }, {}] }).map((c) => c.slug)).toEqual(["a"]);
     expect(parseCardsResponse(null)).toEqual([]);
+  });
+  test("parseCardsResponse maps raw API fields so posters and episode badge render", () => {
+    const [c] = parseCardsResponse({
+      items: [{ slug: "s", name: "S", thumb_url: "https://img/i/m/1.webp", poster_url: "https://img/i/d/2.webp", episode_current: "Tập 5" }],
+    });
+    expect(c.thumb).toBe("https://img/i/m/1.webp");
+    expect(c.poster).toBe("https://img/i/d/2.webp");
+    expect(c.episodeCurrent).toBe("Tập 5");
+  });
+  test("cards cached from the raw payload count as missing and are not resolved", () => {
+    const raw = { slug: "r", name: "R", thumb_url: "x" } as unknown as MovieCard;
+    expect(missingSlugs([{ slug: "r", savedAt: 1 }], { r: raw })).toEqual(["r"]);
+    expect(resolveCards([{ slug: "r", savedAt: 1 }], { r: raw })).toEqual([]);
+    expect(missingSlugs([{ slug: "a", savedAt: 1 }], { a: card("a") })).toEqual([]);
   });
 });
 

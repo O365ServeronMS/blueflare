@@ -1,4 +1,5 @@
 import type { MovieCard } from "@/lib/types";
+import { normalizeCard } from "@/lib/catalog";
 
 /** Pure helpers behind the guest/account favorites + history store. */
 
@@ -118,7 +119,7 @@ export function resolveCards(entries: readonly SlugEntry[], cache: Readonly<Reco
   const out: StoredMovie[] = [];
   for (const entry of entries) {
     const card = cache[entry.slug];
-    if (card) out.push({ ...card, savedAt: entry.savedAt, ...(entry.ep ? { ep: entry.ep } : {}) });
+    if (card && isNormalizedCard(card)) out.push({ ...card, savedAt: entry.savedAt, ...(entry.ep ? { ep: entry.ep } : {}) });
   }
   return out;
 }
@@ -187,10 +188,18 @@ export function shouldImport(imported: boolean | undefined, alreadyRunning: bool
 
 export const CARDS_BATCH = 60;
 
-/** Distinct slugs from `entries` that have no card in `cache` and are not already `inflight`. */
+/**
+ * normalizeCard always sets `thumb`/`poster`. Cards cached from the raw /api/cards
+ * payload (snake_case, no `thumb`) rendered "No image"; treat them as unresolved.
+ */
+export function isNormalizedCard(card: unknown): card is MovieCard {
+  return !!card && typeof (card as MovieCard).thumb === "string" && typeof (card as MovieCard).poster === "string";
+}
+
+/** Distinct slugs from `entries` that have no usable card in `cache` and are not already `inflight`. */
 export function missingSlugs(entries: readonly SlugEntry[], cache: Readonly<Record<string, MovieCard>>, inflight: ReadonlySet<string> = new Set()): string[] {
   const out = new Set<string>();
-  for (const entry of entries) if (!cache[entry.slug] && !inflight.has(entry.slug)) out.add(entry.slug);
+  for (const entry of entries) if (!isNormalizedCard(cache[entry.slug]) && !inflight.has(entry.slug)) out.add(entry.slug);
   return [...out];
 }
 
@@ -200,9 +209,11 @@ export function chunk<T>(items: readonly T[], size = CARDS_BATCH): T[][] {
   return out;
 }
 
-/** `/api/cards` response -> usable cards (must carry a string slug). */
+/** `/api/cards` response (raw catalog items) -> normalized cards that carry a slug. */
 export function parseCardsResponse(body: unknown): MovieCard[] {
   const items = (body as { items?: unknown } | null)?.items;
   if (!Array.isArray(items)) return [];
-  return items.filter((item): item is MovieCard => !!item && typeof item.slug === "string" && !!item.slug);
+  return items
+    .filter((item) => !!item && typeof item.slug === "string" && !!item.slug)
+    .map((item) => normalizeCard(item));
 }

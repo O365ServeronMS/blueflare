@@ -33,14 +33,13 @@ import {
 export type ListKey = "favorites" | "history";
 export type StoreMode = "loading" | "guest" | "user";
 
-const KEYS: Record<ListKey, { key: string; legacy: string }> = {
-  favorites: { key: "film.bluesia.net:favorites", legacy: "bluesia:favorites" },
-  history: { key: "film.bluesia.net:history", legacy: "bluesia:history" },
+const KEYS: Record<ListKey, string> = {
+  favorites: "blueflare:favorites",
+  history: "blueflare:history",
 };
-const CARDS_KEY = "film.bluesia.net:cards";
-const IMPORT_LOCK_KEY = "film.bluesia.net:import-lock";
-const UPDATED_EVENT = "film.bluesia.net:local-movies-updated";
-const LEGACY_UPDATED_EVENT = "bluesia:local-movies-updated";
+const CARDS_KEY = "blueflare:cards";
+const IMPORT_LOCK_KEY = "blueflare:import-lock";
+const UPDATED_EVENT = "blueflare:local-movies-updated";
 
 let mode: StoreMode = "loading";
 let server: Record<ListKey, SlugEntry[]> = { favorites: [], history: [] };
@@ -63,15 +62,12 @@ function readJson<T>(key: string, fallback: T): T {
 
 export function readGuestList(list: ListKey): StoredMovie[] {
   if (typeof window === "undefined") return [];
-  const { key, legacy } = KEYS[list];
-  const current = readJson<StoredMovie[]>(key, []);
-  return current.length ? current : readJson<StoredMovie[]>(legacy, []);
+  return readJson<StoredMovie[]>(KEYS[list], []);
 }
 
 export function writeGuestList(list: ListKey, movies: StoredMovie[]) {
-  localStorage.setItem(KEYS[list].key, JSON.stringify(movies.slice(0, LIST_LIMIT)));
+  localStorage.setItem(KEYS[list], JSON.stringify(movies.slice(0, LIST_LIMIT)));
   window.dispatchEvent(new Event(UPDATED_EVENT));
-  window.dispatchEvent(new Event(LEGACY_UPDATED_EVENT));
 }
 
 function readCards(): Record<string, MovieCard> {
@@ -149,8 +145,7 @@ async function runImport(): Promise<void> {
     const res = await api("POST", "/api/me/import", buildImportPayload(favorites, history));
     if (!res.ok) return; // keep guest data; retried on the next refresh
     for (const list of ["favorites", "history"] as const) {
-      localStorage.removeItem(KEYS[list].key);
-      localStorage.removeItem(KEYS[list].legacy);
+      localStorage.removeItem(KEYS[list]);
     }
     window.dispatchEvent(new Event(UPDATED_EVENT));
   } catch {
@@ -202,13 +197,11 @@ export function subscribeMovieStore(onChange: () => void) {
   window.addEventListener("storage", onChange);
   window.addEventListener("focus", onChange);
   window.addEventListener(UPDATED_EVENT, onChange);
-  window.addEventListener(LEGACY_UPDATED_EVENT, onChange);
   return () => {
     listeners.delete(onChange);
     window.removeEventListener("storage", onChange);
     window.removeEventListener("focus", onChange);
     window.removeEventListener(UPDATED_EVENT, onChange);
-    window.removeEventListener(LEGACY_UPDATED_EVENT, onChange);
   };
 }
 

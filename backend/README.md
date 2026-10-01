@@ -103,7 +103,9 @@ treated as our own network problem. After `IMAGE_HOST_DEAD_AFTER_CHECKS` consecu
 dead checks the host leaves the effective allowlist (api and worker reload it every
 few minutes), and, once image-heal has finished, the worker clears its links from
 `movies` (up to `IMAGE_HOST_PURGE_LIMIT` per run, skipping images still in the disk
-cache) and deletes its unreferenced `image_assets`. `IMAGE_DEAD_HOSTS` is the static
+cache) and deletes its unreferenced `image_assets` in batches of 1000 (every column
+referencing `image_assets` needs an index, or each delete triggers sequential scans;
+see migration `022_asset_fk_indexes.sql`). `IMAGE_DEAD_HOSTS` is the static
 override. To reset a host, delete its `image_host_health` row.
 
 Catalog lists only expose `catalog_state=ready` rows. Their order is

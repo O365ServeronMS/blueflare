@@ -1579,6 +1579,9 @@ export async function sampleImageSourceUrls(host, count) {
   return result.rows.map((row) => row.source_url);
 }
 
+const ORPHAN_ASSET_BATCH = 1000;
+const ORPHAN_ASSET_MAX_BATCHES = 500;
+
 /**
  * Gỡ link ảnh trỏ vào host đã chết khỏi movies. Ảnh nào còn file trong cache
  * (isCached) thì giữ lại cho tới khi cache đào thải, vì nó vẫn đang hiển thị được.
@@ -1614,12 +1617,24 @@ export async function purgeDeadHostImages(deadHosts, isCached, limit) {
       slugs.add(row.canonical_slug);
     }
   }
-  const deleted = await pool.query(
-    "DELETE FROM image_assets a WHERE split_part(split_part(a.source_url,'//',2),'/',1) = ANY($1::text[]) " +
-    'AND NOT EXISTS (SELECT 1 FROM movies m WHERE m.thumb_asset_id=a.id OR m.poster_asset_id=a.id ' +
-    'OR m.tmdb_thumb_asset_id=a.id OR m.tmdb_poster_asset_id=a.id) ' +
-    'AND NOT EXISTS (SELECT 1 FROM people p WHERE p.profile_asset_id=a.id)',
-    [deadHosts]
-  );
-  return { slugs: [...slugs], assetsDeleted: deleted.rowCount };
+  let assetsDeleted = 0;
+  for (let batch = 0; batch < ORPHAN_ASSET_MAX_BATCHES; batch += 1) {
+    // One NOT EXISTS per referencing column so each probe uses its own index; an
+    // OR across columns forces a nested loop over movies for every candidate.
+    const deleted = await pool.query(
+      'DELETE FROM image_assets WHERE id IN (' +
+      'SELECT a.id FROM image_assets a ' +
+      "WHERE split_part(split_part(a.source_url,'//',2),'/',1) = ANY($1::text[]) " +
+      'AND NOT EXISTS (SELECT 1 FROM movies m WHERE m.thumb_asset_id=a.id) ' +
+      'AND NOT EXISTS (SELECT 1 FROM movies m WHERE m.poster_asset_id=a.id) ' +
+      'AND NOT EXISTS (SELECT 1 FROM movies m WHERE m.tmdb_thumb_asset_id=a.id) ' +
+      'AND NOT EXISTS (SELECT 1 FROM movies m WHERE m.tmdb_poster_asset_id=a.id) ' +
+      'AND NOT EXISTS (SELECT 1 FROM people p WHERE p.profile_asset_id=a.id) ' +
+      'LIMIT $2)',
+      [deadHosts, ORPHAN_ASSET_BATCH]
+    );
+    assetsDeleted += deleted.rowCount;
+    if (deleted.rowCount < ORPHAN_ASSET_BATCH) break;
+  }
+  return { slugs: [...slugs], assetsDeleted };
 }

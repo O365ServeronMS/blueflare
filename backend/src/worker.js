@@ -54,6 +54,7 @@ import {
   sampleImageSourceUrls,
   purgeDeadHostImages
 } from './repository.js';
+import { mergeAlerts } from './duplicateMerge.js';
 import { mergeDuplicate, planCatalogMerges } from './duplicateMergeRepository.js';
 import { formatPrewarmStats, prewarmImages } from './prewarm.js';
 import { createLocalImageStore } from './imageStore.js';
@@ -639,13 +640,20 @@ async function prewarmHotImages() {
  * `mergeBatchLimit` per cycle. Runs inside the sync cycle, before invalidation,
  * so the returned slugs (survivor and dropped alias) are flushed with the rest.
  */
+let mergeStalledCycles = 0;
+
 async function reconcileDuplicates() {
   const mode = config.mergeDuplicatesMode;
   if (mode === 'off' || stopping) return [];
+  const startedAt = Date.now();
   const { pairs, ambiguous } = await planCatalogMerges();
+  const evidence = {};
+  for (const pair of pairs) evidence[pair.evidence] = (evidence[pair.evidence] || 0) + 1;
+  const evidenceText = Object.entries(evidence).map(([name, count]) => name + ':' + count).join(',') || 'none';
+  const planMs = Date.now() - startedAt;
   if (mode === 'dry-run') {
     const sample = pairs.slice(0, 5).map((pair) => pair.drop.canonical_slug + '->' + pair.keep.canonical_slug).join(' ');
-    console.log('[worker] duplicate merge dry-run pairs=' + pairs.length + ' ambiguous=' + ambiguous.length + ' sample=' + sample);
+    console.log('[worker] duplicate merge dry-run pairs=' + pairs.length + ' ambiguous=' + ambiguous.length + ' evidence=' + evidenceText + ' planMs=' + planMs + ' sample=' + sample);
     return [];
   }
   const slugs = [];
@@ -653,20 +661,31 @@ async function reconcileDuplicates() {
   let skipped = 0;
   for (const pair of pairs.slice(0, config.mergeBatchLimit)) {
     if (stopping) break;
+    const label = pair.drop.canonical_slug + ' => ' + pair.keep.canonical_slug +
+      ' evidence=' + pair.evidence + (pair.renameTo ? ' rename=' + pair.renameTo : '');
     try {
       const result = await mergeDuplicate(pair.keep.id, pair.drop.id, pair.renameTo);
       if (result.merged) {
         merged += 1;
         slugs.push(result.keptSlug, result.droppedSlug, result.previousSlug);
+        console.log('[worker] duplicate merge ok ' + label);
       } else {
         skipped += 1;
+        console.warn('[worker] duplicate merge skipped ' + label + ' reason=' + result.reason);
       }
     } catch (error) {
       skipped += 1;
-      console.warn('[worker] duplicate merge failed ' + pair.drop.canonical_slug + ': ' + error.message);
+      console.warn('[worker] duplicate merge failed ' + label + ': ' + error.message);
     }
   }
-  console.log('[worker] duplicate merge merged=' + merged + ' skipped=' + skipped + ' remaining=' + Math.max(0, pairs.length - merged));
+  const remaining = Math.max(0, pairs.length - merged);
+  mergeStalledCycles = remaining > 0 && merged === 0 ? mergeStalledCycles + 1 : 0;
+  console.log('[worker] duplicate merge merged=' + merged + ' skipped=' + skipped + ' remaining=' + remaining +
+    ' ambiguous=' + ambiguous.length + ' evidence=' + evidenceText + ' durationMs=' + (Date.now() - startedAt));
+  const alerts = mergeAlerts({
+    remaining, skipped, ambiguous: ambiguous.length, stalledCycles: mergeStalledCycles, pendingThreshold: config.mergeAlertPending
+  });
+  for (const alert of alerts) console.warn('[worker] ALERT duplicate merge ' + alert);
   return slugs;
 }
 

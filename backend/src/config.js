@@ -86,6 +86,7 @@ export const config = Object.freeze({
   mergeDuplicatesMode: ['off', 'dry-run', 'apply'].includes(process.env.MERGE_DUPLICATES_MODE)
     ? process.env.MERGE_DUPLICATES_MODE
     : 'off',
+  mergeAlertPending: integer('MERGE_ALERT_PENDING', 200, 1),
   mergeBatchLimit: integer('MERGE_BATCH_LIMIT', 50, 1),
   tmdbMatchEnabled: boolean('TMDB_MATCH_ENABLED', false),
   tmdbMatchLimit: integer('TMDB_MATCH_LIMIT', 60, 1),

@@ -153,3 +153,16 @@ export function planDuplicateMerges(nguoncRows, kkRows) {
   }
   return { pairs, ambiguous };
 }
+
+/**
+ * Conditions worth a human look after a reconcile pass. `stalledCycles` counts
+ * consecutive passes that left pairs behind without merging any.
+ */
+export function mergeAlerts({ remaining, skipped, ambiguous, stalledCycles, pendingThreshold, stallLimit = 3 }) {
+  const alerts = [];
+  if (skipped > 0) alerts.push('skipped=' + skipped + ' merges failed or went stale');
+  if (ambiguous > 0) alerts.push('ambiguous=' + ambiguous + ' pairs need a manual look');
+  if (remaining > pendingThreshold) alerts.push('remaining=' + remaining + ' exceeds MERGE_ALERT_PENDING=' + pendingThreshold);
+  if (stalledCycles >= stallLimit) alerts.push('no merge progress for ' + stalledCycles + ' cycles with remaining=' + remaining);
+  return alerts;
+}

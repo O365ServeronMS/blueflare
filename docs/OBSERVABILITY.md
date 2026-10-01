@@ -18,6 +18,7 @@ alert directly on the Valkey key.
 The remaining signals are log lines. All three are one line per run, so `docker
 logs` is the whole interface.
 
+- `[worker] duplicate merge ok <drop> => <keep> evidence=… [rename=…]` per merge, then `[worker] duplicate merge merged=… skipped=… remaining=… ambiguous=… evidence=… durationMs=…` per cycle; `[worker] ALERT duplicate merge …` (warn) on failed/stale merges, ambiguous pairs, `remaining` above `MERGE_ALERT_PENDING` (200) or three cycles without progress.
 - `[worker] image prewarm selected=… cached=… warmed=… failed=… bytes=… durationMs=…`
   Steady state is `warmed=0` with everything `cached` in tens of milliseconds — that
   means the hot set is already on disk and no request was made. A persistently high

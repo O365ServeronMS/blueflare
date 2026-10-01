@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { episodeTotalsCompatible, nguoncSeason, planDuplicateMerges, slugsAgree } from '../src/duplicateMerge.js';
+import { mergeAlerts, episodeTotalsCompatible, nguoncSeason, planDuplicateMerges, slugsAgree } from '../src/duplicateMerge.js';
 
 let n = 0;
 const row = (over) => ({ id: 'r' + (n += 1), normalized_original_title: 'archer', year: 2010, media_type: 'series', title: 'Archer', canonical_slug: 'archer', tmdb_season_number: null, tmdb_identity_status: 'ineligible', ...over });
@@ -80,4 +80,14 @@ test('two shared cast names pair differently named rows; one does not', () => {
   const nguonc = (people) => row({ canonical_slug: 'ten-viet', actors: people });
   assert.equal(planDuplicateMerges([nguonc(['A', 'B', 'C'])], [kk(['b', 'c'])]).pairs[0].evidence, 'cast');
   assert.equal(planDuplicateMerges([nguonc(['A', 'B'])], [kk(['B', 'Z'])]).pairs.length, 0);
+});
+
+test('merge alerts fire on failures, backlog, ambiguity and stalls only', () => {
+  const quiet = { remaining: 0, skipped: 0, ambiguous: 0, stalledCycles: 0, pendingThreshold: 200 };
+  assert.deepEqual(mergeAlerts(quiet), []);
+  assert.equal(mergeAlerts({ ...quiet, skipped: 2 }).length, 1);
+  assert.equal(mergeAlerts({ ...quiet, ambiguous: 1 }).length, 1);
+  assert.equal(mergeAlerts({ ...quiet, remaining: 201 }).length, 1);
+  assert.equal(mergeAlerts({ ...quiet, remaining: 200 }).length, 0);
+  assert.equal(mergeAlerts({ ...quiet, remaining: 5, stalledCycles: 3 }).length, 1);
 });

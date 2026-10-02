@@ -325,6 +325,7 @@ export function formatMdblistStats(stats) {
     'drained=' + stats.keysDrained,
     'durationMs=' + stats.durationMs
   ];
+  if (Number.isFinite(stats.overdue)) parts.push('overdue=' + stats.overdue);
   if (stats.cursor) parts.push('wrapped=' + Boolean(stats.cursor.wrapped));
   if (stats.declined) parts.push('declined=' + stats.declined);
   const errors = Object.entries(stats.errors);

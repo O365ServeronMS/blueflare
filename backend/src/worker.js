@@ -42,6 +42,14 @@ import {
   resolveTrendingMovieCandidates,
   saveCrawlCheckpoint,
   upsertCanonical,
+  touchSourcesSeen,
+  resetCompletedCheckpoint,
+  listStaleSources,
+  recordSourceNotFound,
+  markSourceUnavailable,
+  countMoviesWithoutAvailableSource,
+  countUnseenSince,
+  countMdblistOverdue,
   withHeroTrendingRefreshLock,
   getMovieInvalidationDimensions,
   getMdblistBackfillCursor,
@@ -54,6 +62,7 @@ import {
   sampleImageSourceUrls,
   purgeDeadHostImages
 } from './repository.js';
+import { formatStaleStats, refreshStaleSources } from './staleSources.js';
 import { mergeAlerts } from './duplicateMerge.js';
 import { mergeDuplicate, planCatalogMerges } from './duplicateMergeRepository.js';
 import { formatPrewarmStats, prewarmImages } from './prewarm.js';
@@ -115,6 +124,10 @@ async function syncPage(provider, page) {
   const stored = await listStoredSourceStates(provider.name, items.map((item) => item.slug));
   const unchanged = unchangedSlugs(items, stored);
   const hasGoodSource = new Set(stored.map((row) => row.provider_slug));
+  // Unchanged items are skipped below, so this is what keeps their last_seen_at fresh.
+  await touchSourcesSeen(provider.name, items.map((item) => item.slug)).catch((error) => {
+    console.warn('[worker] ' + provider.name + ' touch last_seen_at failed', error.message);
+  });
 
   await mapLimit(items, config.syncConcurrency, async (item) => {
     if (unchanged.has(item.slug)) {
@@ -184,7 +197,15 @@ async function syncBackfill(provider) {
 
   const startPage = config.backfillStartPage || (config.syncPagesPerRun + 1);
   const checkpoint = await getCrawlCheckpoint(provider.name, 'backfill', startPage);
-  if (checkpoint.completed_at) return { imported: 0, failed: 0, status: 200, completed: true, changedSlugs: [] };
+  if (checkpoint.completed_at) {
+    const cycleMs = config.sweepCycleDays * 24 * 60 * 60 * 1000;
+    const due = cycleMs > 0 && Date.now() - new Date(checkpoint.completed_at).getTime() >= cycleMs;
+    const reset = due && await resetCompletedCheckpoint(provider.name, 'backfill', startPage, cycleMs);
+    if (!reset) return { imported: 0, failed: 0, status: 200, completed: true, changedSlugs: [] };
+    console.log('[worker] ' + provider.name + ' backfill sweep restarted at page ' + startPage +
+      ' (completed_at older than ' + config.sweepCycleDays + 'd)');
+    checkpoint.next_page = startPage;
+  }
 
   let imported = 0;
   let failed = 0;
@@ -258,6 +279,33 @@ async function runBackfillPass() {
     }
   }
   return results;
+}
+
+async function refreshStaleSourcesPass() {
+  if (config.staleSourceMode === 'off' || stopping) return [];
+  const stats = await refreshStaleSources({
+    mode: config.staleSourceMode,
+    providers: providersFor(config.syncProviders),
+    deps: {
+      listStale: listStaleSources,
+      mapLimit,
+      upsert: upsertCanonical,
+      recordNotFound: recordSourceNotFound,
+      markUnavailable: markSourceUnavailable,
+      countNoSource: countMoviesWithoutAvailableSource,
+      countUnseen: countUnseenSince
+    },
+    settings: {
+      staleMs: config.staleSourceDays * 24 * 60 * 60 * 1000,
+      batch: config.staleSourceBatch,
+      concurrency: Math.min(2, config.syncConcurrency)
+    },
+    isStopping: () => stopping
+  });
+  const line = '[worker] stale source refresh ' + formatStaleStats(stats);
+  if (stats.transient || stats.marked) console.warn(line);
+  else console.log(line);
+  return stats.changedSlugs;
 }
 
 async function refreshHeroTrendingIfDue() {
@@ -704,6 +752,11 @@ async function syncCycle() {
     backfillResults = await runBackfillPass();
   }
 
+  const staleSlugs = await refreshStaleSourcesPass().catch((error) => {
+    console.warn('[worker] stale source pass failed', error.message);
+    return [];
+  });
+
   const healedImageSlugs = await healImageSources().catch((error) => {
     console.warn('[worker] image heal pass failed', error.message);
     return [];
@@ -723,6 +776,7 @@ async function syncCycle() {
   });
   const changedSlugs = [...new Set([
     ...mergedSlugs,
+    ...staleSlugs,
     ...headResults.flatMap((result) => result.changedSlugs),
     ...backfillResults.flatMap((result) => result.changedSlugs),
     ...healedImageSlugs,
@@ -906,6 +960,7 @@ async function refreshMdblistBackfill() {
     }).catch((error) => console.warn('[worker] mdblist backfill cursor save failed', error.message));
   }
 
+  stats.overdue = await countMdblistOverdue().catch(() => undefined);
   const line = '[worker] mdblist backfill ' + formatMdblistStats(stats);
   if (stats.declined || Object.keys(stats.errors).length) console.warn(line);
   else console.log(line);

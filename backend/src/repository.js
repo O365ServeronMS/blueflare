@@ -409,13 +409,13 @@ export async function upsertCanonical(incoming) {
     await client.query(
       'INSERT INTO movie_provider_sources (' +
       'movie_id, provider, provider_movie_id, provider_slug, priority, ' +
-      'availability, metadata, streams, provider_updated_at, last_success_at' +
-      ') VALUES ($1,$2,$3,$4,$5,true,$6,$7,$8,now()) ' +
+      'availability, metadata, streams, provider_updated_at, last_success_at, last_seen_at' +
+      ') VALUES ($1,$2,$3,$4,$5,true,$6,$7,$8,now(),now()) ' +
       'ON CONFLICT (provider, provider_movie_id) DO UPDATE SET ' +
       'movie_id=EXCLUDED.movie_id, provider_slug=EXCLUDED.provider_slug, ' +
       'priority=EXCLUDED.priority, availability=true, metadata=EXCLUDED.metadata, ' +
       'streams=EXCLUDED.streams, provider_updated_at=EXCLUDED.provider_updated_at, ' +
-      'last_success_at=now(), updated_at=now()',
+      'last_success_at=now(), last_seen_at=now(), not_found_count=0, first_not_found_at=NULL, updated_at=now()',
       [
         movie.id,
         incoming.provider,
@@ -992,6 +992,46 @@ function utcDay() {
   return "(now() AT TIME ZONE 'utc')::date";
 }
 
+/**
+ * "Due for an MDBList re-check" predicate shared by both candidate queries.
+ * Params: $2 refresh-new, $3 miss retry, $4 error retry, $6 refresh-mid, $7 refresh-old
+ * ($1 and $5 are each query's own cursor/slugs and limit).
+ * Matched rows refresh faster while the title is new: age counts from
+ * catalog_sort_at, falling back to a January 1 of `year`, then to 'old'.
+ */
+const MDBLIST_AGE_SQL = 'COALESCE(catalog_sort_at, CASE WHEN year BETWEEN 1800 AND 2200 ' +
+  "THEN make_timestamptz(year, 1, 1, 0, 0, 0, 'UTC') END)";
+export const MDBLIST_DUE_SQL =
+  '(mdblist_checked_at IS NULL ' +
+  "  OR (mdblist_status = 'matched' AND mdblist_checked_at < now() - (" +
+  '    CASE WHEN ' + MDBLIST_AGE_SQL + " >= now() - interval '90 days' THEN $2::bigint " +
+  '         WHEN ' + MDBLIST_AGE_SQL + " >= now() - interval '2 years' THEN $6::bigint " +
+  "         ELSE $7::bigint END) * interval '1 millisecond') " +
+  "  OR (mdblist_status IN ('unmatched', 'no-id') AND mdblist_checked_at < now() - ($3::bigint * interval '1 millisecond')) " +
+  "  OR (mdblist_status IN ('partial', 'error') AND mdblist_checked_at < now() - ($4::bigint * interval '1 millisecond')))";
+
+function mdblistDueParams(limit) {
+  return [
+    config.mdblistRefreshNewMs,
+    config.mdblistMissRetryMs,
+    config.mdblistErrorRetryMs,
+    Math.max(1, Math.floor(limit)),
+    config.mdblistRefreshMs,
+    config.mdblistRefreshOldMs
+  ];
+}
+
+/** Walkable rows (new or past their retry/refresh time) the backfill has not reached yet. */
+export async function countMdblistOverdue() {
+  const result = await pool.query(
+    "SELECT count(*)::int AS n FROM movies WHERE catalog_state = 'ready' " +
+    'AND (tmdb_id IS NOT NULL OR imdb_id IS NOT NULL OR tmdb_lookup_id IS NOT NULL) ' +
+    'AND $1::text IS NOT NULL AND $5::int > 0 AND ' + MDBLIST_DUE_SQL,
+    ['', ...mdblistDueParams(1)]
+  );
+  return result.rows[0].n;
+}
+
 /** Visible catalog rows that are new or due for an MDBList re-check. */
 export async function listMdblistRatingCandidates(slugs = [], limit = config.mdblistBatchLimit) {
   const ordered = [...new Set(slugs.filter(Boolean).map(String))];
@@ -1000,18 +1040,9 @@ export async function listMdblistRatingCandidates(slugs = [], limit = config.mdb
     'SELECT id, canonical_slug, media_type, tmdb_id, tmdb_media_type, imdb_id, ' +
     'tmdb_lookup_id, mdblist_status, mdblist_tomatoes, mdblist_audience FROM movies ' +
     "WHERE canonical_slug = ANY($1::text[]) AND catalog_state = 'ready' " +
-    'AND (mdblist_checked_at IS NULL ' +
-    "  OR (mdblist_status = 'matched' AND mdblist_checked_at < now() - ($2::bigint * interval '1 millisecond')) " +
-    "  OR (mdblist_status IN ('unmatched', 'no-id') AND mdblist_checked_at < now() - ($3::bigint * interval '1 millisecond')) " +
-    "  OR (mdblist_status IN ('partial', 'error') AND mdblist_checked_at < now() - ($4::bigint * interval '1 millisecond'))) " +
+    'AND ' + MDBLIST_DUE_SQL + ' ' +
     'ORDER BY array_position($1::text[], canonical_slug) LIMIT $5',
-    [
-      ordered,
-      config.mdblistRefreshMs,
-      config.mdblistMissRetryMs,
-      config.mdblistErrorRetryMs,
-      Math.max(1, Math.floor(limit))
-    ]
+    [ordered, ...mdblistDueParams(limit)]
   );
   return result.rows;
 }
@@ -1029,18 +1060,9 @@ export async function listMdblistBackfillCandidates(cursor = '', limit = config.
     "WHERE catalog_state = 'ready' " +
     'AND (tmdb_id IS NOT NULL OR imdb_id IS NOT NULL OR tmdb_lookup_id IS NOT NULL) ' +
     'AND ($1 = \'\' OR id > $1::uuid) ' +
-    'AND (mdblist_checked_at IS NULL ' +
-    "  OR (mdblist_status = 'matched' AND mdblist_checked_at < now() - ($2::bigint * interval '1 millisecond')) " +
-    "  OR (mdblist_status IN ('unmatched', 'no-id') AND mdblist_checked_at < now() - ($3::bigint * interval '1 millisecond')) " +
-    "  OR (mdblist_status IN ('partial', 'error') AND mdblist_checked_at < now() - ($4::bigint * interval '1 millisecond'))) " +
+    'AND ' + MDBLIST_DUE_SQL + ' ' +
     'ORDER BY id LIMIT $5',
-    [
-      after,
-      config.mdblistRefreshMs,
-      config.mdblistMissRetryMs,
-      config.mdblistErrorRetryMs,
-      Math.max(1, Math.floor(limit))
-    ]
+    [after, ...mdblistDueParams(limit)]
   );
   return result.rows;
 }
@@ -1201,6 +1223,89 @@ export async function getCrawlCheckpoint(provider, lane, startPage) {
     [provider, lane, startPage]
   );
   return result.rows[0];
+}
+
+/** Mark list-page sources as seen now, including ones whose detail fetch was skipped. */
+export async function touchSourcesSeen(provider, slugs) {
+  const list = [...new Set(slugs.filter(Boolean))];
+  if (!list.length) return 0;
+  const result = await pool.query(
+    'UPDATE movie_provider_sources SET last_seen_at=now() WHERE provider=$1 AND provider_slug = ANY($2::text[])',
+    [provider, list]
+  );
+  return result.rowCount;
+}
+
+/** Restart a completed backfill walk when it is older than `olderThanMs`. Returns true if reset. */
+export async function resetCompletedCheckpoint(provider, lane, startPage, olderThanMs) {
+  const result = await pool.query(
+    'UPDATE crawl_checkpoints SET next_page=$3, completed_at=NULL, last_page_hash=NULL, updated_at=now() ' +
+    "WHERE provider=$1 AND lane=$2 AND completed_at IS NOT NULL " +
+    "AND completed_at < now() - ($4::bigint * interval '1 millisecond')",
+    [provider, lane, startPage, olderThanMs]
+  );
+  return result.rowCount > 0;
+}
+
+/** Oldest-first available sources whose last successful detail upsert is past the cutoff. */
+export async function listStaleSources(providers, olderThanMs, limit) {
+  if (!providers.length) return [];
+  const result = await pool.query(
+    'SELECT id, movie_id, provider, provider_slug, not_found_count, first_not_found_at FROM movie_provider_sources ' +
+    'WHERE availability AND provider = ANY($1::text[]) ' +
+    "AND last_success_at < now() - ($2::bigint * interval '1 millisecond') " +
+    'ORDER BY last_success_at ASC LIMIT $3',
+    [providers, olderThanMs, Math.max(1, Math.floor(limit))]
+  );
+  return result.rows;
+}
+
+/**
+ * Record a 404 for a stale source. Returns the new state; `confirmed` is true when
+ * two 404s are at least `minGapMs` apart. Does not touch availability.
+ */
+export async function recordSourceNotFound(id, minGapMs) {
+  const result = await pool.query(
+    'UPDATE movie_provider_sources SET last_failure_at=now(), ' +
+    'not_found_count = LEAST(not_found_count + 1, 32000), ' +
+    'first_not_found_at = COALESCE(first_not_found_at, now()) ' +
+    'WHERE id=$1 RETURNING not_found_count, first_not_found_at, ' +
+    "(not_found_count >= 2 AND first_not_found_at <= now() - ($2::bigint * interval '1 millisecond')) AS confirmed",
+    [id, minGapMs]
+  );
+  return result.rows[0] || null;
+}
+
+export async function markSourceUnavailable(id) {
+  const result = await pool.query(
+    'UPDATE movie_provider_sources SET availability=false, updated_at=now() WHERE id=$1 AND availability ' +
+    'RETURNING (SELECT canonical_slug FROM movies WHERE id=movie_id) AS canonical_slug',
+    [id]
+  );
+  return result.rows[0]?.canonical_slug || null;
+}
+
+/** Count of `movieIds` that would have no available source once `excludeSourceIds` are gone (log-only). */
+export async function countMoviesWithoutAvailableSource(movieIds, excludeSourceIds = []) {
+  if (!movieIds.length) return 0;
+  const result = await pool.query(
+    'SELECT count(*)::int AS n FROM movies m WHERE m.id = ANY($1::uuid[]) ' +
+    'AND NOT EXISTS (SELECT 1 FROM movie_provider_sources s WHERE s.movie_id=m.id AND s.availability ' +
+    'AND s.id <> ALL($2::bigint[]))',
+    [movieIds, excludeSourceIds]
+  );
+  return result.rows[0].n;
+}
+
+/** Stale sources not listed by any provider page since `since` (sweep coverage), log-only. */
+export async function countUnseenSince(providers, olderThanMs) {
+  const result = await pool.query(
+    'SELECT count(*)::int AS n FROM movie_provider_sources WHERE availability AND provider = ANY($1::text[]) ' +
+    "AND last_success_at < now() - ($2::bigint * interval '1 millisecond') " +
+    "AND (last_seen_at IS NULL OR last_seen_at < now() - ($2::bigint * interval '1 millisecond'))",
+    [providers, olderThanMs]
+  );
+  return result.rows[0].n;
 }
 
 export async function saveCrawlCheckpoint(provider, lane, checkpoint) {

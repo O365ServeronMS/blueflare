@@ -115,7 +115,10 @@ export const config = Object.freeze({
   mdblistBudgetReserve: integer('MDBLIST_BUDGET_RESERVE', 50, 0),
   mdblistBatchLimit: integer('MDBLIST_BATCH_LIMIT', 60, 1),
   mdblistConcurrency: integer('MDBLIST_CONCURRENCY', 2, 1),
-  mdblistRefreshMs: integer('MDBLIST_REFRESH_MS', 30 * 24 * 60 * 60 * 1000, 60 * 1000),
+  // Matched rows refresh by title age (catalog_sort_at): new < 90 days, mid < 2 years, old beyond.
+  mdblistRefreshNewMs: integer('MDBLIST_REFRESH_NEW_MS', 7 * 24 * 60 * 60 * 1000, 60 * 1000),
+  mdblistRefreshMs: integer('MDBLIST_REFRESH_MS', 14 * 24 * 60 * 60 * 1000, 60 * 1000),
+  mdblistRefreshOldMs: integer('MDBLIST_REFRESH_OLD_MS', 45 * 24 * 60 * 60 * 1000, 60 * 1000),
   mdblistMissRetryMs: integer('MDBLIST_MISS_RETRY_MS', 90 * 24 * 60 * 60 * 1000, 60 * 1000),
   mdblistErrorRetryMs: integer('MDBLIST_ERROR_RETRY_MS', 60 * 60 * 1000, 60 * 1000),
   // Full-catalog backfill: walks the movies table by id cursor to reach rows the
@@ -195,6 +198,16 @@ export const config = Object.freeze({
   backfillPagesPerRun: integer('BACKFILL_PAGES_PER_RUN', 1, 1),
   backfillIntervalMs: integer('BACKFILL_INTERVAL_MS', 15 * 60 * 1000, 1000),
   backfillCooldownMs: integer('BACKFILL_COOLDOWN_MS', 0, 0),
+  // A finished backfill walk restarts after this many days so list pages keep
+  // refreshing last_seen_at / catching changed rows. 0 disables.
+  sweepCycleDays: integer('SWEEP_CYCLE_DAYS', 14, 0),
+  // Stale-source refresh lane: re-fetch detail for sources not upserted for
+  // staleSourceDays. Marking unavailable needs mode=apply and two 404s >= 7 days apart.
+  staleSourceMode: ['off', 'dry-run', 'apply'].includes(process.env.STALE_SOURCE_MODE)
+    ? process.env.STALE_SOURCE_MODE
+    : 'dry-run',
+  staleSourceDays: integer('STALE_SOURCE_DAYS', 14, 1),
+  staleSourceBatch: integer('STALE_SOURCE_BATCH', 150, 1),
   requestTimeoutMs: integer('REQUEST_TIMEOUT_MS', 15000, 1000),
   nguoncRequestMinIntervalMs: integer('NGUONC_REQUEST_MIN_INTERVAL_MS', 0),
   kkphimRequestMinIntervalMs: integer('KKPHIM_REQUEST_MIN_INTERVAL_MS', 1000),

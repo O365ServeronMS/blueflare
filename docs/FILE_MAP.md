@@ -5,9 +5,11 @@ origin. Historical static/Worker notes live only in git history.
 
 ## Root and configuration
 
+The Next.js app lives in `frontend/`; frontend paths below are relative to it.
+
 - `package.json`: Next.js/React commands and runtime dependencies.
 - `next.config.ts`: standalone output, render-cache mode, and response headers.
-- `Dockerfile.frontend`: Node 24 production image: `src/server/cluster.mjs` balancer plus the Next standalone workers.
+- `frontend/Dockerfile`: Node 24 production image: `src/server/cluster.mjs` balancer plus the Next standalone workers.
 - `tsconfig.json`, `postcss.config.mjs`: TypeScript and Tailwind/PostCSS setup.
 - `CLAUDE.md`: authoritative architecture and implementation guide.
 
@@ -42,22 +44,22 @@ origin. Historical static/Worker notes live only in git history.
 
 Runtime sống ở `/opt/stacks/blueflare`, không nằm trong repo — xem
 `docs/adr/ADR-001-tach-stack-runtime-khoi-codebase.md`. Các file dưới đây là **bản chuẩn**
-trong git; thư mục stack giữ bản copy, đồng bộ bằng `deploy/sync-stack.sh`.
+trong git; thư mục stack giữ bản copy, đồng bộ bằng `infra/scripts/sync-stack.sh`.
 
-- `deploy/compose.yml`: frontend, API, worker, PostgreSQL, Valkey, one-shot `image-cache-init`, và service `backup`. Build context
+- `infra/compose.yml`: frontend, API, worker, PostgreSQL, Valkey, one-shot `image-cache-init`, và service `backup`. Build context
   trỏ về codebase qua `${BLUEFLARE_SRC:-/home/ubuntu/blueflare}`.
-- `deploy/sync-stack.sh`: copy compose + script vận hành từ repo sang thư mục stack.
-- `deploy/apply-env.sh`: validate `.env` rồi tạo lại container, không rebuild.
-- `deploy/backup-postgres.sh`: wrapper mỏng chạy một lần service `backup` (`compose run --rm backup --once`).
-- `deploy/backup/`: image + script của service backup (dump, verify, upload S3-compatible, prune).
+- `infra/scripts/sync-stack.sh`: copy compose + script vận hành từ repo sang thư mục stack.
+- `infra/scripts/apply-env.sh`: validate `.env` rồi tạo lại container, không rebuild.
+- `infra/scripts/backup-postgres.sh`: wrapper mỏng chạy một lần service `backup` (`compose run --rm backup --once`).
+- `infra/backup/`: image + script của service backup (dump, verify, upload S3-compatible, prune).
 - `backend/src/`: provider sync, canonical merge, ViewModels, cache, image cache origin.
   Job nền: `prewarm.js` (worker làm ấm cache ảnh), `imageCacheSweep.js` (API dọn/evict cache).
   `people.js`: slug/identity thuần cho metadata cast/director lấy từ TMDB.
   Tài khoản: `auth.js` (hash mật khẩu + session + `HashGate` giới hạn scrypt đồng thời), `authLimits.js` (bộ đếm rate limit auth: Valkey, rơi về bộ nhớ), `meApi.js` (`/api/auth/*`, `/api/me/*`, không cache), `meRepository.js`; migration `020_users_sessions.sql`, `021_history_episode.sql` (thêm cột tập vào `user_history`, bỏ `user_watch_progress`).
-- `deploy/bootstrap-vps.sh`: dựng VPS trắng; hai site block Caddy (`phim` → 3100,
+- `infra/scripts/bootstrap-vps.sh`: dựng VPS trắng; hai site block Caddy (`phim` → 3100,
   `img` → 3200, kèm rule `@account` trả 404 cho `/api/auth/*` và `/api/me*`; phía `phim` có `@authdirect` trả 403 cho `/api/auth/*` nếu không đến từ dải Cloudflare) nằm inline trong script, không còn file `.caddy` riêng.
-- `deploy/cloudflare-auth-ratelimit-rule.json`: Cloudflare rate-limit rule cho `/api/auth/*` (Steve áp tay, xem `docs/CLOUDFLARE_CACHE.md`).
-- `deploy/cloudflare-frontend-static-rule.json`: optional normal Cloudflare cache rule for immutable `/_next/static/` assets.
+- `infra/cloudflare/cloudflare-auth-ratelimit-rule.json`: Cloudflare rate-limit rule cho `/api/auth/*` (Steve áp tay, xem `docs/CLOUDFLARE_CACHE.md`).
+- `infra/cloudflare/cloudflare-frontend-static-rule.json`: optional normal Cloudflare cache rule for immutable `/_next/static/` assets.
 - `scripts/deploy.sh`: deploy `main` đã push — chỉ build service mà diff chạm tới, tag
   image cũ thành `:prev`, tạo lại container, chờ healthy + smoke, tự rollback nếu hỏng.
 - `scripts/rollback.sh`: đổi `:latest` ↔ `:prev` cho service rồi chạy cùng health gate;

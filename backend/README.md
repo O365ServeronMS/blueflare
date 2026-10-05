@@ -69,7 +69,7 @@ Limits are in `docs/backend-architecture.md`; all vars must also be in the stack
 | `AUTH_HASH_CONCURRENCY` | 2 | concurrent scrypt hashes; keep well below `UV_THREADPOOL_SIZE` |
 | `AUTH_HASH_QUEUE` | 16 | waiting hashes before 503 `busy` |
 | `AUTH_REGISTER_GLOBAL_PER_HOUR` | 300 | global signups per hour, then 429 |
-| `UV_THREADPOOL_SIZE` | 8 | set on `api` in `deploy/compose.yml` |
+| `UV_THREADPOOL_SIZE` | 8 | set on `api` in `infra/compose.yml` |
 
 ## Crawl, ordering, and storage
 
@@ -170,7 +170,7 @@ For a backup outside the schedule:
 
 The repository carries everything except secrets and data:
 
-1. Clone the repository and run `deploy/bootstrap-vps.sh`. It regenerates
+1. Clone the repository and run `infra/scripts/bootstrap-vps.sh`. It regenerates
    `POSTGRES_PASSWORD`, `IMAGE_SIGNING_SECRET`, `FRONTEND_REVALIDATE_SECRET`
    and `METRICS_TOKEN`. `TMDB_API_KEY` is the one value it cannot regenerate,
    so that key has to be kept somewhere off the machine.
@@ -190,7 +190,7 @@ every title the providers have dropped in the meantime.
 ## Caddy
 
 The host `/etc/caddy/Caddyfile` is the only place these two site blocks live;
-the repository does not carry `.caddy` files. `deploy/bootstrap-vps.sh` appends
+the repository does not carry `.caddy` files. `infra/scripts/bootstrap-vps.sh` appends
 both blocks once (marker-guarded, then `caddy fmt`/`validate`/`reload`), so on a
 fresh VPS there is nothing to do by hand. To edit or re-add one later, edit the
 Caddyfile directly, then format, validate, and reload:
@@ -232,7 +232,7 @@ next Caddy restart.
 
 ### Next.js frontend at phim.bluesia.net
 
-The `frontend` Compose service builds `Dockerfile.frontend`, runs the Next.js
+The `frontend` Compose service builds `frontend/Dockerfile`, runs the Next.js
 standalone server on container port 3000, and binds it to
 `127.0.0.1:${FRONTEND_PORT:-3100}` on the VPS. Caddy proxies the public hostname
 to that port; no static directory or rewrite file is used.
@@ -285,7 +285,7 @@ site. Verify after reload:
 
 Signed `/i/` images are extension-based assets and use a one-year immutable
 origin header. For extensionless JSON endpoints, create one zone Cache Rule from
-`deploy/cloudflare-cache-rule.json`. It caches only `img.bluesia.net/api/*`,
+`infra/cloudflare/cloudflare-cache-rule.json`. It caches only `img.bluesia.net/api/*`,
 excludes `/api/health`, and respects each response's origin TTL. Do not apply the
 rule to video/embed URLs.
 
@@ -365,7 +365,7 @@ libc locale.
 1. Record `/api/health`, row counts, migration names, database size and Valkey
    health. Pull and rehearse the exact target images against a copy of a dump.
 2. Stop API and worker, create a final verified dump with
-   `deploy/backup-postgres.sh`, and record its checksum.
+   `infra/scripts/backup-postgres.sh`, and record its checksum.
 3. Set `POSTGRES_VOLUME` to a new physical name, start the target image, then
    restore the dump. Verify schema, row counts, indexes and API smoke tests.
 4. Start API and worker, run one sync cycle, then inspect migration,

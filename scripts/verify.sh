@@ -48,8 +48,8 @@ check_backend() {
 # globs silently never runs.
 check_vitest_scope() {
   local stray
-  stray=$(git ls-files -co --exclude-standard '*.test.ts' '*.test.tsx' ':!backend/' \
-    | grep -Ev '^((lib|src)/.*\.test\.ts|components/.*\.test\.tsx?)$')
+  stray=$(git ls-files -co --exclude-standard 'frontend/*.test.ts' 'frontend/*.test.tsx' \
+    | grep -Ev '^frontend/((lib|src)/.*\.test\.ts|components/.*\.test\.tsx?)$')
   [[ -z "$stray" ]] && return 0
   echo "Test files outside vitest.config.ts include globs (never run):"
   echo "$stray"
@@ -57,10 +57,10 @@ check_vitest_scope() {
 }
 
 check_compose() {
-  BLUEFLARE_ENV_FILE="$ROOT/backend/.env.example" docker compose -f deploy/compose.yml config --quiet
+  BLUEFLARE_ENV_FILE="$ROOT/backend/.env.example" docker compose -f infra/compose.yml config --quiet
 }
 
-# Mirrors deploy/apply-env.sh: every key in .env.example must exist in the stack
+# Mirrors infra/scripts/apply-env.sh: every key in .env.example must exist in the stack
 # .env, or the next deploy aborts. Prints key names only, never values.
 check_env_keys() {
   local key missing=0
@@ -74,7 +74,7 @@ check_env_keys() {
 # errors that would otherwise surface halfway through a deploy.
 check_shell() {
   local f bad=0
-  for f in scripts/*.sh scripts/lib/*.sh deploy/*.sh deploy/backup/*.sh; do
+  for f in scripts/*.sh scripts/lib/*.sh infra/scripts/*.sh infra/backup/*.sh; do
     [[ -e $f ]] || continue
     bash -n "$f" || { echo "syntax error: $f"; bad=1; }
   done
@@ -139,22 +139,22 @@ else
   skip backend "no backend/ changes"
 fi
 
-if touches '^(src|components|lib|public)/|^(package(-lock)?\.json|next\.config\.ts|tsconfig\.json|vitest\.config\.ts|postcss\.config\.mjs)$'; then
+if touches '^frontend/'; then
   run vitest-scope check_vitest_scope
-  run vitest npx vitest run
-  run build npm run build
+  run vitest bash -c "cd frontend && npx vitest run"
+  run build bash -c "cd frontend && npm run build"
 else
   skip vitest "no frontend changes"
   skip build "no frontend changes"
 fi
 
-if touches '^deploy/|^backend/\.env\.example$'; then
+if touches '^infra/|^backend/\.env\.example$'; then
   run compose check_compose
 else
-  skip compose "no deploy/ or .env.example changes"
+  skip compose "no infra/ or .env.example changes"
 fi
 
-if touches '^(scripts|deploy)/.*\.sh$'; then
+if touches '^(scripts|infra)/.*\.sh$'; then
   run shell check_shell
 else
   skip shell "no shell script changes"

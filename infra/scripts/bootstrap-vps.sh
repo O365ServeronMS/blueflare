@@ -5,7 +5,7 @@
 #   1. Cài Docker Engine + Compose plugin và Caddy (kho chính chủ).
 #   2. Clone codebase qua SSH về CODEBASE_DIR (bỏ qua nếu đã có).
 #   3. Dựng thư mục runtime STACK_DIR (mặc định /opt/stacks/blueflare để dockhand
-#      thấy) và sync compose.yml + deploy/* từ repo vào đó (KHÔNG đụng .env/data).
+#      thấy) và sync compose.yml + infra/* từ repo vào đó (KHÔNG đụng .env/data).
 #   4. Tạo .env lần đầu từ .env.example: tự sinh các secret ngẫu nhiên, trỏ
 #      IMAGE_CACHE_HOST_DIR về STACK_DIR/data/images, và đặt BACKFILL_ENABLED=false
 #      (bạn bật tay sau qua dockhand). KHÔNG bao giờ ghi đè .env đã tồn tại.
@@ -19,7 +19,7 @@
 # rồi bấm deploy trong dockhand. Chạy với --deploy nếu muốn script build+up luôn.
 #
 # Usage:
-#   deploy/bootstrap-vps.sh [--deploy]
+#   infra/scripts/bootstrap-vps.sh [--deploy]
 #
 # Ghi đè bằng biến môi trường nếu cần:
 #   CODEBASE_DIR   (mặc định /home/ubuntu/blueflare)
@@ -88,7 +88,7 @@ if [[ -d "$CODEBASE_DIR/.git" ]]; then
 else
   git clone "$GIT_REMOTE" "$CODEBASE_DIR"
 fi
-[[ -f "$CODEBASE_DIR/deploy/compose.yml" ]] || die "$CODEBASE_DIR/deploy/compose.yml không thấy — codebase sai chỗ?"
+[[ -f "$CODEBASE_DIR/infra/compose.yml" ]] || die "$CODEBASE_DIR/infra/compose.yml không thấy — codebase sai chỗ?"
 
 # ---------------------------------------------------------------------------
 log "3/5 Dựng thư mục runtime $STACK_DIR + sync file vận hành"
@@ -98,7 +98,7 @@ sudo chown -R "$USER":"$USER" "$STACK_DIR"
 # node uid:gid = 1000 trong image api/worker; cache ảnh phải thuộc về nó.
 sudo chown -R 1000:1000 "$STACK_DIR/data/images"
 
-BLUEFLARE_STACK_DIR="$STACK_DIR" "$CODEBASE_DIR/deploy/sync-stack.sh"
+BLUEFLARE_STACK_DIR="$STACK_DIR" "$CODEBASE_DIR/infra/scripts/sync-stack.sh"
 install -m 644 "$CODEBASE_DIR/backend/.env.example" "$STACK_DIR/.env.example"
 
 # ---------------------------------------------------------------------------
@@ -214,7 +214,7 @@ phim.bluesia.net {
 	# /api/auth/* chỉ nhận kết nối từ Cloudflare; đi thẳng vào origin thì bỏ qua
 	# rate limit của Cloudflare. Chỉ áp cho /api/auth/*, không phải cả site, để
 	# dải IP lỗi thời không làm sập site.
-	# Dải IP: giữ đồng bộ với CLOUDFLARE_RANGES trong lib/account-proxy.ts (nguồn duy nhất).
+	# Dải IP: giữ đồng bộ với CLOUDFLARE_RANGES trong frontend/lib/account-proxy.ts (nguồn duy nhất).
 	@authdirect {
 		path /api/auth/*
 		not remote_ip 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32

@@ -40,7 +40,7 @@ cd "$ROOT"
 [[ $(git branch --show-current) == main ]] || gate "not on main"
 [[ -z $(git status --porcelain --untracked-files=no) ]] \
   || gate "uncommitted changes would be baked into the image; commit them first"
-untracked=$(git ls-files -o --exclude-standard -- src components lib public backend/src backend/migrations deploy)
+untracked=$(git ls-files -o --exclude-standard -- frontend backend/src backend/migrations infra)
 [[ -z $untracked ]] || gate "untracked files inside the build context: $(tr '\n' ' ' <<<"$untracked")"
 git fetch -q origin main || gate "git fetch origin main failed"
 git merge-base --is-ancestor HEAD origin/main || gate "HEAD $(git rev-parse --short HEAD) is not on origin/main; push first"
@@ -56,17 +56,17 @@ if (( ${#services[@]} == 0 )); then
   [[ -n $prev_rev ]] || die "no $STATE_FILE yet: name the services, e.g. scripts/deploy.sh all"
   [[ -n $changed || $prev_rev == "$rev" ]] || die "recorded rev $prev_rev is unknown to this repo; name the services"
   if [[ $prev_rev == "$rev" ]]; then log "HEAD ${rev:0:7} is already deployed"; exit 0; fi
-  if grep -Eq '^(src|components|lib|public)/|^(package(-lock)?\.json|next\.config\.ts|tsconfig\.json|postcss\.config\.mjs|Dockerfile\.frontend|\.dockerignore)$' <<<"$changed"; then
+  if grep -Eq '^frontend/' <<<"$changed"; then
     services+=(frontend)
   fi
   if grep -Eq '^backend/(src/|migrations/|package(-lock)?\.json$|Dockerfile$|\.dockerignore$)' <<<"$changed"; then
     services+=(api worker)
   fi
-  if grep -q '^deploy/backup/' <<<"$changed"; then services+=(backup); fi
+  if grep -q '^infra/backup/' <<<"$changed"; then services+=(backup); fi
 fi
 mapfile -t services < <(printf '%s\n' ${services[@]+"${services[@]}"} | awk 'NF && !seen[$0]++')
 compose_changed=0
-diff -q deploy/compose.yml "$STACK_DIR/compose.yml" >/dev/null 2>&1 || compose_changed=1
+diff -q infra/compose.yml "$STACK_DIR/compose.yml" >/dev/null 2>&1 || compose_changed=1
 new_migrations=$(grep '^backend/migrations/' <<<"$changed" || true)
 
 log "deploy ${prev_rev:0:7}${prev_rev:+..}${rev:0:7}  services: ${services[*]:-none}  compose.yml changed: $compose_changed"
@@ -103,7 +103,7 @@ fi
 
 if (( dry )); then
   log "sync preview:"
-  deploy/sync-stack.sh --dry-run | grep '^WOULD' || echo "    stack files already current"
+  infra/scripts/sync-stack.sh --dry-run | grep '^WOULD' || echo "    stack files already current"
   exit 0
 fi
 
@@ -116,17 +116,17 @@ if (( tests )); then
   fi
   if has frontend; then
     log "frontend: vitest"
-    npx vitest run >/tmp/blueflare-deploy-vitest.log 2>&1 \
+    (cd frontend && npx vitest run) >/tmp/blueflare-deploy-vitest.log 2>&1 \
       || { tail -n 30 /tmp/blueflare-deploy-vitest.log; die "vitest failed"; }
   fi
 fi
 if (( compose_changed )); then
-  BLUEFLARE_ENV_FILE="$ROOT/backend/.env.example" docker compose -f deploy/compose.yml config --quiet \
-    || die "deploy/compose.yml does not validate"
+  BLUEFLARE_ENV_FILE="$ROOT/backend/.env.example" docker compose -f infra/compose.yml config --quiet \
+    || die "infra/compose.yml does not validate"
 fi
 
 # 7. Stack files first, so the build and the recreate read the new compose.yml.
-sync_out=$(deploy/sync-stack.sh)
+sync_out=$(infra/scripts/sync-stack.sh)
 log "synced $(grep -c '^synced:' <<<"$sync_out") stack files"
 
 if (( ${#services[@]} == 0 && ! compose_changed )); then

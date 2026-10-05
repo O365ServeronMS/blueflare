@@ -139,8 +139,7 @@ services:
   frontend:
     container_name: blueflare-frontend
     build:
-      context: ${BLUEFLARE_SRC:-/home/ubuntu/blueflare}
-      dockerfile: Dockerfile.frontend
+      context: ${BLUEFLARE_SRC:-/home/ubuntu/blueflare}/frontend
     restart: unless-stopped
     # Next SSR là service phình to nhất khi có tải — cho nó trần rộng nhất.
     # 3 worker Node (FRONTEND_WORKERS) × heap 512m + balancer ⇒ 2048m.
@@ -222,7 +221,7 @@ services:
   backup:
     container_name: blueflare-backup
     build:
-      context: ${BLUEFLARE_SRC:-/home/ubuntu/blueflare}/deploy/backup
+      context: ${BLUEFLARE_SRC:-/home/ubuntu/blueflare}/infra/backup
     # on-failure, not unless-stopped: with BACKUP_ENABLED=false the script
     # exits 0 and the container stays stopped instead of restart-looping.
     restart: on-failure

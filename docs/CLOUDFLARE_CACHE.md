@@ -7,7 +7,7 @@
 ## Cache boundaries
 
 - `/_next/static/*`: immutable, fingerprinted assets; use the scoped cache rule
-  in `backend/deploy/cloudflare-frontend-static-rule.json` (one year).
+  in `infra/cloudflare/cloudflare-frontend-static-rule.json` (one year).
 - Public HTML (`/`, `/list/*`, `/movie/*`, `/person/*`): the origin decides. `next.config.ts` sends
   `public, max-age=60, s-maxage=600` (10 min at the edge, 60 s in the browser) for full documents only;
   requests carrying `RSC`/`Next-Router-Prefetch` headers or a `_rsc` query keep `no-store`, as do search,
@@ -36,7 +36,7 @@ Steve applies these by hand; agents never touch Cloudflare or the live Caddyfile
 Rate limit and bot protection (dashboard):
 
 1. Security > WAF > Rate limiting rules > Create rule, name `blueflare_auth_ratelimit`.
-2. Expression: copy `expression` from `deploy/cloudflare-auth-ratelimit-rule.json`.
+2. Expression: copy `expression` from `infra/cloudflare/cloudflare-auth-ratelimit-rule.json`.
 3. Counting: IP, 10 requests per 60 s, action Block, duration 600 s.
 4. If the free plan rejects it, use ip.src only and the shortest period/timeout it allows (one rule max).
 5. Security > Bots > turn on Bot Fight Mode.

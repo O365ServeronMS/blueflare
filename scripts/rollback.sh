@@ -6,7 +6,7 @@
 #   scripts/rollback.sh [--dry-run] [service...]
 #
 # With no service names, rolls back what $STACK_DIR/.last-deploy says the last
-# deploy rebuilt. Only images move: stack files synced from deploy/ and any
+# deploy rebuilt. Only images move: stack files synced from infra/ and any
 # migration the API already ran stay as they are.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/stack.sh"

@@ -90,5 +90,5 @@ either way.
 ## Deployment boundary
 
 Compose binds the frontend to `127.0.0.1:3100` and the API to `127.0.0.1:3200`;
-PostgreSQL and Valkey remain private to the Compose network. `backend/deploy/`
-contains the Caddy site blocks and the optional normal Cloudflare cache rule.
+PostgreSQL and Valkey remain private to the Compose network. `infra/`
+contains the compose file, the Caddy site blocks (inside `infra/scripts/bootstrap-vps.sh`) and the optional normal Cloudflare cache rules.

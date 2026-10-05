@@ -34,12 +34,13 @@ Same repo, same house: `backend/` owns provider sync, PostgreSQL, Valkey caching
 ## 🏃 Run locally
 
 ```bash
+cd frontend
 npm install
 npm run dev        # http://localhost:3000
 ```
 
 ```bash
-npm run build      # production build
+npm run build      # production build (in frontend/)
 npm run start      # serve the standalone build
 ```
 
@@ -68,7 +69,7 @@ edge cho `phim`/`img`. Script **không tự deploy container** để bạn xem l
 
 ```bash
 git clone git@github.com:O365ServeronMS/blueflare.git /home/ubuntu/blueflare
-/home/ubuntu/blueflare/deploy/bootstrap-vps.sh          # thêm --deploy để build+up luôn
+/home/ubuntu/blueflare/infra/scripts/bootstrap-vps.sh          # thêm --deploy để build+up luôn
 ```
 
 Mặc định script đặt runtime ở `/opt/stacks/blueflare` (để dockhand quét thấy) và bật
@@ -84,12 +85,12 @@ cd /opt/stacks/blueflare && docker compose up -d --build frontend
 curl -fsS http://127.0.0.1:3100/healthz
 ```
 
-Nếu sửa `compose.yml` hay script trong `deploy/`, bản chuẩn nằm trong repo — đồng bộ sang
+Nếu sửa `compose.yml` hay script trong `infra/`, bản chuẩn nằm trong repo — đồng bộ sang
 stack rồi mới áp dụng:
 
 ```bash
-/home/ubuntu/blueflare/deploy/sync-stack.sh --dry-run   # xem trước
-/home/ubuntu/blueflare/deploy/sync-stack.sh
+/home/ubuntu/blueflare/infra/scripts/sync-stack.sh --dry-run   # xem trước
+/home/ubuntu/blueflare/infra/scripts/sync-stack.sh
 ```
 
 Đổi cấu hình mà không rebuild: `cd /opt/stacks/blueflare && ./deploy/apply-env.sh`
@@ -103,13 +104,10 @@ Then reload Caddy per [`backend/README.md`](backend/README.md). ✅
 ## 🗂️ Project layout
 
 ```
-src/app/           # App Router pages, routes, loading/error states
-components/        # Shared UI — cards, nav, pagination, playback
-lib/               # Catalog helpers (browser + cached server-side)
-public/            # Favicon, manifest, robots, sitemaps
-backend/           # VPS origin: API, worker, PostgreSQL, Valkey, images
-Dockerfile.frontend# Production standalone image
-deploy/            # compose.yml, Caddy, Cloudflare rules, backup service
+frontend/          # Next.js app: src/app, components, lib, public, Dockerfile
+backend/           # VPS origin: API, worker, migrations, tests, Dockerfile
+infra/             # compose.yml, scripts/ (bootstrap, sync), cloudflare/, backup/
+scripts/           # deploy, rollback, verify
 docs/              # Live specs and ADR-001
 ```
 
@@ -118,7 +116,7 @@ docs/              # Live specs and ADR-001
 ## ✅ The gate
 
 ```bash
-npm run build                 # frontend build
-npm test                      # vitest
+(cd frontend && npm run build)   # frontend build
+(cd frontend && npm test)        # vitest
 cd backend && node --test     # backend suite
 ```

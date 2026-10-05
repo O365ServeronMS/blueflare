@@ -22,7 +22,7 @@ Same repo, same house: `backend/` owns provider sync, PostgreSQL, Valkey caching
 | 🖥️ Pages | Next.js 16 App Router + React Server Components |
 | ⚛️ Interactivity | React 19, client components only where needed |
 | 🎨 Styling | Tailwind CSS 4 |
-| 🐳 Runtime | Node 24 standalone container |
+| 🐳 Runtime | Node 26 standalone container |
 | 🌐 Edge | Caddy + Cloudflare (plain proxy/CDN, no Worker) |
 | 🎞️ Catalog/images | Blueflare API + `img.bluesia.net` |
 | 📡 Providers | NguonC primary, KKPhim fills the gaps |

@@ -1,4 +1,4 @@
-FROM node:24.19.0-bookworm-slim AS deps
+FROM node:26.10.0-bookworm-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -7,7 +7,7 @@ FROM deps AS builder
 COPY . .
 RUN npm run build
 
-FROM node:24.19.0-bookworm-slim AS runner
+FROM node:26.10.0-bookworm-slim AS runner
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 WORKDIR /app

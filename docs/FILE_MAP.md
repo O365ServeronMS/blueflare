@@ -9,7 +9,7 @@ The Next.js app lives in `frontend/`; frontend paths below are relative to it.
 
 - `package.json`: Next.js/React commands and runtime dependencies.
 - `next.config.ts`: standalone output, render-cache mode, and response headers.
-- `frontend/Dockerfile`: Node 24 production image: `src/server/cluster.mjs` balancer plus the Next standalone workers.
+- `frontend/Dockerfile`: Node 26 production image: `src/server/cluster.mjs` balancer plus the Next standalone workers.
 - `tsconfig.json`, `postcss.config.mjs`: TypeScript and Tailwind/PostCSS setup.
 - `CLAUDE.md`: authoritative architecture and implementation guide.
 

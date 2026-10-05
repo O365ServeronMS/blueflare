@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mapLimit } from '../src/concurrency.js';
-import { formatStaleStats, isNotFound, refreshStaleSources } from '../src/staleSources.js';
+import { formatStaleStats, isNotFound, refreshStaleSources, resetConflictBackoff } from '../src/staleSources.js';
 import { formatMdblistStats } from '../src/mdblistRatingsSync.js';
 
 const quiet = { log() {}, warn() {} };
@@ -101,4 +101,27 @@ test('mdblist stats line shows overdue only when known', () => {
     tomatoes: 0, audience: 0, noId: 0, keysTried: 0, keysTotal: 0, keysDrained: 0, durationMs: 0, errors: {} };
   assert.doesNotMatch(formatMdblistStats(base), /overdue/);
   assert.match(formatMdblistStats({ ...base, overdue: 12 }), /overdue=12/);
+});
+
+test('unique violations are counted apart and the source is skipped during the cool-down', async () => {
+  resetConflictBackoff();
+  let calls = 0;
+  const h = harness({
+    rows: [row(1, 'a'), row(2, 'b')],
+    detail: async (slug) => {
+      if (slug === 'a') { calls += 1; throw Object.assign(new Error('duplicate key'), { code: '23505' }); }
+      return { normalized: { slug } };
+    }
+  });
+  const run = () => refreshStaleSources({ mode: 'dry-run', providers: [h.provider], deps: h.deps, settings, log: quiet });
+  const first = await run();
+  assert.equal(first.conflicts, 1);
+  assert.equal(first.transient, 0);
+  assert.equal(first.refreshed, 1);
+  const second = await run();
+  assert.equal(second.skipped, 1);
+  assert.equal(second.conflicts, 0);
+  assert.equal(calls, 1);
+  assert.deepEqual(h.calls.recorded, []);
+  resetConflictBackoff();
 });

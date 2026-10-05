@@ -2,6 +2,15 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // A source is only retired after two 404s at least this far apart.
 export const NOT_FOUND_MIN_GAP_MS = 7 * DAY_MS;
 
+// A unique violation is deterministic: retrying every cycle cannot succeed, so the source
+// is skipped for a while. In memory only; a worker restart simply retries once.
+export const CONFLICT_COOLDOWN_MS = 6 * 60 * 60 * 1000;
+const conflictUntil = new Map();
+
+export function resetConflictBackoff() {
+  conflictUntil.clear();
+}
+
 export function isNotFound(error) {
   return Number(error?.status) === 404;
 }
@@ -16,7 +25,7 @@ export function isNotFound(error) {
  */
 export async function refreshStaleSources({ mode, providers, deps, settings, isStopping = () => false, log = console }) {
   const stats = {
-    mode, checked: 0, refreshed: 0, unchanged: 0, notFound: 0, transient: 0,
+    mode, checked: 0, refreshed: 0, unchanged: 0, notFound: 0, transient: 0, conflicts: 0, skipped: 0,
     wouldMark: 0, marked: 0, unseen: 0, noSourceMovies: 0, changedSlugs: [], durationMs: 0
   };
   if (mode === 'off' || !providers.length) return stats;
@@ -28,6 +37,11 @@ export async function refreshStaleSources({ mode, providers, deps, settings, isS
   await deps.mapLimit(rows, settings.concurrency, async (row) => {
     if (isStopping()) return;
     const provider = byName.get(row.provider);
+    const key = row.provider + '/' + row.provider_slug;
+    if ((conflictUntil.get(key) || 0) > Date.now()) {
+      stats.skipped += 1;
+      return;
+    }
     stats.checked += 1;
     try {
       const { normalized } = await provider.detail(row.provider_slug);
@@ -36,6 +50,12 @@ export async function refreshStaleSources({ mode, providers, deps, settings, isS
       if (result.changed) stats.changedSlugs.push(result.movie.canonical_slug);
       else stats.unchanged += 1;
     } catch (error) {
+      if (error?.code === '23505') {
+        stats.conflicts += 1;
+        conflictUntil.set(key, Date.now() + CONFLICT_COOLDOWN_MS);
+        log.warn('[worker] stale source ' + key + ' unique conflict, backing off', error.message);
+        return;
+      }
       if (!isNotFound(error)) {
         stats.transient += 1;
         log.warn('[worker] stale source ' + row.provider + '/' + row.provider_slug + ' refresh failed', error.message);
@@ -82,6 +102,7 @@ export async function refreshStaleSources({ mode, providers, deps, settings, isS
 export function formatStaleStats(stats) {
   return 'mode=' + stats.mode + ' checked=' + stats.checked + ' refreshed=' + stats.refreshed +
     ' unchanged=' + stats.unchanged + ' notFound=' + stats.notFound + ' transient=' + stats.transient +
+    ' conflicts=' + stats.conflicts + ' skipped=' + stats.skipped +
     ' wouldMark=' + stats.wouldMark + ' marked=' + stats.marked +
     ' noSourceMovies=' + stats.noSourceMovies + ' unseenSinceSweep=' + stats.unseen +
     ' durationMs=' + stats.durationMs;

@@ -288,6 +288,17 @@ async function insertMovie(client, incoming) {
   return result.rows[0];
 }
 
+// movies_imdb_identity_idx allows one row per imdb id. When another row already owns it, the
+// new row is created without the imdb id instead of failing the whole upsert every cycle.
+async function withoutTakenImdb(client, incoming) {
+  if (!incoming.imdbId) return incoming;
+  const owner = await client.query(
+    'SELECT 1 FROM movies WHERE imdb_id = $1 AND media_type = $2 LIMIT 1',
+    [incoming.imdbId, incoming.mediaType]
+  );
+  return owner.rowCount ? { ...incoming, imdbId: null } : incoming;
+}
+
 async function updateMovie(client, current, incoming) {
   const movie = mergedMovie(current, incoming);
   const thumbAssetId = await ensureImageAsset(client, movie.thumbSourceUrl);
@@ -403,7 +414,7 @@ export async function upsertCanonical(incoming) {
     const previousSource = previousSourceResult.rows[0] || null;
     movie = movie
       ? await updateMovie(client, movie, incoming)
-      : await insertMovie(client, incoming);
+      : await insertMovie(client, await withoutTakenImdb(client, incoming));
     movie = (await persistTmdbIdentity(client, movie.id, incoming)) || movie;
 
     await client.query(

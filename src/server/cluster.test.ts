@@ -60,6 +60,25 @@ describe("frontend balancer", () => {
     expect(pickUpstream([a, b, c])).toBeNull();
   });
 
+  it("breaks ties by rotating the start index", () => {
+    const ups = [makeUpstream(1), makeUpstream(2), makeUpstream(3)];
+    for (const u of ups) u.up = true;
+    expect(pickUpstream(ups, 0)).toBe(ups[0]);
+    expect(pickUpstream(ups, 1)).toBe(ups[1]);
+    expect(pickUpstream(ups, 2)).toBe(ups[2]);
+    ups[1].up = false;
+    expect(pickUpstream(ups, 1)).toBe(ups[2]);
+    ups[2].inflight = 1;
+    expect(pickUpstream(ups, 1)).toBe(ups[0]);
+  });
+
+  it("spreads sequential idle traffic evenly across workers", async () => {
+    const workers = await Promise.all(["a", "b", "c"].map((n) => fakeWorker(n)));
+    const port = await listen(createBalancer(workers.map((w) => w.upstream)));
+    for (let i = 0; i < 30; i += 1) await request(port, "GET", "/");
+    expect(workers.map((w) => w.seen.length)).toEqual([10, 10, 10]);
+  });
+
   it("answers 503 when no worker is up", async () => {
     const down = makeUpstream(1);
     const port = await listen(createBalancer([down]));

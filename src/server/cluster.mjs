@@ -104,13 +104,20 @@ function proxy(upstream, req, res) {
   req.pipe(proxyReq);
 }
 
-export function pickUpstream(upstreams) {
-  const up = upstreams.filter((upstream) => upstream.up);
-  if (!up.length) return null;
-  return up.reduce((best, candidate) => (candidate.inflight < best.inflight ? candidate : best));
+// Least in-flight wins; ties go to the first candidate at or after `start`, so
+// the caller rotating `start` spreads idle-time traffic instead of pinning it
+// to worker 0.
+export function pickUpstream(upstreams, start = 0) {
+  let best = null;
+  for (let i = 0; i < upstreams.length; i += 1) {
+    const candidate = upstreams[(start + i) % upstreams.length];
+    if (candidate.up && (!best || candidate.inflight < best.inflight)) best = candidate;
+  }
+  return best;
 }
 
 export function createBalancer(upstreams) {
+  let cursor = 0;
   return http.createServer((req, res) => {
     const path = (req.url || "").split("?")[0];
     if (req.method === "POST" && path === REVALIDATE_PATH) {
@@ -122,7 +129,8 @@ export function createBalancer(upstreams) {
       void fanOutRevalidate(upstreams, req, res);
       return;
     }
-    const upstream = pickUpstream(upstreams);
+    cursor = (cursor + 1) % upstreams.length;
+    const upstream = pickUpstream(upstreams, cursor);
     if (!upstream) {
       res.writeHead(503, { "content-type": "text/plain", "cache-control": "no-store", "retry-after": "2" });
       res.end("No worker available");

@@ -9,5 +9,5 @@ export interface Upstream {
 }
 
 export function makeUpstream(port: number, host?: string): Upstream;
-export function pickUpstream(upstreams: Upstream[]): Upstream | null;
+export function pickUpstream(upstreams: Upstream[], start?: number): Upstream | null;
 export function createBalancer(upstreams: Upstream[]): http.Server;

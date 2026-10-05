@@ -56,7 +56,7 @@ export function StoredMovieGrid({ type }: { type: "favorites" | "history" }) {
                 type="button"
                 aria-label={`Xoá ${movie.name} khỏi lịch sử`}
                 onClick={() => setItems(items.filter((item) => item.slug !== movie.slug))}
-                className="absolute right-1.5 top-1.5 z-10 grid size-8 place-items-center rounded-full bg-black/70 text-white hover:bg-black"
+                className="absolute right-2 top-2 z-30 grid size-8 place-items-center rounded-full bg-black/70 text-white hover:bg-black"
               >
                 <X size={16} aria-hidden />
               </button>

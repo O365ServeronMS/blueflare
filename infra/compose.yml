@@ -58,7 +58,7 @@ services:
 
   valkey:
     container_name: blueflare-valkey
-    image: ${VALKEY_IMAGE:-valkey/valkey:9.1.2-trixie}
+    image: ${VALKEY_IMAGE:-valkey/valkey:9.2-trixie}
     restart: unless-stopped
     command:
       - valkey-server

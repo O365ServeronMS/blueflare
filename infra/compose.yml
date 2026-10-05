@@ -89,7 +89,7 @@ services:
     container_name: blueflare-image-cache-init
     # alpine thay vì build image backend: service này chỉ mkdir + chown.
     # alpine không có user `node`, phải dùng uid:gid số — 1000:1000 là `node`
-    # trong node:22-bookworm-slim mà api/worker chạy.
+    # trong node:24-bookworm-slim mà api/worker chạy.
     image: alpine:3
     restart: "no"
     user: "0:0"

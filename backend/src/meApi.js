@@ -352,7 +352,7 @@ export function createAccountHandler({
       '': ['GET'],
       import: ['POST'],
       favorites: rest.length ? ['PUT', 'DELETE'] : ['GET'],
-      history: rest.length ? ['PUT'] : ['GET']
+      history: rest.length ? ['PUT', 'DELETE'] : ['GET', 'DELETE']
     }[head];
     allow(routeMethods);
     const session = await authenticate(request);
@@ -376,6 +376,15 @@ export function createAccountHandler({
         return;
       }
       if (!slug || !(await repo.addFavorite(userId, slug))) throw new ApiError(404, 'unknown_movie');
+      send(response, 204);
+      return;
+    }
+    if (head === 'history' && method === 'DELETE') {
+      if (rest.length) {
+        if (slug) await repo.removeHistory(userId, slug);
+      } else {
+        await repo.clearHistory(userId);
+      }
       send(response, 204);
       return;
     }

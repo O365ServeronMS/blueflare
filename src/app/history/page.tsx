@@ -8,7 +8,7 @@ export default function HistoryPage() {
     <div className="bf-content-width pb-12 pt-24 md:pt-28">
       <header className="bf-page-gutter">
         <h1 className="text-[32px] font-black tracking-tight text-white sm:text-[44px]">Đã xem gần đây</h1>
-        <p className="mt-3 max-w-lg text-body leading-6 text-silver">Lịch sử được lưu cục bộ khi bạn mở trình phát.</p>
+        <p className="mt-3 max-w-lg text-body leading-6 text-silver">Phim bạn mở trình phát được ghi lại ở đây. Bạn có thể xoá từng phim hoặc toàn bộ lịch sử.</p>
       </header>
       <StoredMovieGrid type="history" />
     </div>

@@ -168,7 +168,8 @@ describe("path allow-list", () => {
   it("accepts only contract shapes", () => {
     expect(resolveMePath([])).toEqual({ path: "/api/me", methods: ["GET"] });
     expect(resolveMePath(["import"])?.methods).toEqual(["POST"]);
-    expect(resolveMePath(["history", "abc"])?.methods).toEqual(["PUT"]);
+    expect(resolveMePath(["history", "abc"])?.methods).toEqual(["PUT", "DELETE"]);
+    expect(resolveMePath(["history"])?.methods).toEqual(["GET", "DELETE"]);
     expect(resolveMePath(["progress"])).toBeNull();
     const id = "00000000-0000-4000-8000-000000000001";
     expect(resolveMePath(["admin", "users"])).toEqual({ path: "/api/me/admin/users", methods: ["GET"] });

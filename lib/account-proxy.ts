@@ -174,7 +174,7 @@ export function resolveMePath(segments: string[]): { path: string; methods: stri
   const tail = slug === undefined ? "" : `/${encodeURIComponent(encoded)}`;
   const shapes: Record<string, { bare?: string[]; slug?: string[] }> = {
     favorites: { bare: ["GET"], slug: ["PUT", "DELETE"] },
-    history: { bare: ["GET"], slug: ["PUT"] },
+    history: { bare: ["GET", "DELETE"], slug: ["PUT", "DELETE"] },
     import: { bare: ["POST"] }
   };
   const shape = Object.prototype.hasOwnProperty.call(shapes, head) ? shapes[head] : undefined;

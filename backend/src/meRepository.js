@@ -99,6 +99,18 @@ export async function removeFavorite(userId, slug) {
   );
 }
 
+export async function removeHistory(userId, slug) {
+  await pool.query(
+    'DELETE FROM user_history WHERE user_id=$1 AND movie_id=' +
+    '(SELECT id FROM movies WHERE canonical_slug=$2)',
+    [userId, slug]
+  );
+}
+
+export async function clearHistory(userId) {
+  await pool.query('DELETE FROM user_history WHERE user_id=$1', [userId]);
+}
+
 export async function listHistory(userId, limit = 100) {
   const result = await pool.query(
     'SELECT m.canonical_slug AS slug, h.watched_at AS at, h.server_name, h.episode_key, h.episode_name ' +

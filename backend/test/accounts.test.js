@@ -82,6 +82,8 @@ function fakeRepo({ movies = ['a', 'b', 'c'] } = {}) {
       state.history.set(userId, map);
       return true;
     },
+    async removeHistory(userId, slug) { state.history.get(userId)?.delete(slug); },
+    async clearHistory(userId) { state.history.delete(userId); },
     async adminOverview() { return { users: state.users.size, new_7d: state.users.size, active_sessions: state.sessions.size }; },
     async adminListUsers({ q = '' } = {}) {
       const rows = [...state.users.values()].filter((u) => u.email.includes(q.toLowerCase())).map((u) => ({
@@ -604,6 +606,26 @@ test('favorites and history writes are idempotent; unknown movies are 404', asyn
       assert.equal((await call('DELETE', '/api/me/favorites/never', { token })).status, 204);
     }
     assert.deepEqual((await call('GET', '/api/me/favorites', { token })).json.items, []);
+  });
+});
+
+test('history can be removed per movie or cleared; both are idempotent and per-user', async () => {
+  await withApi({}, async ({ call }) => {
+    const { token } = await signup(call);
+    await call('PUT', '/api/me/history/a', { token });
+    await call('PUT', '/api/me/history/b', { token });
+    await call('PUT', '/api/me/favorites/a', { token });
+    for (let i = 0; i < 2; i += 1) {
+      assert.equal((await call('DELETE', '/api/me/history/a', { token })).status, 204);
+    }
+    assert.equal((await call('DELETE', '/api/me/history/never', { token })).status, 204);
+    assert.deepEqual((await call('GET', '/api/me/history', { token })).json.items.map((x) => x.slug), ['b']);
+    for (let i = 0; i < 2; i += 1) {
+      assert.equal((await call('DELETE', '/api/me/history', { token })).status, 204);
+    }
+    assert.deepEqual((await call('GET', '/api/me/history', { token })).json.items, []);
+    assert.equal((await call('GET', '/api/me/favorites', { token })).json.items.length, 1);
+    assert.equal((await call('DELETE', '/api/me/history')).status, 401);
   });
 });
 

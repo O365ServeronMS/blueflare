@@ -274,6 +274,13 @@ export async function recordHistory(movie: MovieCard, ep?: EpisodeRef): Promise<
   writeGuestList("history", pushGuestHistory(readGuestList("history"), movie, Date.now(), ep));
 }
 
+/** Delete the whole history: localStorage for guests, one DELETE for an account. */
+export async function clearHistory(): Promise<void> {
+  await start();
+  if (mode !== "user") return writeGuestList("history", []);
+  await optimisticServerWrite("history", [], async () => (await api("DELETE", "/api/me/history")).ok);
+}
+
 /** Replace a whole list (guest) or delete the removed slugs (account). */
 export async function replaceList(list: ListKey, next: StoredMovie[]): Promise<void> {
   await start();

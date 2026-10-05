@@ -17,7 +17,8 @@ export async function redis() {
   if (client?.isReady) return client;
   if (connecting) return connecting;
 
-  client = createClient({ url: config.redisUrl });
+  // redis v6 defaults to RESP3; pin RESP2 to keep the v5 wire protocol and defaults.
+  client = createClient({ url: config.redisUrl, RESP: 2 });
   client.on('error', (error) => {
     console.error('[valkey] connection error', error.message);
   });

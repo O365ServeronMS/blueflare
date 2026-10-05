@@ -48,13 +48,12 @@ export function StoredMovieGrid({ type }: { type: "favorites" | "history" }) {
             const href = hrefWithReturnTo(`/movie/${movie.slug}?ep=${encodeURIComponent(ep.key)}${sn}&play=1#player`, "");
             card = <MovieCard movie={movie} badge={ep.name} href={href} />;
           }
-          if (!isHistory) return <MovieCard key={movie.slug} movie={movie} />;
-          return (
+                    return (
             <div key={movie.slug} className="relative">
               {card}
               <button
                 type="button"
-                aria-label={`Xoá ${movie.name} khỏi lịch sử`}
+                aria-label={`Xoá ${movie.name} khỏi ${isHistory ? "lịch sử" : "yêu thích"}`}
                 onClick={() => setItems(items.filter((item) => item.slug !== movie.slug))}
                 className="absolute right-2 top-2 z-30 grid size-8 place-items-center rounded-full bg-black/70 text-white hover:bg-black"
               >

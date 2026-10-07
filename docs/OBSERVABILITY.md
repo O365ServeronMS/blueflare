@@ -15,10 +15,11 @@ cycle. Its TTL is two sync intervals plus five minutes (35 minutes at the defaul
 container still exists. `/api/health` is the supported way to consume it; do not
 alert directly on the Valkey key.
 
-The remaining signals are log lines. All three are one line per run, so `docker
-logs` is the whole interface.
+The remaining signals are log lines, so `docker logs` is the whole interface.
 
 - `[worker] duplicate merge ok <drop> => <keep> evidence=… [rename=…]` per merge, then `[worker] duplicate merge merged=… skipped=… remaining=… ambiguous=… evidence=… durationMs=…` per cycle; `[worker] ALERT duplicate merge …` (warn) on failed/stale merges, ambiguous pairs, `remaining` above `MERGE_ALERT_PENDING` (200) or three cycles without progress.
+- `[worker] tmdb ai match mode=… scope=… requests=… checked=… verified=… unverifiable=… none=… error=… merged=… assigned=… tokens=prompt/output/thoughts models=…` per ranked batch (the AI match loop, or the sync cycle when `TMDB_MATCH_AI_LOOP=false`). `[worker] tmdb ai match loop: quota|blocked|idle` is logged only when the loop enters that state (`quota`: today's requests are spent until the Pacific reset; `idle`: backlog empty); warnings `[worker] tmdb ai match batch failed`, `… assign failed for <slug>`, `… could not record run for <slug>`, `… loop tick failed`, `… invalidation failed`, and `[worker] gemini quota ledger save failed|could not load` (the ledger then counts from memory). With the loop off, `[worker] tmdb ai match: AI quota exhausted, resuming next cycle`.
+- `[worker] tmdb identity promote checked=… assigned=… merged=… blocked=… conflict=…` per sync cycle when `TMDB_IDENTITY_MODE=apply` promoted something; `[worker] tmdb identity promotion failed` (warn) otherwise.
 - `[worker] image prewarm selected=… cached=… warmed=… failed=… bytes=… durationMs=…`
   Steady state is `warmed=0` with everything `cached` in tens of milliseconds — that
   means the hot set is already on disk and no request was made. A persistently high

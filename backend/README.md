@@ -26,8 +26,9 @@ the browser connects to the selected provider.
 
 - api: HTTP API, response cache, image cache origin and its hourly sweep, health endpoint.
 - worker: provider sync, normalization, deterministic deduplication, MDBList
-  rating enrichment, health tracking, home ViewModel precomputation, and image
-  cache prewarming.
+  rating enrichment, health tracking, home ViewModel precomputation, image
+  cache prewarming, and the TMDB identity work (cast-verified match, promotion
+  to `tmdb_id`, and the separate AI match loop; see "TMDB AI match").
 - postgres: canonical movies and provider provenance.
 - valkey: final JSON responses and cache-version invalidation.
 - image-cache-init: one-shot `mkdir`+`chown` of the image cache directory. It
@@ -255,6 +256,73 @@ review text is sent to a provider. A provider can start refusing us at any time
   when it is empty), `GEMINI_TIMEOUT_MS=30000`, `GEMINI_DELAY_MS=0` (floor),
   `GEMINI_COOLDOWN_MS=21600000`. Remember to add the keys to the
   stack `.env`.
+- The rotation itself (keys x models, spacing, cooldowns, Pacific-day helpers)
+  lives in `geminiRotation.js` and is shared with the TMDB AI match pass, which
+  owns a separate instance (own keys, own state) of it.
+
+## TMDB AI match
+
+Worker-only; no request path calls TMDB or Gemini. For ready titles with no `tmdb_id`
+the pass fetches real TMDB candidates (`tmdbMatchAi.js`), has Gemini rank them, and lets an
+independent gate decide. Gemini never supplies an id, only picks among fetched candidates.
+
+- Keys and models: `TMDB_MATCH_GEMINI_API_KEYS` (secret, comma list, ideally from
+  different Google projects) and `TMDB_MATCH_GEMINI_MODELS` (`id[:rpm[:rpd]]`). It never
+  falls back to `GEMINI_API_KEYS`. The pass runs only with `TMDB_MATCH_AI_ENABLED=true`,
+  non-empty keys, `TMDB_MATCH_AI_MODE` other than `off`, and `TMDB_ENABLED` plus a TMDB key.
+- Gate (`decideAiMatch`, pure): the model's pick is `verified` only if tier 1 holds (catalog
+  cast >= 2 and >= 2 names overlap the candidate's cast, year and size compatible; TV season
+  not above the candidate's season count) or tier 2 holds (exact name + year + size, no other
+  candidate passes the same test; a row without a year is refused). Otherwise `unverifiable`
+  (a pick the gate refused) or `none` (no candidates, no pick). Every verdict is recorded in
+  `tmdb_match_ai_runs` (`status` + `outcome`, migration 029).
+- Dry-run vs apply: `TMDB_MATCH_AI_MODE=dry-run` (default) only writes `tmdb_match_ai_runs`.
+  `apply` also calls `assignTmdbIdentity` (source `inferred`) for verified picks: it writes
+  the id on the row or merges it into the row already holding that identity. Independent of
+  `TMDB_IDENTITY_MODE`, which only governs promotion of the cast-verified `tmdb_match_*`
+  rows. In apply mode a title whose last run was a dry-run `verified` is examined again.
+- Retry windows: `none`, `unverifiable` and verified-but-not-applied results are not
+  re-examined for `TMDB_MATCH_AI_RETRY_MS` (14 days); errors wait
+  `TMDB_MATCH_AI_ERROR_RETRY_MS` (6 h). Rows with a cast of two or more go first.
+- Loop: `tmdbMatchAiLoop.js` wakes every `TMDB_MATCH_AI_LOOP_MS` (60 s) and ranks one
+  token-packed batch per tick; `TMDB_MATCH_AI_LOOP=false` runs the older whole pass inside
+  the sync cycle instead (`TMDB_MATCH_AI_LIMIT` titles per cycle). The scope `priority`
+  (films first seen within `TMDB_MATCH_AI_FRESH_MS`, 3 days, and films whose last run errored)
+  runs first; the old backlog (`all`) only runs while more than `TMDB_MATCH_AI_RESERVE_PCT`
+  (10, max 90) of the day's request budget remains.
+- Batching: films are packed into one request until `TMDB_MATCH_GEMINI_BATCH_TOKENS` (40000,
+  estimated chars/3 and corrected from the prompt token count each response reports) or
+  `TMDB_MATCH_GEMINI_BATCH_MAX` (40, defaults to the old `TMDB_MATCH_GEMINI_BATCH`) is reached;
+  a batch holds one tier only. A request the model refuses is bisected until the offending
+  film is alone (then `model-refused`). Thinking tokens: `TMDB_MATCH_GEMINI_THINK_T1=0`
+  (films with a cast, 0 = not sent), `TMDB_MATCH_GEMINI_THINK_T2=4096`. Timeout
+  `TMDB_MATCH_GEMINI_TIMEOUT_MS=180000`; other failure handling (cooldown, transient park)
+  uses the `TMDB_MATCH_GEMINI_*` counterparts of the `GEMINI_*` variables.
+- Quota ledger (`geminiQuotaLedger.js`, table `gemini_quota_ledger`, migration 031): per
+  key+model counts of requests per Pacific day (`TMDB_MATCH_GEMINI_RPD`, default 20, or the
+  model's own `rpd`), RPM spacing from the persisted last request, and a 60 s token window
+  (`TMDB_MATCH_GEMINI_TPM`). A request counts when it starts and stays counted if it fails
+  or times out. When Google answers a daily-quota 429 the count is raised to the limit
+  (`exhaust`) even if the ledger thought some requests were left. Keys are stored only as a
+  12-hex sha256 fingerprint. The table is disposable (see Backup and restore).
+- Log lines: `[worker] tmdb ai match mode= scope= requests= checked= verified= unverifiable=
+  none= error= merged= assigned= tokens=prompt/output/thoughts models=`; the loop logs state
+  changes only (`[worker] tmdb ai match loop: quota|blocked|idle`); warnings
+  `tmdb ai match batch failed`, `... assign failed for <slug>`, `... could not record run`,
+  `[worker] gemini quota ledger save failed|could not load`. Promotion logs
+  `[worker] tmdb identity promote checked= assigned= merged= blocked= conflict=`.
+- Audit and undo: every assign, merge, blocked and conflict is a row in
+  `tmdb_identity_changes` (migration 030; merges point at the `movie_merges` snapshot).
+  `node scripts/tmdb-identity-report.mjs <out.csv> [--n 200] [--seed 1] [--tmdb]` is the
+  read-only review sample; `node scripts/tmdb-identity-undo.mjs <changeId>` reverses one
+  assign or merge (it refuses if the identity changed since) and prints the result. It
+  writes to the database only, so the affected slugs must be invalidated afterwards
+  (Valkey keys and Next render tags, as the worker does after a sync) or readers keep the
+  old page.
+- Development scripts (read-only against the catalog, they hit TMDB and Gemini):
+  `scripts/tmdb-ai-backtest.mjs` (precision against provider-supplied ids),
+  `tmdb-ai-classify.mjs` (breakdown of rows still without identity), `tmdb-ai-dryrun.mjs`
+  (dry run of the pass on real rows), `tmdb-ai-quota-probe.mjs` (measures what the keys allow).
 
 ## Duplicate merge (NguonC + KKPhim)
 
@@ -281,6 +349,8 @@ and region for R2, Backblaze B2, Wasabi, AWS S3 and MinIO.
 
 The dump also carries user accounts, sessions and per-title watch history (tables from
 migrations `020_users_sessions.sql` and `021_history_episode.sql`); a restore brings them back with the catalog.
+The TMDB identity audit/undo log `tmdb_identity_changes` (migration `030`) is in the dump too. `gemini_quota_ledger`
+(migration `031`) is disposable: after a restore without it the ledger counts from zero until Google answers 429.
 
 For a backup outside the schedule:
 
@@ -292,8 +362,8 @@ The repository carries everything except secrets and data:
 
 1. Clone the repository and run `infra/scripts/bootstrap-vps.sh`. It regenerates
    `POSTGRES_PASSWORD`, `IMAGE_SIGNING_SECRET`, `FRONTEND_REVALIDATE_SECRET`
-   and `METRICS_TOKEN`. `TMDB_API_KEY` is the one value it cannot regenerate,
-   so that key has to be kept somewhere off the machine.
+   and `METRICS_TOKEN`. `TMDB_API_KEY` (like the Gemini key lists) cannot be regenerated,
+   so those keys have to be kept somewhere off the machine.
 2. Fill in the `BACKUP_S3_*` credentials and download the newest object under
    `s3://<bucket>/postgres/`.
 3. Bring up PostgreSQL alone, then restore into it:

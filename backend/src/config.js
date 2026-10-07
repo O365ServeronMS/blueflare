@@ -28,6 +28,7 @@ const DEFAULT_GEMINI_MODELS = [
   'gemini-3.6-flash:5', 'gemini-3.5-flash:5', 'gemini-2.5-flash-lite:10', 'gemini-3-flash-preview:5',
   'gemini-2.5-flash:5', 'gemma-4-31b-it:30', 'gemma-4-26b-a4b-it:30'
 ].join(',');
+const DEFAULT_TMDB_MATCH_GEMINI_MODELS = 'gemini-3.8-flash:5,gemini-3.7-flash:5,gemini-3.6-flash:5';
 const nodeEnv = process.env.NODE_ENV || 'development';
 const syncIntervalMs = integer('SYNC_INTERVAL_MS', 15 * 60 * 1000, 1000);
 const imageSigningSecret = process.env.IMAGE_SIGNING_SECRET || (
@@ -140,6 +141,13 @@ export const config = Object.freeze({
   tmdbMatchRetryMs: integer('TMDB_MATCH_RETRY_MS', 6 * 60 * 60 * 1000, 60 * 1000),
   // Primary-country slugs left unmatched on purpose (cast names do not transliterate).
   tmdbMatchSkipCountries: csv('TMDB_MATCH_SKIP_COUNTRIES', 'trung-quoc,hong-kong,nhat-ban,han-quoc,thai-lan'),
+  // AI candidate ranking for TMDB matching. Own keys/models on purpose: never falls back to GEMINI_API_KEYS.
+  tmdbMatchAiEnabled: boolean('TMDB_MATCH_AI_ENABLED', false),
+  tmdbMatchGeminiApiKeys: parseApiKeys(process.env.TMDB_MATCH_GEMINI_API_KEYS),
+  tmdbMatchGeminiModels: String(process.env.TMDB_MATCH_GEMINI_MODELS || DEFAULT_TMDB_MATCH_GEMINI_MODELS).trim(),
+  tmdbMatchGeminiBatch: integer('TMDB_MATCH_GEMINI_BATCH', 10, 1),
+  tmdbMatchGeminiTimeoutMs: integer('TMDB_MATCH_GEMINI_TIMEOUT_MS', 30000, 1000),
+  tmdbMatchGeminiCooldownMs: integer('TMDB_MATCH_GEMINI_COOLDOWN_MS', 6 * 60 * 60 * 1000, 1000),
 
   // MDBList supplies both Rotten Tomatoes critic and audience percentages shown
   // on cards. Gated by the key list being non-empty, like TMDB above.

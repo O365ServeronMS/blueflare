@@ -7,6 +7,7 @@ import {
 } from './cache.js';
 import { config } from './config.js';
 import { mapLimit } from './concurrency.js';
+import { syncTmdbReviews } from './tmdbReviewsSync.js';
 import { closeDatabase, migrate } from './db.js';
 import { revalidateFrontend } from './frontendRevalidation.js';
 import { normalizeKkphim, normalizeNguonc } from './normalize.js';
@@ -81,6 +82,7 @@ import {
   searchTmdbImagesByTitle
 } from './tmdb.js';
 import { buildHome, buildList } from './viewmodels.js';
+import { reviewsInvalidationKeys } from './reviewOrder.js';
 import { runWorkerLoop } from './workerLoop.js';
 
 const providers = [new NguoncProvider(), new KkphimProvider()];
@@ -805,6 +807,12 @@ async function syncCycle() {
     });
   }
   if (!stopping) {
+    ratingChangedSlugs.push(...await syncTmdbReviews().catch((error) => {
+      console.warn('[worker] tmdb reviews pass failed', error.message);
+      return [];
+    }));
+  }
+  if (!stopping) {
     ratingChangedSlugs.push(...await refreshTmdbMatches().catch((error) => {
       console.warn('[worker] tmdb match pass failed', error.message);
       return [];
@@ -847,6 +855,9 @@ async function invalidateForSlugs(changedSlugs) {
   }
   for (const movieSlug of changedSlugs) keys.push('movie:' + movieSlug);
   for (const movieSlug of changedSlugs) keys.push('recommendations:' + movieSlug);
+  // Drop the review pages clients actually request (limit 5 from the UI, 10 as the API default);
+  // deeper pages simply expire on their 60s TTL.
+  for (const movieSlug of changedSlugs) keys.push(...reviewsInvalidationKeys(movieSlug));
   for (const movie of changedMovies) {
     for (const field of [movie.genres, movie.countries]) {
       for (const item of Array.isArray(field) ? field : []) {

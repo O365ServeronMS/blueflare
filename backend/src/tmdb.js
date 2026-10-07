@@ -355,3 +355,27 @@ export function parseTmdbCredits(body, options = {}) {
 
   return { cast, directors };
 }
+
+const REVIEW_PAGES = 2;
+
+/**
+ * Raw review results for one TMDB identity, at most two pages (40 reviews).
+ * Reviews are mostly English, so the language filter defaults to en-US rather
+ * than the vi-VN catalog default. A 404 propagates with `error.status === 404`.
+ */
+export async function fetchTmdbReviews(identity, options = {}) {
+  const tmdbId = validMovieId(identity?.tmdbId);
+  const mediaType = validMediaType(identity?.mediaType);
+  if (!tmdbId || !mediaType) throw new Error('TMDB identity is incomplete');
+  const pages = Math.max(1, Math.floor(options.pages ?? REVIEW_PAGES));
+  const results = [];
+  for (let page = 1; page <= pages; page += 1) {
+    const body = await fetchTmdb(
+      '/' + mediaType + '/' + tmdbId + '/reviews?page=' + page,
+      { language: 'en-US', ...options }
+    );
+    results.push(...(Array.isArray(body?.results) ? body.results : []));
+    if (!(Number(body?.total_pages) > page)) break;
+  }
+  return results;
+}

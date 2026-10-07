@@ -80,6 +80,24 @@ export const config = Object.freeze({
   tmdbCreditsRefreshMs: integer('TMDB_CREDITS_REFRESH_MS', 90 * 24 * 60 * 60 * 1000, 60 * 60 * 1000),
   tmdbCreditsRetryMs: integer('TMDB_CREDITS_RETRY_MS', 6 * 60 * 60 * 1000, 60 * 1000),
 
+  // TMDB user reviews for the detail page, per catalog row with a verified TMDB
+  // identity. Plain text only; spoiler flag and score are computed at write time.
+  tmdbReviewsEnabled: boolean('TMDB_REVIEWS_ENABLED', true),
+  tmdbReviewsLimit: integer('TMDB_REVIEWS_LIMIT', 200, 1),
+  tmdbReviewsConcurrency: integer('TMDB_REVIEWS_CONCURRENCY', 3, 1),
+  tmdbReviewsRefreshMs: integer('TMDB_REVIEWS_REFRESH_MS', 7 * 24 * 60 * 60 * 1000, 60 * 60 * 1000),
+  tmdbReviewsRetryMs: integer('TMDB_REVIEWS_RETRY_MS', 6 * 60 * 60 * 1000, 60 * 1000),
+  tmdbReviewsMaxPerMovie: integer('TMDB_REVIEWS_MAX_PER_MOVIE', 40, 1),
+  // Score 0-100 = rating*10 (neutral 50 when unrated), length and recency parts.
+  reviewScore: Object.freeze({
+    ratingWeight: 0.6,
+    lengthWeight: 0.25,
+    recencyWeight: 0.15,
+    lengthCap: 1500,
+    monthlyDecay: 0.95,
+    neutralRating: 50
+  }),
+
   // Cast-verified TMDB identity for rows the provider gave no tmdb_id. Stored in
   // tmdb_match_*, never in tmdb_id. Off by default: it costs ~7 TMDB calls per row.
   // NguonC-only rows folded into the KKPhim row of the same work: off | dry-run | apply.

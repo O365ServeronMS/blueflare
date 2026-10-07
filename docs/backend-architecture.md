@@ -37,6 +37,7 @@ provides normal DNS/proxy/CDN caching only; there is no frontend Worker.
   revalidation route invalidates only affected tags.
 - Search is request-specific and is not put in the public render cache.
 - `GET /api/cards?slugs=` is cached 60s in Valkey, keyed only by the sorted slug list.
+- `GET /api/movies/:slug/reviews` is cached 60s in Valkey, keyed `reviews:<slug>:<page>:<limit>` only.
 
 ## Accounts
 
@@ -86,6 +87,26 @@ either way.
   person row.
 - Cache key is scoped to `slug:role:page` only — never `returnTo`, cookies, or
   user agent — consistent with every other cached route.
+
+## API contract: reviews
+
+`GET /api/movie/:slug` gains `movie.reviews` (the first 5 reviews) and
+`movie.reviewCount` (total stored). Both are empty/0 when the title has no
+TMDB reviews.
+
+`GET /api/movies/:slug/reviews` — one page of TMDB user reviews.
+- Query params: `page` (1-based, default 1), `limit` (default 10, max 20).
+- Response (no `status`/`data` envelope): `{ reviews: [...], reviewCount, page,
+  limit, totalPages }`; each review is `{ id, author, rating (0-10 or null),
+  content (plain text), createdAt, url (themoviedb.org or null), hasSpoiler }`.
+- 404 `{ error: 'Movie not found' }` for an unknown slug.
+- Order: `hasSpoiler` first, then score band, then a shuffle stable per slug and
+  UTC day, so all pages of one run agree. Computed per request from stored rows;
+  TMDB is never called here.
+- Cache key is `reviews:<slug>:<page>:<limit>` only, TTL 60s; never `returnTo`,
+  cookies or user agent. The worker drops pages 1-4 for limits 5 and 10 when a
+  title's reviews change.
+- Content is plain text; clients must render it as text, not HTML.
 
 ## Deployment boundary
 

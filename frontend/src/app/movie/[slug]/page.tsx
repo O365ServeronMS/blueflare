@@ -8,6 +8,7 @@ import { ExpandableSynopsis } from "@/components/ExpandableSynopsis";
 import { MovieActions } from "@/components/LocalMovieActions";
 import { MoviePlayer } from "@/components/MoviePlayer";
 import { LastWatchedBadge } from "@/components/LastWatchedBadge";
+import { ReviewsSection } from "@/components/ReviewsSection";
 import { RecommendationRail } from "@/components/RecommendationRail";
 import { getMovieServer } from "@/lib/catalog-server";
 import { episodeWatchKey, findEpisodeByWatchKey, resolveServerIndex } from "@/lib/episodes";
@@ -154,6 +155,7 @@ export default async function MoviePage({ params, searchParams }: { params: Para
           </section>
         ) : null}
         <CastStrip cast={movie.people?.cast || []} directors={movie.people?.directors || []} returnTo={returnTo} navSource={navSource} />
+        <ReviewsSection slug={movie.slug} reviews={movie.reviews || []} reviewCount={movie.reviewCount || 0} />
       </div>
 
       <Suspense fallback={null}>

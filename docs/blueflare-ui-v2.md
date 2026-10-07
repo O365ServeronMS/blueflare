@@ -62,6 +62,8 @@ The fixed navigation begins transparent and becomes near-black after scroll. The
 
 The detail route opens on a full-width backdrop that fades into black. Title, critical metadata, overview, and the Play action remain above the fold. The player expands below the hero and keeps the existing two-step no-autoplay contract. Episodes are grouped by server in compact horizontal selectors instead of a wall of bordered cards. Credits and secondary data follow as quiet editorial copy. Recommendations reuse the home rail.
 
+TMDB user reviews sit in a block below the cast (hidden when a title has none): heading with the count, a two-column grid of text cards (author initial in a circle, never an avatar image, so the two-variant image rule holds; rating, date, body clamped to 4 lines with "Đọc tiếp", "Xem trên TMDB" link) and a "Xem thêm đánh giá" button that loads 5 more at a time. Reviews flagged as spoilers sort first and carry a red "Spoiler" label; they are deliberately not blurred or collapsed (product decision).
+
 ## Search and lists
 
 Search can be opened from the global navigation and keeps the existing dedicated route. Suggestions are poster-led and keyboard accessible. Empty search states link back into discovery. Lists use a wide responsive poster grid and compact horizontal filters. Pagination retains the repository’s strict compact window.

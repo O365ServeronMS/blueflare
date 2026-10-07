@@ -19,7 +19,7 @@
   origin TTL and shared two-variant cache contract.
 - API JSON: cache according to Blueflare response headers and Valkey state; do
   not cache health or internal revalidation requests.
-- Account routes (`/api/auth/*`, `/api/me/*`) are excluded: 404 on the img host, `no-store` on the phim host. `GET /api/cards?slugs=` is public and cacheable (60s).
+- Account routes (`/api/auth/*`, `/api/me/*`) are excluded: 404 on the img host, `no-store` on the phim host. `GET /api/cards?slugs=` is public and cacheable (60s). `GET /api/movies/:slug/reviews` is public too: 200 sends `public, max-age=60, stale-while-revalidate=<stale window>, stale-if-error=<stale window>` plus `x-blueflare-cache`; an unknown slug 404s with `public, max-age=30, stale-while-revalidate=60`.
 - Search and user-local pages should remain bypass/no-store where applicable.
 
 Verify with repeated requests and inspect `CF-Cache-Status`, `Age`, and the

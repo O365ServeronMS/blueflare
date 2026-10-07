@@ -13,10 +13,23 @@ import {
   listReadyBySlugs,
   listPersonMovies,
   recommendationsForSlug,
+  reviewsForMovie,
+  findMovieIdBySlug,
   taxonomy,
   taxonomyName
 } from './repository.js';
 import { creditIdentity, normalizeCreditRole } from './people.js';
+import { orderReviews, reviewCard } from './reviewOrder.js';
+
+export const DETAIL_REVIEW_COUNT = 5;
+const REVIEWS_MAX_LIMIT = 20;
+const REVIEWS_DEFAULT_LIMIT = 10;
+
+export function reviewsLimit(value) {
+  const parsed = Math.floor(Number(value));
+  if (!Number.isFinite(parsed) || parsed < 1) return REVIEWS_DEFAULT_LIMIT;
+  return Math.min(REVIEWS_MAX_LIMIT, parsed);
+}
 
 export function card(row) {
 function seasonTitle(row) {
@@ -189,6 +202,7 @@ export async function buildMovie(slug) {
   const credits = identity
     ? await creditsForMovie(identity.mediaType, identity.tmdbId)
     : [];
+  const reviews = orderReviews(await reviewsForMovie(movie.id), movie.canonical_slug);
   return {
     status: true,
     movie: {
@@ -200,6 +214,8 @@ export async function buildMovie(slug) {
         cast: credits.filter((row) => row.role === 'cast').map(creditCard),
         directors: credits.filter((row) => row.role === 'director').map(creditCard)
       },
+      reviews: reviews.slice(0, DETAIL_REVIEW_COUNT).map(reviewCard),
+      reviewCount: reviews.length,
       episode_total: movie.episode_total,
       category: movie.genres || [],
       country: movie.countries || []
@@ -213,6 +229,26 @@ export async function buildMovie(slug) {
       availability: source.availability,
       provider_slug: source.provider_slug
     }))
+  };
+}
+
+/**
+ * One page of TMDB reviews. Null means no such movie (404). Never calls TMDB;
+ * the order depends only on the slug and the UTC day, so it is safe to cache
+ * by slug+page+limit alone.
+ */
+export async function buildReviews(slug, page, limit) {
+  const movieId = await findMovieIdBySlug(slug);
+  if (!movieId) return null;
+  const ordered = orderReviews(await reviewsForMovie(movieId), slug);
+  const totalPages = Math.max(1, Math.ceil(ordered.length / limit));
+  const start = (page - 1) * limit;
+  return {
+    reviews: ordered.slice(start, start + limit).map(reviewCard),
+    reviewCount: ordered.length,
+    page,
+    limit,
+    totalPages
   };
 }
 

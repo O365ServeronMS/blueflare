@@ -11,7 +11,7 @@
  * only by `sha256(upstreamUrl)+variant`, so phim.bluesia.net and film.bluesia.net
  * reuse the exact same `/m` and `/d` objects.
  */
-import type { EpisodeServer, HomePayload, ListPayload, MovieCard, MovieDetail } from "@/lib/types";
+import type { EpisodeServer, HomePayload, ListPayload, MovieCard, MovieDetail, Review, ReviewsPage } from "@/lib/types";
 import { normalizedEpisodeName, normalizedEpisodeSlug } from "@/lib/episodes";
 import { normalizePage } from "@/lib/navigation";
 
@@ -193,12 +193,55 @@ export async function getMovie(slug: string): Promise<MovieDetail> {
     actor: Array.isArray(movieRaw?.actor) ? movieRaw.actor.filter(Boolean) : [],
     director: Array.isArray(movieRaw?.director) ? movieRaw.director.filter(Boolean) : [],
     episodeTotal: movieRaw?.episode_total || movieRaw?.episodeTotal || undefined,
+    reviews: normalizeReviews(movieRaw?.reviews),
+    reviewCount: Math.max(0, Number(movieRaw?.reviewCount) || 0),
     categoryList: detailLabels(movieRaw?.category),
     countryList: detailLabels(movieRaw?.country),
     episodes
   };
 
   return movie;
+}
+
+export function normalizeReviews(value: unknown): Review[] {
+  if (!Array.isArray(value)) return [];
+  const out: Review[] = [];
+  for (const raw of value) {
+    const content = typeof raw?.content === "string" ? raw.content.trim() : "";
+    const id = raw?.id === null || raw?.id === undefined ? "" : String(raw.id);
+    if (!id || !content) continue;
+    const rating = raw.rating === null || raw.rating === undefined || raw.rating === "" ? NaN : Number(raw.rating);
+    out.push({
+      id,
+      author: String(raw.author || "").trim() || "Ẩn danh",
+      rating: Number.isFinite(rating) && rating >= 0 && rating <= 10 ? rating : null,
+      content,
+      createdAt: typeof raw.createdAt === "string" && raw.createdAt ? raw.createdAt : null,
+      // Only http(s) links are ever rendered as hrefs.
+      url: typeof raw.url === "string" && /^https?:\/\//i.test(raw.url) ? raw.url : null,
+      hasSpoiler: raw.hasSpoiler === true
+    });
+  }
+  return out;
+}
+
+export function normalizeReviewsPage(payload: any): ReviewsPage {
+  return {
+    reviews: normalizeReviews(payload?.reviews),
+    reviewCount: Math.max(0, Number(payload?.reviewCount) || 0),
+    page: Math.max(1, Number(payload?.page) || 1),
+    limit: Math.max(1, Number(payload?.limit) || 10),
+    totalPages: Math.max(0, Number(payload?.totalPages) || 0)
+  };
+}
+
+export async function getReviewsPage(slug: string, page = 1, limit = 5): Promise<ReviewsPage> {
+  const safePage = normalizePage(page);
+  const safeLimit = Math.min(20, Math.max(1, Math.trunc(limit) || 5));
+  const payload = await fetchJson<any>(
+    `${CATALOG_BASE}/api/movies/${encodeURIComponent(String(slug || "").trim())}/reviews?page=${safePage}&limit=${safeLimit}`
+  );
+  return normalizeReviewsPage(payload);
 }
 
 type Taxonomy = { name: string; slug: string };

@@ -49,10 +49,31 @@ export type PersonCredit = {
   photo?: string;
 };
 
+export type Review = {
+  id: string;
+  author: string;
+  rating: number | null;
+  /** Plain text. Always render as a text node, never as HTML. */
+  content: string;
+  createdAt: string | null;
+  url: string | null;
+  hasSpoiler: boolean;
+};
+
+export type ReviewsPage = {
+  reviews: Review[];
+  reviewCount: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+};
+
 export type MovieDetail = MovieCard & {
   actor?: string[];
   director?: string[];
   people?: { cast: PersonCredit[]; directors: PersonCredit[] };
+  reviews?: Review[];
+  reviewCount?: number;
   episodeTotal?: string;
   categoryList?: { id?: string; name: string; slug: string }[];
   countryList?: { id?: string; name: string; slug: string }[];

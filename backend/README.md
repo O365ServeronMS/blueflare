@@ -136,6 +136,36 @@ one is added, keep its object keys aligned with the local cache identity,
 `images/v2/{variant}/{hash-prefix}/{sha256}.webp`, and do not change the public
 `img.bluesia.net/i/{m|d}/…` URL contract.
 
+## TMDB reviews
+
+Worker-only pass (`tmdbReviewsSync.js`, after the credits pass in each sync
+cycle); no request path ever calls TMDB. Reviews are re-fetchable, so they are
+not irreplaceable state.
+
+- Candidates: ready rows with a verified TMDB identity (`tmdb_id` + media type,
+  or a `verified` cast match), oldest `reviews_checked_at` first, at most
+  `TMDB_REVIEWS_LIMIT` per cycle.
+- Fetch: up to 2 TMDB pages (`en-US`) per title. Reviews whose plain text is
+  under 40 characters are dropped; bodies are converted from markdown/HTML to
+  plain text, truncated to 4000 characters, and at most
+  `TMDB_REVIEWS_MAX_PER_MOVIE` are kept. No avatars are stored.
+- Refresh: a successful check (including an empty list or a TMDB 404) is
+  repeated after 7 days (`TMDB_REVIEWS_REFRESH_MS`). Any other failure retries
+  after 6 hours (`TMDB_REVIEWS_RETRY_MS`) and keeps the stored reviews.
+- Storage: `movie_reviews` (migration `025_tmdb_reviews.sql`), plus
+  `movies.reviews_checked_at` / `reviews_next_retry_at`. `score` (0-100, from
+  rating, length and recency decay) and `has_spoiler` (English heuristic) are
+  computed at write time.
+- Order on the API: `has_spoiler` first, then 10-wide score bands, then a
+  shuffle stable per slug and UTC day (`reviewOrder.js`). Spoiler reviews are
+  not hidden, only flagged.
+- Env (defaults): `TMDB_REVIEWS_ENABLED=true`, `TMDB_REVIEWS_LIMIT=200`,
+  `TMDB_REVIEWS_CONCURRENCY=3`, `TMDB_REVIEWS_REFRESH_MS=604800000`,
+  `TMDB_REVIEWS_RETRY_MS=21600000`, `TMDB_REVIEWS_MAX_PER_MOVIE=40`. Also
+  requires `TMDB_API_KEY`.
+- Invalidation: changed titles drop `movie:<slug>` and
+  `reviews:<slug>:{1..4}:{5,10}`; deeper pages expire on the 60s TTL.
+
 ## Duplicate merge (NguonC + KKPhim)
 
 `MERGE_DUPLICATES_MODE=dry-run` logs `pairs=`/`ambiguous=` each sync cycle; `apply` merges up to
@@ -309,6 +339,7 @@ means the Cache Rule is not active or the token used to create it lacks
 - GET /api/search?keyword=ren%20yu&page=1
 - GET /api/movie/:canonicalSlug
 - GET /api/recommendations/:canonicalSlug
+- GET /api/movies/:canonicalSlug/reviews?page=1&limit=10 (public, cached 60s, key = `reviews:<slug>:<page>:<limit>`; limit default 10, max 20; 404 for unknown slug)
 - GET /api/categories
 - GET /api/countries
 - GET /api/cards?slugs=a,b (public, cached 60s, key = sorted slug list)

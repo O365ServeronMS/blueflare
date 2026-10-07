@@ -797,6 +797,115 @@ export async function recordTmdbCreditsFailure(mediaType, tmdbId, status, messag
 }
 
 /**
+ * Ready catalog rows with a verified TMDB identity whose reviews are missing or
+ * due. Same identity rule as `creditIdentity`: provider tmdb_id, else a
+ * cast-verified match, never a guessed lookup id. Never-fetched rows first,
+ * then oldest check. `reviews_next_retry_at` is the only gate, so a failed
+ * fetch waits out the retry window without losing its place in the queue.
+ */
+export async function listTmdbReviewCandidates(limit = config.tmdbReviewsLimit) {
+  const result = await pool.query(
+    'SELECT id, canonical_slug, media_type, tmdb_id FROM (' +
+    '  SELECT m.id, m.canonical_slug, m.tmdb_media_type AS media_type, m.tmdb_id, ' +
+    '         m.reviews_checked_at, m.reviews_next_retry_at, m.catalog_sort_at FROM movies m ' +
+    "  WHERE m.catalog_state='ready' AND m.tmdb_id IS NOT NULL AND m.tmdb_media_type IN ('movie','tv') " +
+    '  UNION ALL ' +
+    '  SELECT m.id, m.canonical_slug, m.tmdb_match_media_type, m.tmdb_match_id, ' +
+    '         m.reviews_checked_at, m.reviews_next_retry_at, m.catalog_sort_at FROM movies m ' +
+    "  WHERE m.catalog_state='ready' AND m.tmdb_id IS NULL AND m.tmdb_match_status='verified' " +
+    "    AND m.tmdb_match_media_type IN ('movie','tv') AND m.tmdb_match_id > 0" +
+    ') c ' +
+    'WHERE c.reviews_next_retry_at IS NULL OR c.reviews_next_retry_at <= now() ' +
+    'ORDER BY c.reviews_checked_at ASC NULLS FIRST, c.catalog_sort_at DESC NULLS LAST LIMIT $1',
+    [Math.max(1, Math.floor(limit))]
+  );
+  return result.rows;
+}
+
+/**
+ * Replace one catalog row's reviews with a fresh fetch, in one transaction:
+ * upsert by tmdb_review_id, delete what TMDB no longer lists, then stamp the
+ * checked/next-retry marks. An empty list still stamps them. Returns whether
+ * the visible set changed, so the worker only invalidates real changes (the
+ * time-decayed score alone does not count).
+ */
+export async function recordTmdbReviews(movieId, reviews, options = {}) {
+  const refreshMs = options.refreshMs ?? config.tmdbReviewsRefreshMs;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const existing = await client.query(
+      'SELECT tmdb_review_id, content_hash FROM movie_reviews WHERE movie_id=$1 FOR UPDATE',
+      [movieId]
+    );
+    const before = new Map(existing.rows.map((row) => [row.tmdb_review_id, row.content_hash]));
+    let changed = false;
+    for (const review of reviews) {
+      if (before.get(review.tmdbReviewId) !== review.contentHash) changed = true;
+      await client.query(
+        'INSERT INTO movie_reviews (movie_id, tmdb_review_id, author, author_username, rating, content, ' +
+        'tmdb_created_at, tmdb_url, has_spoiler, score, content_hash, updated_at) ' +
+        'VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now()) ' +
+        'ON CONFLICT (movie_id, tmdb_review_id) DO UPDATE SET ' +
+        'author=EXCLUDED.author, author_username=EXCLUDED.author_username, rating=EXCLUDED.rating, ' +
+        'content=EXCLUDED.content, tmdb_created_at=EXCLUDED.tmdb_created_at, tmdb_url=EXCLUDED.tmdb_url, ' +
+        'has_spoiler=EXCLUDED.has_spoiler, score=EXCLUDED.score, content_hash=EXCLUDED.content_hash, updated_at=now()',
+        [
+          movieId, review.tmdbReviewId, review.author, review.authorUsername, review.rating,
+          review.content, review.createdAt, review.url, review.hasSpoiler, review.score, review.contentHash
+        ]
+      );
+    }
+    const keep = reviews.map((review) => review.tmdbReviewId);
+    const removed = await client.query(
+      'DELETE FROM movie_reviews WHERE movie_id=$1 AND NOT (tmdb_review_id = ANY($2::text[]))',
+      [movieId, keep]
+    );
+    if (removed.rowCount) changed = true;
+    await client.query(
+      'UPDATE movies SET reviews_checked_at=now(), ' +
+      "reviews_next_retry_at=now() + ($2::bigint * interval '1 millisecond') WHERE id=$1",
+      [movieId, refreshMs]
+    );
+    await client.query('COMMIT');
+    return { changed, count: reviews.length };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * A failed fetch: keep the stored reviews (stale beats empty) and only push
+ * the next attempt out by the retry window. reviews_checked_at is untouched.
+ */
+export async function recordTmdbReviewsFailure(movieId, options = {}) {
+  const retryMs = options.retryMs ?? config.tmdbReviewsRetryMs;
+  await pool.query(
+    "UPDATE movies SET reviews_next_retry_at=now() + ($2::bigint * interval '1 millisecond') WHERE id=$1",
+    [movieId, retryMs]
+  );
+}
+
+/** Every stored review of one catalog row; ordering is the caller's job. */
+export async function reviewsForMovie(movieId) {
+  const result = await pool.query(
+    'SELECT id, author, rating, content, tmdb_created_at AS "createdAt", tmdb_url AS url, ' +
+    'has_spoiler AS "hasSpoiler", score FROM movie_reviews WHERE movie_id=$1',
+    [movieId]
+  );
+  return result.rows;
+}
+
+/** Canonical slug, provider slug or merge alias to the catalog row id. */
+export async function findMovieIdBySlug(slug) {
+  const found = await findMovie(slug);
+  return found ? found.movie.id : null;
+}
+
+/**
  * Rows with no provider tmdb_id whose cast could corroborate a TMDB title.
  * Never-checked rows first, newest first. 'verified' is final; 'none' and
  * 'unverifiable' come back after the refresh window, 'error' after the retry one.

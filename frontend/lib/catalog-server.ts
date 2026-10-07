@@ -1,6 +1,6 @@
 import { cacheLife, cacheTag } from "next/cache";
 import { normalizedEpisodeName, normalizedEpisodeSlug } from "@/lib/episodes";
-import { normalizeCard } from "@/lib/catalog";
+import { normalizeCard, normalizeReviews } from "@/lib/catalog";
 import { normalizePage } from "@/lib/navigation";
 import type { EpisodeServer, HomePayload, ListPayload, MovieCard, MovieDetail, PersonCredit, PersonPayload } from "@/lib/types";
 
@@ -140,6 +140,8 @@ export async function getMovieServer(slug: string): Promise<MovieDetail> {
       cast: creditList(movieRaw?.people?.cast),
       directors: creditList(movieRaw?.people?.directors)
     },
+    reviews: normalizeReviews(movieRaw?.reviews),
+    reviewCount: Math.max(0, Number(movieRaw?.reviewCount) || 0),
     episodeTotal: movieRaw?.episode_total || movieRaw?.episodeTotal || undefined,
     categoryList: detailLabels(movieRaw?.category),
     countryList: detailLabels(movieRaw?.country),

@@ -27,8 +27,11 @@ import {
   buildSearch,
   buildTaxonomy,
   cardsCacheKey,
-  parseCardSlugs
+  parseCardSlugs,
+  buildReviews,
+  reviewsLimit
 } from './viewmodels.js';
+import { reviewsCacheKey } from './reviewOrder.js';
 import { normalizeCreditRole } from './people.js';
 import { createAccountHandler, isAccountPath } from './meApi.js';
 
@@ -294,6 +297,31 @@ async function route(request, response) {
       'movie:' + slug,
       () => buildMovie(slug),
       { ttl: 300 }
+    );
+    observeCache(result.cacheStatus);
+    if (!result.data) {
+      json(response, request, 404, { error: 'Movie not found' }, {
+        'cache-control': 'public, max-age=30, stale-while-revalidate=60'
+      });
+      return;
+    }
+    json(response, request, 200, result.data, {
+      'cache-control': 'public, max-age=60, stale-while-revalidate=' + config.responseCacheStaleSeconds + ', stale-if-error=' + config.responseCacheStaleSeconds,
+      'x-blueflare-cache': result.cacheStatus
+    });
+    return;
+  }
+
+  const reviewsMatch = url.pathname.match(/^\/api\/movies\/([^/]+)\/reviews$/);
+  if (reviewsMatch) {
+    // Public and identical for everyone: the key is slug + page + limit only.
+    const slug = normalizeKeyPart(decodeURIComponent(reviewsMatch[1]), 160);
+    const currentPage = page(url.searchParams.get('page'));
+    const limit = reviewsLimit(url.searchParams.get('limit'));
+    const result = await getOrBuild(
+      reviewsCacheKey(slug, currentPage, limit),
+      () => buildReviews(slug, currentPage, limit),
+      { ttl: 60 }
     );
     observeCache(result.cacheStatus);
     if (!result.data) {

@@ -74,6 +74,7 @@ import { probeUrl } from './imageHostHealth.js';
 import { runImageHostCheck } from './imageHostCheck.js';
 import { findCastVerifiedMatch } from './tmdbMatch.js';
 import { refreshTmdbAiMatches } from './tmdbMatchAiSync.js';
+import { aiLoopEnabled, runTmdbMatchAiLoop } from './tmdbMatchAiLoop.js';
 import { promoteVerifiedMatches } from './tmdbIdentity.js';
 import { backfillMdblistRatings, formatMdblistStats, syncMdblistRatings } from './mdblistRatingsSync.js';
 import {
@@ -827,7 +828,8 @@ async function syncCycle() {
       return [];
     }));
   }
-  if (!stopping) {
+  // With the loop on, its own wake-ups spend the Gemini quota; the two never run the same pass.
+  if (!stopping && !aiLoopEnabled(config)) {
     ratingChangedSlugs.push(...await refreshTmdbAiMatches().catch((error) => {
       console.warn('[worker] tmdb ai match pass failed', error.message);
       return [];
@@ -1015,9 +1017,19 @@ function stop(signal) {
 process.on('SIGTERM', () => stop('SIGTERM'));
 process.on('SIGINT', () => stop('SIGINT'));
 
+let aiLoop = null;
+function startTmdbMatchAiLoop() {
+  if (aiLoop || !aiLoopEnabled(config)) return;
+  aiLoop = runTmdbMatchAiLoop({
+    signal: stopController.signal,
+    onChanged: (slugs) => invalidateForSlugs(slugs)
+  }).catch((error) => console.error('[worker] tmdb ai match loop stopped unexpectedly', error));
+}
+
 try {
   await runWorkerLoop({
-    initialize: migrate,
+    // The loop needs the migrated schema (gemini_quota_ledger); it is started once, after the first successful migrate.
+    initialize: async () => { await migrate(); startTmdbMatchAiLoop(); },
     runCycle: async () => {
       await refreshHeroTrendingIfDue();
       if (!stopping) await syncCycle();
@@ -1035,6 +1047,8 @@ try {
 } finally {
   // A timed-out cycle can still hold a pooled client or a wedged Valkey socket,
   // which would stall a graceful close forever. Bound it, then exit.
+  // The loop stops after its current request (the signal aborts an in-flight Gemini call); bound the wait.
+  if (aiLoop) await Promise.race([aiLoop, new Promise((resolve) => setTimeout(resolve, 5000).unref())]);
   await Promise.race([
     Promise.allSettled([closeCache(), closeDatabase()]),
     new Promise((resolve) => setTimeout(resolve, 5000).unref())

@@ -151,8 +151,16 @@ export const config = Object.freeze({
   tmdbMatchAiEnabled: boolean('TMDB_MATCH_AI_ENABLED', false),
   tmdbMatchGeminiApiKeys: parseApiKeys(process.env.TMDB_MATCH_GEMINI_API_KEYS),
   tmdbMatchGeminiModels: String(process.env.TMDB_MATCH_GEMINI_MODELS || DEFAULT_TMDB_MATCH_GEMINI_MODELS).trim(),
-  tmdbMatchGeminiBatch: integer('TMDB_MATCH_GEMINI_BATCH', 10, 1),
-  tmdbMatchGeminiTimeoutMs: integer('TMDB_MATCH_GEMINI_TIMEOUT_MS', 30000, 1000),
+  // Films are packed into one request until either limit. TMDB_MATCH_GEMINI_BATCH is the deprecated name of BATCH_MAX.
+  tmdbMatchGeminiBatchTokens: integer('TMDB_MATCH_GEMINI_BATCH_TOKENS', 40000, 1000),
+  tmdbMatchGeminiBatchMax: integer('TMDB_MATCH_GEMINI_BATCH_MAX', integer('TMDB_MATCH_GEMINI_BATCH', 40, 1), 1),
+  tmdbMatchGeminiTimeoutMs: integer('TMDB_MATCH_GEMINI_TIMEOUT_MS', 180000, 1000),
+  // Free-tier limits per key+model. RPD is the binding one; a model entry may override it as id:rpm:rpd.
+  tmdbMatchGeminiRpd: integer('TMDB_MATCH_GEMINI_RPD', 20, 1),
+  tmdbMatchGeminiTpm: integer('TMDB_MATCH_GEMINI_TPM', 250000, 1000),
+  // Thinking tokens per request: batches of rows with a cast (tier 1) and without (tier 2, name+year only). 0 = not sent.
+  tmdbMatchGeminiThinkT1: integer('TMDB_MATCH_GEMINI_THINK_T1', 0, 0),
+  tmdbMatchGeminiThinkT2: integer('TMDB_MATCH_GEMINI_THINK_T2', 4096, 0),
   tmdbMatchGeminiCooldownMs: integer('TMDB_MATCH_GEMINI_COOLDOWN_MS', 6 * 60 * 60 * 1000, 1000),
   tmdbMatchGeminiTransientParkMs: integer('TMDB_MATCH_GEMINI_TRANSIENT_PARK_MS', 45000, 1000),
   tmdbMatchGeminiTransientParkMaxMs: integer('TMDB_MATCH_GEMINI_TRANSIENT_PARK_MAX_MS', 5 * 60 * 1000, 1000),
@@ -161,6 +169,13 @@ export const config = Object.freeze({
   tmdbMatchAiLimit: integer('TMDB_MATCH_AI_LIMIT', 100, 1),
   tmdbMatchAiRetryMs: integer('TMDB_MATCH_AI_RETRY_MS', 14 * 24 * 60 * 60 * 1000, 60 * 1000),
   tmdbMatchAiErrorRetryMs: integer('TMDB_MATCH_AI_ERROR_RETRY_MS', 6 * 60 * 60 * 1000, 60 * 1000),
+  // Own background loop (tmdbMatchAiLoop.js) spends the daily quota; false puts the pass back into the sync cycle.
+  tmdbMatchAiLoop: boolean('TMDB_MATCH_AI_LOOP', true),
+  tmdbMatchAiLoopMs: integer('TMDB_MATCH_AI_LOOP_MS', 60 * 1000, 5000),
+  // Share of the daily requests kept for new films and retries; the old backlog may not touch it.
+  tmdbMatchAiReservePct: Math.min(90, integer('TMDB_MATCH_AI_RESERVE_PCT', 10, 0)),
+  // A film is "new" for the reserve this long after it was first seen.
+  tmdbMatchAiFreshMs: integer('TMDB_MATCH_AI_FRESH_MS', 3 * 24 * 60 * 60 * 1000, 60 * 1000),
 
   // MDBList supplies both Rotten Tomatoes critic and audience percentages shown
   // on cards. Gated by the key list being non-empty, like TMDB above.

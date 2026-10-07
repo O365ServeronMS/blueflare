@@ -3,7 +3,7 @@ import test from 'node:test';
 import {
   catalogFacts, catalogNames, collectAiCandidates, compactCandidate, createTmdbClient, decideAiMatch,
   matchInput, nameKey, parseRankResponse, promptEntry, buildRankPrompt, rankRequestBody, searchQueries, yearOk, sizeOk,
-  DEFAULT_AI_POLICY
+  DEFAULT_AI_POLICY, calibrateTokens, createTokenCalibration, estimateTokens
 } from '../src/tmdbMatchAi.js';
 
 const cand = (over = {}) => ({
@@ -195,4 +195,41 @@ test('T1 refuses a size-incompatible sibling and a cross-family pick without an 
   const special = cand({ type: 'movie', key: 'movie:9', seasons: null, episodes: null, runtime: 90, year: 2016 });
   assert.equal(decideAiMatch({ input: { ...r, episode_total: '1', duration: '90 phút' }, candidates: [special], choice: ai('movie:9') }).reason, 'cross-type-no-name');
   assert.equal(decideAiMatch({ input: { ...r, episode_total: '1', duration: '90 phút' }, candidates: [special], choice: ai('movie:9'), policy: { ...DEFAULT_AI_POLICY, crossTypeNeedsName: false } }).tier, 'T1');
+});
+
+test('prompt levels: rich carries more alt names and overview than standard, compact less; standard is unchanged', () => {
+  const long = 'x'.repeat(500);
+  const c = cand({ overview: long, names: Array.from({ length: 20 }, (_, i) => 'Alt ' + i) });
+  const at = (level) => promptEntry('m1', { ...matchInput(row()), overview: long }, [c], level);
+  const size = (level) => JSON.stringify(at(level)).length;
+  assert.ok(size('compact') < size('standard') && size('standard') < size('rich'));
+  assert.equal(at('standard').candidates[0].overview.length, 200);
+  assert.equal(at('rich').candidates[0].overview.length, 320);
+  assert.equal(at('standard').candidates[0].otherNames.length, 8);
+  assert.equal(at('rich').candidates[0].otherNames.length, 12);
+  assert.equal(at('compact').candidates[0].overview, null);
+  assert.deepEqual(promptEntry('m1', { ...matchInput(row()), overview: long }, [c]), at('standard'), 'default level');
+});
+
+test('rankRequestBody: thinking budget only when asked, output ceiling grows with it and with the entries', () => {
+  assert.equal(rankRequestBody([]).generationConfig.thinkingConfig, undefined);
+  assert.equal(rankRequestBody([], { thinkingBudget: 0 }).generationConfig.thinkingConfig, undefined);
+  const body = rankRequestBody(Array.from({ length: 40 }, (_, i) => ({ movieKey: 'm' + i })), { thinkingBudget: 4096 });
+  assert.deepEqual(body.generationConfig.thinkingConfig, { thinkingBudget: 4096 });
+  assert.equal(body.generationConfig.maxOutputTokens, 1500 + 150 * 40 + 4096);
+  assert.equal(rankRequestBody([]).generationConfig.maxOutputTokens, 8192);
+});
+
+test('token calibration follows the reported prompt tokens and ignores nonsense', () => {
+  const cal = createTokenCalibration();
+  assert.equal(estimateTokens(cal, 3000), 1000);
+  calibrateTokens(cal, 6000, 1000);
+  assert.equal(cal.charsPerToken, 6);
+  calibrateTokens(cal, 4000, 1000);
+  assert.ok(cal.charsPerToken > 4 && cal.charsPerToken < 6);
+  const before = cal.charsPerToken;
+  calibrateTokens(cal, 0, 10); calibrateTokens(cal, 10, 0); calibrateTokens(cal, 10, null);
+  assert.equal(cal.charsPerToken, before);
+  calibrateTokens(cal, 1e9, 1);
+  assert.ok(cal.charsPerToken <= 8, 'clamped');
 });

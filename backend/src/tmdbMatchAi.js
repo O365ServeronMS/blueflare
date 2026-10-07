@@ -17,8 +17,12 @@ import { MatchContentError } from './tmdbMatchGemini.js';
 export const MAX_AI_CANDIDATES = 8;
 const SECONDARY_TYPE_SLOTS = 2;
 const CAST_TOP = 30;
-const PROMPT_CAST = 8;
-const PROMPT_ALT_NAMES = 8;
+const PROMPT_LEVELS = Object.freeze({
+  // 'standard' is what the first backtests were run with.
+  compact: { cast: 5, altNames: 4, candidateOverview: 0, catalogOverview: 160 },
+  standard: { cast: 8, altNames: 8, candidateOverview: 200, catalogOverview: 240 },
+  rich: { cast: 10, altNames: 12, candidateOverview: 320, catalogOverview: 320 }
+});
 
 /** Row fields the matcher may see. Everything else (ids, match columns) is dropped on purpose. */
 export const MATCH_INPUT_FIELDS = Object.freeze([
@@ -331,8 +335,9 @@ export const RANK_RESPONSE_SCHEMA = {
 const clip = (text, n) => String(text || '').replace(/\s+/g, ' ').trim().slice(0, n);
 
 /** One prompt entry. Built from a sanitised row + compact candidates; carries no ids of the row itself. */
-export function promptEntry(movieKey, inputRow, candidates) {
+export function promptEntry(movieKey, inputRow, candidates, level = 'standard') {
   const facts = catalogFacts(inputRow);
+  const size = PROMPT_LEVELS[level] ?? PROMPT_LEVELS.standard;
   return {
     movieKey,
     catalog: {
@@ -344,8 +349,8 @@ export function promptEntry(movieKey, inputRow, candidates) {
       episodes: facts.episodes,
       minutes: facts.minutes,
       countries: (Array.isArray(inputRow.countries) ? inputRow.countries : []).map((c) => c?.name).filter(Boolean),
-      actors: (Array.isArray(inputRow.actors) ? inputRow.actors : []).slice(0, PROMPT_CAST),
-      overview: clip(inputRow.overview, 240) || null
+      actors: (Array.isArray(inputRow.actors) ? inputRow.actors : []).slice(0, size.cast),
+      overview: clip(inputRow.overview, size.catalogOverview) || null
     },
     candidates: candidates.map((c) => ({
       id: c.key,
@@ -358,9 +363,9 @@ export function promptEntry(movieKey, inputRow, candidates) {
       episodes: c.episodes,
       runtime: c.runtime,
       origin: c.originCountry,
-      otherNames: c.names.filter((n) => n !== c.title && n !== c.originalTitle).slice(0, PROMPT_ALT_NAMES),
-      cast: c.credits.cast.slice(0, PROMPT_CAST).map((p) => p.name),
-      overview: clip(c.overview, 200) || null
+      otherNames: c.names.filter((n) => n !== c.title && n !== c.originalTitle).slice(0, size.altNames),
+      cast: c.credits.cast.slice(0, size.cast).map((p) => p.name),
+      overview: size.candidateOverview ? clip(c.overview, size.candidateOverview) || null : null
     }))
   };
 }
@@ -369,18 +374,43 @@ export function buildRankPrompt(entries) {
   return 'Catalog entries and their TMDB candidates (JSON):\n' + JSON.stringify(entries);
 }
 
-export function rankRequestBody(entries) {
-  return {
+/**
+ * `thinkingBudget` (tokens, > 0) lets the model reason before answering; those tokens count as
+ * output, so the output ceiling grows with it and with the number of entries.
+ */
+export function rankRequestBody(entries, options = {}) {
+  const thinking = Number(options.thinkingBudget) > 0 ? Math.floor(Number(options.thinkingBudget)) : 0;
+  const body = {
     systemInstruction: { parts: [{ text: RANK_SYSTEM_PROMPT }] },
     contents: [{ role: 'user', parts: [{ text: buildRankPrompt(entries) }] }],
     generationConfig: {
       temperature: 0,
-      maxOutputTokens: 8192,
+      maxOutputTokens: Math.min(65536, Math.max(8192, 1500 + 150 * entries.length + thinking)),
       responseMimeType: 'application/json',
       responseSchema: RANK_RESPONSE_SCHEMA
     }
   };
+  if (thinking) body.generationConfig.thinkingConfig = { thinkingBudget: thinking };
+  return body;
 }
+
+/** Characters of the system prompt + wrapper that every request pays for. */
+export const RANK_PROMPT_OVERHEAD_CHARS = RANK_SYSTEM_PROMPT.length + 'Catalog entries and their TMDB candidates (JSON):\n'.length + 2;
+
+/** Running chars-per-token ratio, corrected by the prompt token count every response reports. */
+export function createTokenCalibration(initial = 3) {
+  return { charsPerToken: initial, samples: 0 };
+}
+
+export function calibrateTokens(calibration, chars, promptTokens) {
+  if (!(chars > 0) || !(promptTokens > 0)) return calibration;
+  const ratio = Math.min(8, Math.max(1.2, chars / promptTokens));
+  calibration.charsPerToken = calibration.samples ? calibration.charsPerToken * 0.6 + ratio * 0.4 : ratio;
+  calibration.samples += 1;
+  return calibration;
+}
+
+export const estimateTokens = (calibration, chars) => Math.ceil(chars / (calibration?.charsPerToken || 3));
 
 /**
  * Turn a generateContent response into { movieKey -> {chosenId, confidence, reasons} }.
@@ -418,11 +448,13 @@ export function parseRankResponse(json, entries, makeError = (m) => new Error(m)
 }
 
 /** One Gemini call for a batch of prompt entries via a `createTmdbMatchRotation` function. */
-export async function rankBatch(rotation, entries, makeError = (m) => new MatchContentError(m), meta = {}) {
+export async function rankBatch(rotation, entries, makeError = (m) => new MatchContentError(m), meta = {}, options = {}) {
   const prompt = buildRankPrompt(entries);
+  meta.promptChars = prompt.length + RANK_SYSTEM_PROMPT.length;
   return rotation({
     text: prompt + RANK_SYSTEM_PROMPT,
-    buildBody: () => rankRequestBody(entries),
+    tokens: options.tokens,
+    buildBody: () => rankRequestBody(entries, options),
     parse: (json) => parseRankResponse(json, entries, makeError),
     meta
   });

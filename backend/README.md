@@ -196,7 +196,7 @@ review text is sent to a provider. A provider can start refusing us at any time
   pauses for `TRANSLATE_COOLDOWN_MS`). Cooldown state is in memory (a worker
   restart retries once). A single failing review backs off for the same period
   without blocking the rest.
-- Gemini rotation: `GEMINI_MODELS` is an ordered `id[:rpm]` list (default 3
+- Gemini rotation: `GEMINI_MODELS` is an ordered `id[:rpm]` list (default 2
   free-tier Flash-Lite models), each with its own quota. A
   request uses the first model that is not cooling down and whose spacing
   (`ceil(60s/rpm)` + 250 ms, never below `GEMINI_DELAY_MS`) has elapsed; it waits on the best model only when that takes under

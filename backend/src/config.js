@@ -25,7 +25,7 @@ function boolean(name, fallback = false) {
 // Free-tier rotation, best first. Translation uses the flash-lite family only (500 RPD per key);
 // the 20-RPD flash models are left to the TMDB match pass. Ids verified against ai.google.dev.
 const DEFAULT_GEMINI_MODELS = [
-  'gemini-3.5-flash-lite:15', 'gemini-3.1-flash-lite:15', 'gemini-2.5-flash-lite:10'
+  'gemini-3.5-flash-lite:15', 'gemini-3.1-flash-lite:15'
 ].join(',');
 const DEFAULT_TMDB_MATCH_GEMINI_MODELS = 'gemini-3.8-flash:5,gemini-3.7-flash:5,gemini-3.6-flash:5';
 const nodeEnv = process.env.NODE_ENV || 'development';

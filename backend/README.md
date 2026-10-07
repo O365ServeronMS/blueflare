@@ -166,6 +166,46 @@ not irreplaceable state.
 - Invalidation: changed titles drop `movie:<slug>` and
   `reviews:<slug>:{1..4}:{5,10}`; deeper pages expire on the 60s TTL.
 
+### Vietnamese translation of reviews
+
+Separate worker-only pass (`reviewTranslateSync.js`, right after the reviews
+pass in each sync cycle). It translates the English `content` to Vietnamese with
+the free, unofficial Google gtx endpoint (`translate.js`); no request path calls
+it. Because the endpoint is unofficial it can start refusing us at any time, so
+everything fails open: the API simply serves English.
+
+- Queue: reviews of ready rows with no fresh translation (`content_vi IS NULL`
+  or `translated_hash` differs from `content_hash`), oldest first, at most
+  `TRANSLATE_REVIEWS_PER_CYCLE` per cycle, skipping rows backing off
+  (`translate_retry_at`). Sequential, `TRANSLATE_DELAY_MS` apart. Long text is
+  split into chunks of at most 4000 chars on paragraph/sentence boundaries and
+  rejoined keeping line breaks; transient errors retry twice with backoff.
+- Backlog: after the first deploy every stored review is pending, so the
+  backlog drains over many cycles (150 per cycle by default), not at once. A
+  review whose translation equals the source is stored as `''` so it leaves the
+  queue without showing a translation.
+- Cooldown: a blocked answer (HTTP 429/403 or an HTML captcha/consent page)
+  ends the pass and pauses it for `TRANSLATE_COOLDOWN_MS`; so do
+  `TRANSLATE_MAX_CONSECUTIVE_ERRORS` failures in a row. The cooldown is in
+  memory (a worker restart retries once). A single failing review backs off for
+  the same period without blocking the rest.
+- Storage: migration `026_review_translation.sql` adds `content_vi`,
+  `translated_hash`, `translated_at`, `translate_failed_at`,
+  `translate_retry_at` to `movie_reviews`. `content` stays the English source;
+  `has_spoiler` and `score` are computed on it, not on the translation. A
+  translation is only written (and served) while `translated_hash` equals the
+  current `content_hash`, so a TMDB refresh that rewrites the text hides the old
+  translation until it is retranslated.
+- API: each review has `contentVi` (string, or `null` when there is no fresh
+  translation); see the reviews contract in `docs/backend-architecture.md`.
+  Changed titles are invalidated the same way as a reviews change.
+- Env (defaults): `TRANSLATE_ENABLED=true`, `TRANSLATE_PROVIDER=google-gtx`,
+  `TRANSLATE_REVIEWS_PER_CYCLE=150`, `TRANSLATE_DELAY_MS=1000`,
+  `TRANSLATE_MAX_CONSECUTIVE_ERRORS=5`, `TRANSLATE_COOLDOWN_MS=3600000`,
+  `TRANSLATE_TIMEOUT_MS=10000`. Another provider plugs in through
+  `TRANSLATE_PROVIDER` (see `translate.js`). Remember to add the keys to the
+  stack `.env`.
+
 ## Duplicate merge (NguonC + KKPhim)
 
 `MERGE_DUPLICATES_MODE=dry-run` logs `pairs=`/`ambiguous=` each sync cycle; `apply` merges up to
@@ -339,7 +379,7 @@ means the Cache Rule is not active or the token used to create it lacks
 - GET /api/search?keyword=ren%20yu&page=1
 - GET /api/movie/:canonicalSlug
 - GET /api/recommendations/:canonicalSlug
-- GET /api/movies/:canonicalSlug/reviews?page=1&limit=10 (public, cached 60s, key = `reviews:<slug>:<page>:<limit>`; limit default 10, max 20; 404 for unknown slug)
+- GET /api/movies/:canonicalSlug/reviews?page=1&limit=10 (each review has `contentVi`, null when untranslated; public, cached 60s, key = `reviews:<slug>:<page>:<limit>`; limit default 10, max 20; 404 for unknown slug)
 - GET /api/categories
 - GET /api/countries
 - GET /api/cards?slugs=a,b (public, cached 60s, key = sorted slug list)

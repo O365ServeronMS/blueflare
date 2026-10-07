@@ -88,6 +88,14 @@ export const config = Object.freeze({
   tmdbReviewsRefreshMs: integer('TMDB_REVIEWS_REFRESH_MS', 7 * 24 * 60 * 60 * 1000, 60 * 60 * 1000),
   tmdbReviewsRetryMs: integer('TMDB_REVIEWS_RETRY_MS', 6 * 60 * 60 * 1000, 60 * 1000),
   tmdbReviewsMaxPerMovie: integer('TMDB_REVIEWS_MAX_PER_MOVIE', 40, 1),
+  // English -> Vietnamese machine translation of stored reviews (worker only).
+  translateEnabled: boolean('TRANSLATE_ENABLED', true),
+  translateProvider: String(process.env.TRANSLATE_PROVIDER || 'google-gtx'),
+  translateReviewsPerCycle: integer('TRANSLATE_REVIEWS_PER_CYCLE', 150, 1),
+  translateDelayMs: integer('TRANSLATE_DELAY_MS', 1000, 0),
+  translateMaxConsecutiveErrors: integer('TRANSLATE_MAX_CONSECUTIVE_ERRORS', 5, 1),
+  translateCooldownMs: integer('TRANSLATE_COOLDOWN_MS', 60 * 60 * 1000, 1000),
+  translateTimeoutMs: integer('TRANSLATE_TIMEOUT_MS', 10000, 1000),
   // Score 0-100 = rating*10 (neutral 50 when unrated), length and recency parts.
   reviewScore: Object.freeze({
     ratingWeight: 0.6,

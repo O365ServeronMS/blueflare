@@ -210,12 +210,14 @@ export function normalizeReviews(value: unknown): Review[] {
     const content = typeof raw?.content === "string" ? raw.content.trim() : "";
     const id = raw?.id === null || raw?.id === undefined ? "" : String(raw.id);
     if (!id || !content) continue;
+    const contentVi = typeof raw?.contentVi === "string" ? raw.contentVi.trim() : "";
     const rating = raw.rating === null || raw.rating === undefined || raw.rating === "" ? NaN : Number(raw.rating);
     out.push({
       id,
       author: String(raw.author || "").trim() || "Ẩn danh",
       rating: Number.isFinite(rating) && rating >= 0 && rating <= 10 ? rating : null,
       content,
+      ...(contentVi ? { contentVi } : {}),
       createdAt: typeof raw.createdAt === "string" && raw.createdAt ? raw.createdAt : null,
       // Only http(s) links are ever rendered as hrefs.
       url: typeof raw.url === "string" && /^https?:\/\//i.test(raw.url) ? raw.url : null,

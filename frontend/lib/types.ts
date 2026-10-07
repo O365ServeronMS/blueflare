@@ -55,6 +55,8 @@ export type Review = {
   rating: number | null;
   /** Plain text. Always render as a text node, never as HTML. */
   content: string;
+  /** Fresh Vietnamese machine translation of `content`, when one exists. Plain text. */
+  contentVi?: string;
   createdAt: string | null;
   url: string | null;
   hasSpoiler: boolean;

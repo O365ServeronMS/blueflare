@@ -9,7 +9,10 @@ const PAGE_SIZE = 5;
 
 function ReviewCard({ review }: { review: Review }) {
   const [open, setOpen] = useState(false);
-  const long = isLongReview(review.content);
+  const [original, setOriginal] = useState(false);
+  const translated = Boolean(review.contentVi) && !original;
+  const text = translated ? (review.contentVi as string) : review.content;
+  const long = isLongReview(text);
   const date = formatReviewDate(review.createdAt);
   return (
     <li className="rounded bg-graphite p-4">
@@ -34,10 +37,23 @@ function ReviewCard({ review }: { review: Review }) {
         ) : null}
       </div>
       <p
+        lang={translated ? "vi" : "en"}
         className={`mt-3 whitespace-pre-line break-words text-body leading-6 text-silver${long && !open ? " line-clamp-4" : ""}`}
       >
-        {review.content}
+        {text}
       </p>
+      {review.contentVi ? (
+        <p className="mt-2 flex flex-wrap items-center gap-x-3 text-micro text-silver">
+          {translated ? <span>Đã dịch tự động</span> : null}
+          <button
+            type="button"
+            onClick={() => setOriginal((value) => !value)}
+            className="text-control text-silver underline-offset-2 transition hover:text-white hover:underline"
+          >
+            {translated ? "Xem bản gốc" : "Xem bản dịch"}
+          </button>
+        </p>
+      ) : null}
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
         {long ? (
           <button

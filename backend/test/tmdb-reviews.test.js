@@ -97,7 +97,7 @@ test('order: spoiler first, bands descending, deterministic per day+slug', () =>
 
 test('reviewCard: exact public fields', () => {
   assert.deepEqual(Object.keys(reviewCard({ id: 'i', author: 'a', rating: '7.5', content: 'c', createdAt: 't', url: 'u', hasSpoiler: 1, score: 9, author_username: 'x' })),
-    ['id', 'author', 'rating', 'content', 'createdAt', 'url', 'hasSpoiler']);
+    ['id', 'author', 'rating', 'content', 'createdAt', 'url', 'hasSpoiler', 'contentVi']);
   assert.equal(reviewCard({ rating: '7.5' }).rating, 7.5);
 });
 
@@ -266,7 +266,7 @@ test('buildReviews: API shape, paging, empty array, unknown movie', async () => 
   try {
     const first = await buildReviews('phim-x', 1, 5);
     assert.deepEqual(Object.keys(first), ['reviews', 'reviewCount', 'page', 'limit', 'totalPages']);
-    assert.deepEqual(Object.keys(first.reviews[0]), ['id', 'author', 'rating', 'content', 'createdAt', 'url', 'hasSpoiler']);
+    assert.deepEqual(Object.keys(first.reviews[0]), ['id', 'author', 'rating', 'content', 'createdAt', 'url', 'hasSpoiler', 'contentVi']);
     assert.equal(first.reviews.length, 5);
     assert.equal(first.reviews[0].hasSpoiler, true);
     assert.equal(first.reviews[0].rating, 8);

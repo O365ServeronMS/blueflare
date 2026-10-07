@@ -98,7 +98,12 @@ TMDB reviews.
 - Query params: `page` (1-based, default 1), `limit` (default 10, max 20).
 - Response (no `status`/`data` envelope): `{ reviews: [...], reviewCount, page,
   limit, totalPages }`; each review is `{ id, author, rating (0-10 or null),
-  content (plain text), createdAt, url (themoviedb.org or null), hasSpoiler }`.
+  content (plain text, English), contentVi (plain text Vietnamese machine
+  translation, or null when none exists for the current `content`), createdAt,
+  url (themoviedb.org or null), hasSpoiler }`. `hasSpoiler` and the ordering
+  score are computed on the English `content`. The worker fills `contentVi`
+  asynchronously (unofficial Google endpoint, can be blocked), so clients must
+  treat it as optional and fall back to `content`.
 - 404 `{ error: 'Movie not found' }` for an unknown slug.
 - Order: `hasSpoiler` first, then score band, then a shuffle stable per slug and
   UTC day, so all pages of one run agree. Computed per request from stored rows;
@@ -106,7 +111,7 @@ TMDB reviews.
 - Cache key is `reviews:<slug>:<page>:<limit>` only, TTL 60s; never `returnTo`,
   cookies or user agent. The worker drops pages 1-4 for limits 5 and 10 when a
   title's reviews change.
-- Content is plain text; clients must render it as text, not HTML.
+- Content and `contentVi` are plain text; clients must render them as text, not HTML.
 
 ## Deployment boundary
 

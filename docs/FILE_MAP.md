@@ -34,7 +34,7 @@ The Next.js app lives in `frontend/`; frontend paths below are relative to it.
 - `lib/catalog.ts`: browser-safe catalog client.
 - `lib/catalog-server.ts`: cached server API helpers and cache tags.
 - `lib/navigation.ts`: `returnTo` and category-context policy.
-- `lib/reviews.ts`: helper hiển thị review (chữ cái đầu, ngày, review dài).
+- `lib/reviews.ts`: helper hiển thị review (chữ cái đầu, ngày, review dài). `ReviewList.tsx` hiện bản dịch `contentVi` mặc định, có nút chuyển về bản gốc.
 - `lib/playback.ts`: centralized device/source priority and URL validation.
 - `lib/account-proxy.ts`: proxy to the API (`bf_session` cookie, Origin check, real client IP, hardcoded Cloudflare IP ranges).
 - `lib/movie-sync.ts`, `movie-store.ts`: favorites/history sync, including the last watched episode per movie (PLAN-007).
@@ -56,7 +56,7 @@ trong git; thư mục stack giữ bản copy, đồng bộ bằng `infra/scripts
 - `backend/src/`: provider sync, canonical merge, ViewModels, cache, image cache origin.
   Job nền: `prewarm.js` (worker làm ấm cache ảnh), `imageCacheSweep.js` (API dọn/evict cache).
   `people.js`: slug/identity thuần cho metadata cast/director lấy từ TMDB.
-  Review TMDB: `tmdbReviews.js` (chuẩn hoá về plain text, điểm, cờ spoiler), `tmdbReviewsSync.js` (pass của worker), `reviewSpoiler.js`, `reviewOrder.js` (thứ tự hiển thị + khoá cache); migration `025_tmdb_reviews.sql`.
+  Review TMDB: `tmdbReviews.js` (chuẩn hoá về plain text, điểm, cờ spoiler), `tmdbReviewsSync.js` (pass của worker), `reviewSpoiler.js`, `reviewOrder.js` (thứ tự hiển thị + khoá cache); dịch review en->vi: `translate.js` (chia đoạn + provider gtx), `reviewTranslateSync.js` (pass của worker, sau pass review); migration `025_tmdb_reviews.sql`, `026_review_translation.sql`.
   Tài khoản: `auth.js` (hash mật khẩu + session + `HashGate` giới hạn scrypt đồng thời), `authLimits.js` (bộ đếm rate limit auth: Valkey, rơi về bộ nhớ), `meApi.js` (`/api/auth/*`, `/api/me/*`, không cache), `meRepository.js`; migration `020_users_sessions.sql`, `021_history_episode.sql` (thêm cột tập vào `user_history`, bỏ `user_watch_progress`).
 - `infra/scripts/bootstrap-vps.sh`: dựng VPS trắng; hai site block Caddy (`phim` → 3100,
   `img` → 3200, kèm rule `@account` trả 404 cho `/api/auth/*` và `/api/me*`; phía `phim` có `@authdirect` trả 403 cho `/api/auth/*` nếu không đến từ dải Cloudflare) nằm inline trong script, không còn file `.caddy` riêng.

@@ -849,7 +849,9 @@ export async function recordTmdbReviews(movieId, reviews, options = {}) {
         'ON CONFLICT (movie_id, tmdb_review_id) DO UPDATE SET ' +
         'author=EXCLUDED.author, author_username=EXCLUDED.author_username, rating=EXCLUDED.rating, ' +
         'content=EXCLUDED.content, tmdb_created_at=EXCLUDED.tmdb_created_at, tmdb_url=EXCLUDED.tmdb_url, ' +
-        'has_spoiler=EXCLUDED.has_spoiler, score=EXCLUDED.score, content_hash=EXCLUDED.content_hash, updated_at=now()',
+        'has_spoiler=EXCLUDED.has_spoiler, score=EXCLUDED.score, content_hash=EXCLUDED.content_hash, updated_at=now(), ' +
+        'translate_retry_at=CASE WHEN movie_reviews.content_hash IS DISTINCT FROM EXCLUDED.content_hash ' +
+        'THEN NULL ELSE movie_reviews.translate_retry_at END',
         [
           movieId, review.tmdbReviewId, review.author, review.authorUsername, review.rating,
           review.content, review.createdAt, review.url, review.hasSpoiler, review.score, review.contentHash
@@ -893,7 +895,10 @@ export async function recordTmdbReviewsFailure(movieId, options = {}) {
 export async function reviewsForMovie(movieId) {
   const result = await pool.query(
     'SELECT id, author, rating, content, tmdb_created_at AS "createdAt", tmdb_url AS url, ' +
-    'has_spoiler AS "hasSpoiler", score FROM movie_reviews WHERE movie_id=$1',
+    'has_spoiler AS "hasSpoiler", score, ' +
+    // Only a translation of the current source text is served; '' means none worth showing.
+    "NULLIF(CASE WHEN translated_hash = content_hash THEN content_vi END, '') AS \"contentVi\" " +
+    'FROM movie_reviews WHERE movie_id=$1',
     [movieId]
   );
   return result.rows;
@@ -1899,4 +1904,40 @@ export async function purgeDeadHostImages(deadHosts, isCached, limit) {
     if (deleted.rowCount < ORPHAN_ASSET_BATCH) break;
   }
   return { slugs: [...slugs], assetsDeleted };
+}
+
+/**
+ * Reviews of ready rows with no fresh Vietnamese text (never translated, or the
+ * source changed since), oldest first, skipping those backing off after a failure.
+ */
+export async function listPendingReviewTranslations(limit) {
+  const result = await pool.query(
+    'SELECT r.id, r.content, r.content_hash AS "contentHash", m.canonical_slug AS slug ' +
+    'FROM movie_reviews r JOIN movies m ON m.id = r.movie_id ' +
+    "WHERE m.catalog_state='ready' " +
+    'AND (r.content_vi IS NULL OR r.translated_hash IS DISTINCT FROM r.content_hash) ' +
+    'AND (r.translate_retry_at IS NULL OR r.translate_retry_at <= now()) ' +
+    'ORDER BY r.created_at ASC, r.id ASC LIMIT $1',
+    [Math.max(1, Math.floor(limit))]
+  );
+  return result.rows;
+}
+
+/** Store a translation only if the source text is still the one that was translated. */
+export async function recordReviewTranslation(id, contentHash, contentVi) {
+  const result = await pool.query(
+    'UPDATE movie_reviews SET content_vi=$3, translated_hash=$2, translated_at=now(), ' +
+    'translate_failed_at=NULL, translate_retry_at=NULL WHERE id=$1 AND content_hash=$2',
+    [id, contentHash, contentVi]
+  );
+  return result.rowCount > 0;
+}
+
+export async function recordReviewTranslationFailure(id, options = {}) {
+  const retryMs = options.retryMs ?? config.translateCooldownMs;
+  await pool.query(
+    'UPDATE movie_reviews SET translate_failed_at=now(), ' +
+    "translate_retry_at=now() + ($2::bigint * interval '1 millisecond') WHERE id=$1",
+    [id, retryMs]
+  );
 }

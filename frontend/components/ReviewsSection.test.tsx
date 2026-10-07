@@ -62,3 +62,48 @@ describe("ReviewsSection", () => {
     expect(html).not.toContain("★");
   });
 });
+
+describe("review translation", () => {
+  test("contentVi is trimmed and mapped; blank or non-string is dropped", () => {
+    const out = normalizeReviews([
+      { ...base, id: "a", contentVi: "  Phim hay  " },
+      { ...base, id: "b", contentVi: "   " },
+      { ...base, id: "c", contentVi: 5 },
+      { ...base, id: "d", contentVi: null }
+    ]);
+    expect(out[0].contentVi).toBe("Phim hay");
+    expect(out[1].contentVi).toBeUndefined();
+    expect(out[2].contentVi).toBeUndefined();
+    expect(out[3].contentVi).toBeUndefined();
+  });
+  test("shows translation by default with label, toggle and lang=vi", () => {
+    const html = renderToStaticMarkup(
+      <ReviewsSection slug="a" reviewCount={1} reviews={[{ ...base, content: "Great movie", contentVi: "Phim tuyệt vời" }]} />
+    );
+    expect(html).toContain("Phim tuyệt vời");
+    expect(html).not.toContain("Great movie");
+    expect(html).toContain("Đã dịch tự động");
+    expect(html).toContain("Xem bản gốc");
+    expect(html).toContain('lang="vi"');
+    expect(html).not.toContain('lang="en"');
+  });
+  test("falls back to English without label or toggle", () => {
+    const html = renderToStaticMarkup(
+      <ReviewsSection slug="a" reviewCount={1} reviews={[{ ...base, content: "Great movie" }]} />
+    );
+    expect(html).toContain("Great movie");
+    expect(html).toContain('lang="en"');
+    expect(html).not.toContain("Đã dịch tự động");
+    expect(html).not.toContain("Xem bản gốc");
+    expect(html).not.toContain("Xem bản dịch");
+  });
+  test("escapes translated text and clamps on the shown text", () => {
+    const html = renderToStaticMarkup(
+      <ReviewsSection slug="a" reviewCount={1} reviews={[{ ...base, content: "short", contentVi: "<i>x</i> " + "a".repeat(300) }]} />
+    );
+    expect(html).toContain("&lt;i&gt;x&lt;/i&gt;");
+    expect(html).not.toContain("<i>");
+    expect(html).toContain("Đọc tiếp");
+    expect(html).toContain("line-clamp-4");
+  });
+});

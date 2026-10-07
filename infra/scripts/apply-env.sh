@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Validate backend/.env against .env.example, then recreate the affected
-# containers in place from the current images (no rebuild). Run this after
-# editing .env to ship a config-only change without a code deploy.
+# Validate the stack .env against the synced .env.example, then recreate the
+# affected containers in place from the current images (no rebuild). Run this
+# after editing the stack .env to ship a config-only change without a code deploy.
 #
-# Usage: backend/deploy/apply-env.sh
+# Lives in the repo as infra/scripts/apply-env.sh; infra/scripts/sync-stack.sh
+# copies it to the stack dir (/opt/stacks/blueflare), where it runs.
+#
+# Usage: /opt/stacks/blueflare/deploy/apply-env.sh
 set -euo pipefail
 
 STACK_DIR=${BLUEFLARE_STACK_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}

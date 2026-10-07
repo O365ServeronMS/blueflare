@@ -102,7 +102,7 @@ TMDB reviews.
   translation, or null when none exists for the current `content`), createdAt,
   url (themoviedb.org or null), hasSpoiler }`. `hasSpoiler` and the ordering
   score are computed on the English `content`. The worker fills `contentVi`
-  asynchronously (unofficial Google endpoint, can be blocked), so clients must
+  asynchronously (Gemini model rotation, optional gtx fallback; either can be blocked), so clients must
   treat it as optional and fall back to `content`.
 - 404 `{ error: 'Movie not found' }` for an unknown slug.
 - Order: `hasSpoiler` first, then score band, then a shuffle stable per slug and

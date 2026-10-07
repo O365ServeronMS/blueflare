@@ -1924,11 +1924,11 @@ export async function listPendingReviewTranslations(limit) {
 }
 
 /** Store a translation only if the source text is still the one that was translated. */
-export async function recordReviewTranslation(id, contentHash, contentVi) {
+export async function recordReviewTranslation(id, contentHash, contentVi, provider = null) {
   const result = await pool.query(
-    'UPDATE movie_reviews SET content_vi=$3, translated_hash=$2, translated_at=now(), ' +
+    'UPDATE movie_reviews SET content_vi=$3, translated_hash=$2, translated_at=now(), translate_provider=$4, ' +
     'translate_failed_at=NULL, translate_retry_at=NULL WHERE id=$1 AND content_hash=$2',
-    [id, contentHash, contentVi]
+    [id, contentHash, contentVi, provider]
   );
   return result.rowCount > 0;
 }

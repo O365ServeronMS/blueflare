@@ -16,6 +16,12 @@ function boolean(name, fallback = false) {
   return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
 }
 
+// Free-tier rotation, best first. Ids verified against ai.google.dev (models page, Gemma docs).
+const DEFAULT_GEMINI_MODELS = [
+  'gemini-3.5-flash-lite:15', 'gemini-3.1-flash-lite:15', 'gemini-3.8-flash:5', 'gemini-3.7-flash:5',
+  'gemini-3.6-flash:5', 'gemini-3.5-flash:5', 'gemini-2.5-flash-lite:10', 'gemini-3-flash-preview:5',
+  'gemini-2.5-flash:5', 'gemma-4-31b-it:30', 'gemma-4-26b-a4b-it:30'
+].join(',');
 const nodeEnv = process.env.NODE_ENV || 'development';
 const syncIntervalMs = integer('SYNC_INTERVAL_MS', 15 * 60 * 1000, 1000);
 const imageSigningSecret = process.env.IMAGE_SIGNING_SECRET || (
@@ -90,12 +96,18 @@ export const config = Object.freeze({
   tmdbReviewsMaxPerMovie: integer('TMDB_REVIEWS_MAX_PER_MOVIE', 40, 1),
   // English -> Vietnamese machine translation of stored reviews (worker only).
   translateEnabled: boolean('TRANSLATE_ENABLED', true),
-  translateProvider: String(process.env.TRANSLATE_PROVIDER || 'google-gtx'),
+  translateProvider: String(process.env.TRANSLATE_PROVIDER || 'gemini'),
   translateReviewsPerCycle: integer('TRANSLATE_REVIEWS_PER_CYCLE', 150, 1),
   translateDelayMs: integer('TRANSLATE_DELAY_MS', 1000, 0),
   translateMaxConsecutiveErrors: integer('TRANSLATE_MAX_CONSECUTIVE_ERRORS', 5, 1),
   translateCooldownMs: integer('TRANSLATE_COOLDOWN_MS', 60 * 60 * 1000, 1000),
   translateTimeoutMs: integer('TRANSLATE_TIMEOUT_MS', 10000, 1000),
+  geminiApiKey: String(process.env.GEMINI_API_KEY || '').trim(),
+  // Ordered `id[:rpm]` list. GEMINI_MODEL (single id) only applies when GEMINI_MODELS is empty.
+  geminiModels: String(process.env.GEMINI_MODELS || process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODELS).trim(),
+  geminiTimeoutMs: integer('GEMINI_TIMEOUT_MS', 30000, 1000),
+  geminiDelayMs: integer('GEMINI_DELAY_MS', 0, 0),
+  geminiCooldownMs: integer('GEMINI_COOLDOWN_MS', 6 * 60 * 60 * 1000, 1000),
   // Score 0-100 = rating*10 (neutral 50 when unrated), length and recency parts.
   reviewScore: Object.freeze({
     ratingWeight: 0.6,
@@ -240,10 +252,7 @@ export const config = Object.freeze({
   responseCacheTtlSeconds: integer('RESPONSE_CACHE_TTL_SECONDS', 300, 1),
   responseCacheStaleSeconds: integer('RESPONSE_CACHE_STALE_SECONDS', 86400, 1),
   cdnTtlSeconds: integer('CDN_TTL_SECONDS', 300, 1),
-  allowedOrigins: csv(
-    'ALLOWED_ORIGINS',
-    'https://film.bluesia.net,https://phim.bluesia.net'
-  ),
+  allowedOrigins: csv('ALLOWED_ORIGINS', 'https://phim.bluesia.net'),
   // Cache/tag invalidation fan-out after a sync cycle changes canonical rows.
   invalidateListTypes: csv('INVALIDATE_LIST_TYPES', 'phim-moi-cap-nhat,phim-le,phim-bo,hoat-hinh,tv-shows'),
   invalidatePageDepth: integer('INVALIDATE_PAGE_DEPTH', 3, 1),

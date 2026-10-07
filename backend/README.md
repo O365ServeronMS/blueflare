@@ -169,29 +169,63 @@ not irreplaceable state.
 ### Vietnamese translation of reviews
 
 Separate worker-only pass (`reviewTranslateSync.js`, right after the reviews
-pass in each sync cycle). It translates the English `content` to Vietnamese with
-the free, unofficial Google gtx endpoint (`translate.js`); no request path calls
-it. Because the endpoint is unofficial it can start refusing us at any time, so
-everything fails open: the API simply serves English.
+pass in each sync cycle). It translates the English `content` to Vietnamese
+through an ordered provider chain (`TRANSLATE_PROVIDER`, `translate.js`): by
+default Gemini (`gemini`, AI Studio free tier, rotating across several models),
+optionally the free, unofficial Google gtx endpoint (`google-gtx`) as a fallback;
+no request path calls either. Only public TMDB
+review text is sent to a provider. A provider can start refusing us at any time
+(gtx is unofficial, free quotas run out), so everything fails open: the API simply serves English.
 
 - Queue: reviews of ready rows with no fresh translation (`content_vi IS NULL`
   or `translated_hash` differs from `content_hash`), oldest first, at most
   `TRANSLATE_REVIEWS_PER_CYCLE` per cycle, skipping rows backing off
-  (`translate_retry_at`). Sequential, `TRANSLATE_DELAY_MS` apart. Long text is
+  (`translate_retry_at`). Sequential, spaced per provider: `TRANSLATE_DELAY_MS`
+  for gtx; Gemini spaces each model by its own RPM (see below). Long text is
   split into chunks of at most 4000 chars on paragraph/sentence boundaries and
   rejoined keeping line breaks; transient errors retry twice with backoff.
 - Backlog: after the first deploy every stored review is pending, so the
   backlog drains over many cycles (150 per cycle by default), not at once. A
   review whose translation equals the source is stored as `''` so it leaves the
   queue without showing a translation.
-- Cooldown: a blocked answer (HTTP 429/403 or an HTML captcha/consent page)
-  ends the pass and pauses it for `TRANSLATE_COOLDOWN_MS`; so do
-  `TRANSLATE_MAX_CONSECUTIVE_ERRORS` failures in a row. The cooldown is in
-  memory (a worker restart retries once). A single failing review backs off for
-  the same period without blocking the rest.
+- Cooldown: a blocked provider (gtx: HTTP 429/403 or an HTML captcha/consent
+  page) cools down alone and the same review continues on the next provider in
+  the chain. The pass ends only when no provider is available, or after
+  `TRANSLATE_MAX_CONSECUTIVE_ERRORS` provider-level failures in a row (it then
+  pauses for `TRANSLATE_COOLDOWN_MS`). Cooldown state is in memory (a worker
+  restart retries once). A single failing review backs off for the same period
+  without blocking the rest.
+- Gemini rotation: `GEMINI_MODELS` is an ordered `id[:rpm]` list (default 11
+  free-tier models, Flash-Lite first, Gemma last), each with its own quota. A
+  request uses the first model that is not cooling down and whose spacing
+  (`ceil(60s/rpm)` + 250 ms, never below `GEMINI_DELAY_MS`; Gemma also by its
+  16K TPM) has elapsed; it waits on the best model only when that takes under
+  3 s, otherwise uses the next ready one, and sleeps only when every model is
+  waiting on spacing. 429 per-minute: that model cools for `retryDelay`
+  (1s..`GEMINI_COOLDOWN_MS`); 429 per-day (`PerDay` in the body, or a delay over
+  10 min): exhausted until 00:00 America/Los_Angeles, logged once as
+  `gemini model X exhausted until <iso>`; 404 / "model not supported": that
+  model is off for `GEMINI_COOLDOWN_MS`; 401/403 (or invalid-key 400): the
+  whole provider is off for `GEMINI_COOLDOWN_MS`. When every model is parked the
+  provider is blocked (cooldown = earliest return, capped by
+  `GEMINI_COOLDOWN_MS`) and the chain moves on. Gemma rejects `systemInstruction`,
+  so the prompt is sent in the user turn with the review fenced between
+  `BEGIN_REVIEW`/`END_REVIEW`; Gemma requests are capped at 6000 chars. A
+  safety/recitation/truncation answer from one model is tried on the next model;
+  when all refuse (`TranslateContentError`) it is a per-review failure that does
+  NOT count toward the consecutive-error limit. Per-model state is in memory. A
+  missing `GEMINI_API_KEY` skips Gemini silently (one warning is logged if no
+  provider is usable at all, so the default config without a key translates
+  nothing).
+- Log line: `[worker] review translate checked= ok= failed= blocked=
+  providers=gemini:N models=gemini-3.5-flash-lite:A,gemini-3.1-flash-lite:B`.
+  `translate_provider` stores `gemini:<model id>` or `google-gtx`.
 - Storage: migration `026_review_translation.sql` adds `content_vi`,
   `translated_hash`, `translated_at`, `translate_failed_at`,
-  `translate_retry_at` to `movie_reviews`. `content` stays the English source;
+  `translate_retry_at` to `movie_reviews`; migration
+  `027_review_translation_provider.sql` adds `translate_provider` (which
+  provider produced the translation; internal only, never in the API, NULL for
+  older rows). `content` stays the English source;
   `has_spoiler` and `score` are computed on it, not on the translation. A
   translation is only written (and served) while `translated_hash` equals the
   current `content_hash`, so a TMDB refresh that rewrites the text hides the old
@@ -199,11 +233,14 @@ everything fails open: the API simply serves English.
 - API: each review has `contentVi` (string, or `null` when there is no fresh
   translation); see the reviews contract in `docs/backend-architecture.md`.
   Changed titles are invalidated the same way as a reviews change.
-- Env (defaults): `TRANSLATE_ENABLED=true`, `TRANSLATE_PROVIDER=google-gtx`,
+- Env (defaults): `TRANSLATE_ENABLED=true`, `TRANSLATE_PROVIDER=gemini`,
   `TRANSLATE_REVIEWS_PER_CYCLE=150`, `TRANSLATE_DELAY_MS=1000`,
   `TRANSLATE_MAX_CONSECUTIVE_ERRORS=5`, `TRANSLATE_COOLDOWN_MS=3600000`,
-  `TRANSLATE_TIMEOUT_MS=10000`. Another provider plugs in through
-  `TRANSLATE_PROVIDER` (see `translate.js`). Remember to add the keys to the
+  `TRANSLATE_TIMEOUT_MS=10000`. `TRANSLATE_PROVIDER` is a comma-separated
+  ordered chain, e.g. `gemini,google-gtx`. Gemini: `GEMINI_API_KEY` (secret;
+  empty disables it), `GEMINI_MODELS` (see `.env.example`; `GEMINI_MODEL` only
+  when it is empty), `GEMINI_TIMEOUT_MS=30000`, `GEMINI_DELAY_MS=0` (floor),
+  `GEMINI_COOLDOWN_MS=21600000`. Remember to add the keys to the
   stack `.env`.
 
 ## Duplicate merge (NguonC + KKPhim)

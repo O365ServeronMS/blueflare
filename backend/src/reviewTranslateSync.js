@@ -48,7 +48,7 @@ export async function syncReviewTranslations(deps = {}) {
   if (!chain.length) {
     if (!state.warnedNoProvider) {
       state.warnedNoProvider = true;
-      console.warn('[worker] review translate: no usable provider (is GEMINI_API_KEY set?)');
+      console.warn('[worker] review translate: no usable provider (is GEMINI_API_KEYS set?)');
     }
     return [];
   }
@@ -63,6 +63,7 @@ export async function syncReviewTranslations(deps = {}) {
   const counts = { checked: 0, ok: 0, failed: 0, blocked: 0 };
   const used = Object.fromEntries(chain.map((p) => [label(p.name), 0]));
   const modelUsed = {};
+  const keyUsed = {};
   const lastCall = {};
   let consecutive = 0;
 
@@ -101,6 +102,7 @@ export async function syncReviewTranslations(deps = {}) {
         if (await record(review.id, review.contentHash, value, meta.model ? provider.name + ':' + meta.model : provider.name)) {
           counts.ok += 1;
           used[label(provider.name)] += 1;
+          if (meta.key) keyUsed[meta.key] = (keyUsed[meta.key] ?? 0) + 1;
           if (meta.model) modelUsed[meta.model] = (modelUsed[meta.model] ?? 0) + 1;
           if (value) changed.add(review.slug);
         }
@@ -139,6 +141,7 @@ export async function syncReviewTranslations(deps = {}) {
   console.log('[worker] review translate checked=' + counts.checked + ' ok=' + counts.ok +
     ' failed=' + counts.failed + ' blocked=' + counts.blocked +
     ' providers=' + Object.entries(used).map(([name, n]) => name + ':' + n).join(',') +
-    (Object.keys(modelUsed).length ? ' models=' + Object.entries(modelUsed).map(([id, n]) => id + ':' + n).join(',') : ''));
+    (Object.keys(modelUsed).length ? ' models=' + Object.entries(modelUsed).map(([id, n]) => id + ':' + n).join(',') : '') +
+    (Object.keys(keyUsed).length ? ' keys=' + Object.entries(keyUsed).map(([id, n]) => id + ':' + n).join(',') : ''));
   return [...changed];
 }

@@ -1,4 +1,5 @@
-import { config } from './config.js';
+import { createHash } from 'node:crypto';
+import { config, parseApiKeys } from './config.js';
 
 /** Provider-side limit per request; stays well under URL/body caps for gtx. */
 export const TRANSLATE_CHUNK_MAX = 4000;
@@ -247,23 +248,33 @@ export function parseGeminiResponse(json) {
   return text;
 }
 
+/** Non-reversible short id of a key for logs: first 6 hex of sha256. Never any part of the key itself. */
+export function keyFingerprint(key) {
+  return createHash('sha256').update(String(key)).digest('hex').slice(0, 6);
+}
+
 /**
- * Gemini generateContent (AI Studio free tier) rotating over several models,
- * each with its own quota. Per request: the first model that is not cooling
- * down and whose RPM/TPM spacing has elapsed. The key travels only in the
- * x-goog-api-key header, never in the URL, and is never put into an error or log.
- * Per-model state (cooldown until, next allowed call) lives in `options.state`
- * so it survives across sync cycles.
- *  - 429: per-minute -> that model cools for retryDelay (1s..cooldown);
- *    per-day -> exhausted until Pacific midnight.
- *  - 404 / "model not supported" 400: that model is off for the cooldown.
- *  - 401/403 (or an invalid-key 400): the whole provider is off for the cooldown.
- *  - every model unavailable: TranslateBlockedError with the earliest return time.
- * The translate function takes `(text, meta)`; `meta.model` is set to the model that answered.
+ * Gemini generateContent (AI Studio free tier) rotating over several models and
+ * several API keys. Quota is per Google project, so each (key, model) pair has
+ * its own quota, spacing and cooldown. Per request, "best model first": walk
+ * the ordered models, and for each model the keys in order; the first pair that
+ * is not cooling down and whose spacing has elapsed answers. Only when no key
+ * can serve a model does the next model get a turn. Keys travel only in the
+ * x-goog-api-key header and never reach a URL, error or log; logs use the label
+ * `k<n> (<sha256 prefix>)`. State lives in `options.state` across sync cycles:
+ * `state.pairs` (cooldown/spacing per key+model), `state.models` (model off for
+ * every key), `state.keys` (key off for every model).
+ *  - 429: per-minute -> that pair for retryDelay (1s..cooldown);
+ *    per-day -> that pair until Pacific midnight.
+ *  - 404 / "model not supported" 400: that model is off for ALL keys for the cooldown.
+ *  - 401/403 (or an invalid-key 400): only that key is off for the cooldown.
+ *  - every pair unavailable: TranslateBlockedError with the earliest return time.
+ * The translate function takes `(text, meta)`; `meta.model` / `meta.key` ('k2')
+ * are set to the model and key label that answered.
  */
 export function geminiProvider(options = {}) {
   const fetchImpl = options.fetchImpl ?? fetch;
-  const apiKey = options.apiKey ?? config.geminiApiKey;
+  const apiKeys = parseApiKeys(options.apiKeys ?? config.geminiApiKeys);
   const models = parseGeminiModels(options.models ?? options.model ?? config.geminiModels);
   const timeoutMs = options.timeoutMs ?? config.geminiTimeoutMs;
   const maxCooldownMs = options.cooldownMs ?? config.geminiCooldownMs;
@@ -274,8 +285,17 @@ export function geminiProvider(options = {}) {
   const warn = options.warn ?? ((message) => console.warn(message));
   const state = options.state ?? {};
   state.models ??= {};
-  for (const model of models) state.models[model.id] ??= { until: 0, nextAt: 0, reason: '', announcedUntil: 0 };
+  state.keys ??= {};
+  state.pairs ??= {};
   if (!models.length) throw new Error('GEMINI_MODELS is empty');
+  if (!apiKeys.length) throw new Error('no Gemini API key');
+  for (const model of models) state.models[model.id] ??= { until: 0, reason: '', announcedUntil: 0 };
+  const keys = apiKeys.map((value, index) => {
+    const fingerprint = keyFingerprint(value);
+    state.keys[fingerprint] ??= { until: 0, announcedUntil: 0 };
+    return { value, fingerprint, name: 'k' + (index + 1), label: 'k' + (index + 1) + ' (' + fingerprint + ')' };
+  });
+  const pairOf = (key, model) => (state.pairs[key.fingerprint + '|' + model.id] ??= { until: 0, nextAt: 0, announcedUntil: 0 });
 
   const clampDelay = (ms) => Math.min(Math.max(ms, 1000), maxCooldownMs);
   const blocked = (message, retryAfterMs, status) => {
@@ -289,7 +309,15 @@ export function geminiProvider(options = {}) {
     const tpm = isGemma(model.id) ? GEMMA_TPM : FLASH_TPM;
     return Math.max(Math.ceil(60000 / model.rpm) + SPACING_MARGIN_MS, floorMs, Math.ceil((tokens / tpm) * 60000));
   };
-  const park = (model, until, reason) => {
+  const parkPair = (key, model, until, reason) => {
+    const pair = pairOf(key, model);
+    pair.until = until;
+    if (pair.announcedUntil !== until) {
+      pair.announcedUntil = until;
+      warn('[worker] gemini ' + key.label + ' model ' + model.id + ' ' + reason + ' until ' + new Date(until).toISOString());
+    }
+  };
+  const parkModel = (model, until, reason) => {
     const entry = state.models[model.id];
     entry.until = until;
     entry.reason = reason;
@@ -298,38 +326,49 @@ export function geminiProvider(options = {}) {
       warn('[worker] gemini model ' + model.id + ' ' + reason + ' until ' + new Date(until).toISOString());
     }
   };
+  const keyUntil = (key) => state.keys[key.fingerprint].until;
 
   return async function translateChunk(text, meta = {}) {
     const refused = new Map(); // model id -> content error, for this chunk only
+    let rejectedStatus = 0; // key rejection seen during this call
     for (;;) {
       const t = now();
-      if (state.disabledUntil > t) throw blocked('gemini disabled', state.disabledUntil - t);
-      const usable = [];
+      const liveKeys = keys.filter((key) => keyUntil(key) <= t);
+      if (!liveKeys.length) {
+        const earliest = Math.min(...keys.map(keyUntil));
+        throw blocked(rejectedStatus ? 'gemini blocked: HTTP ' + rejectedStatus : 'gemini disabled', earliest - t, rejectedStatus || undefined);
+      }
+      const usable = []; // best model first, keys in order inside a model
       for (const model of models) {
         if (refused.has(model.id) || state.models[model.id].until > t) continue;
         if (isGemma(model.id) && String(text).length > GEMMA_CHUNK_MAX) {
           refused.set(model.id, new TranslateContentError('text too long for ' + model.id));
           continue;
         }
-        usable.push(model);
+        for (const key of liveKeys) {
+          if (pairOf(key, model).until <= t) usable.push({ model, key });
+        }
       }
       if (!usable.length) {
         if (refused.size) throw [...refused.values()].at(-1);
-        const earliest = Math.min(...models.map((model) => state.models[model.id].until));
+        const earliest = Math.min(...models.flatMap((model) => liveKeys.map((key) => Math.max(state.models[model.id].until, pairOf(key, model).until))));
         throw blocked('gemini: every model is cooling down or exhausted', earliest - t);
       }
-      const wait = (model) => Math.max(0, state.models[model.id].nextAt - t);
-      const best = usable[0];
-      const ready = usable.find((model) => wait(model) === 0);
-      if (!ready || (ready !== best && wait(best) < PREFER_WAIT_MS)) {
-        const target = ready ? best : usable.reduce((a, b) => (wait(b) < wait(a) ? b : a));
+      const wait = (entry) => Math.max(0, pairOf(entry.key, entry.model).nextAt - t);
+      const minWait = (list) => list.reduce((a, b) => (wait(b) < wait(a) ? b : a));
+      const bestModel = usable[0].model;
+      const bestPairs = usable.filter((entry) => entry.model === bestModel);
+      const ready = usable.find((entry) => wait(entry) === 0);
+      const bestWaiter = minWait(bestPairs);
+      if (!ready || (ready.model !== bestModel && wait(bestWaiter) < PREFER_WAIT_MS)) {
+        const target = ready ? bestWaiter : minWait(usable);
         if (wait(target) > MAX_SPACING_WAIT_MS) throw blocked('gemini: rate spacing', wait(target));
         await sleep(wait(target));
         continue;
       }
 
-      const model = ready;
-      state.models[model.id].nextAt = t + spacingMs(model, text);
+      const { model, key } = ready;
+      pairOf(key, model).nextAt = t + spacingMs(model, text);
       const body = isGemma(model.id)
         ? { contents: [{ role: 'user', parts: [{ text: buildGemmaPrompt(text) }] }], generationConfig: { temperature: 0.2, maxOutputTokens: 8192 } }
         : {
@@ -339,7 +378,7 @@ export function geminiProvider(options = {}) {
         };
       const response = await fetchImpl(base + encodeURIComponent(model.id) + ':generateContent', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
+        headers: { 'content-type': 'application/json', 'x-goog-api-key': key.value },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(timeoutMs)
       });
@@ -350,6 +389,7 @@ export function geminiProvider(options = {}) {
         try {
           const out = parseGeminiResponse(json);
           meta.model = model.id;
+          meta.key = key.name;
           return out;
         } catch (error) {
           if (!(error instanceof TranslateContentError)) throw error;
@@ -361,18 +401,24 @@ export function geminiProvider(options = {}) {
       const raw = response.status === 429 || response.status === 400 || response.status === 404
         ? await response.text().catch(() => '') : '';
       if (response.status === 401 || response.status === 403 || (response.status === 400 && /API[ _]KEY[ _](NOT[ _]VALID|INVALID)/i.test(raw))) {
-        state.disabledUntil = now() + maxCooldownMs;
-        warn('[worker] gemini key rejected (HTTP ' + response.status + '), provider off until ' + new Date(state.disabledUntil).toISOString());
-        throw blocked('gemini blocked: HTTP ' + response.status, maxCooldownMs, response.status);
+        const entry = state.keys[key.fingerprint];
+        entry.until = now() + maxCooldownMs;
+        rejectedStatus = response.status;
+        if (entry.announcedUntil !== entry.until) {
+          entry.announcedUntil = entry.until;
+          warn('[worker] gemini ' + key.label + ' disabled: key rejected (HTTP ' + response.status + ') until ' + new Date(entry.until).toISOString());
+          if (keys.every((k) => keyUntil(k) > now())) warn('[worker] gemini: no usable API key (every key rejected), provider off until ' + new Date(Math.min(...keys.map(keyUntil))).toISOString());
+        }
+        continue;
       }
       if (response.status === 429) {
         const { daily, delayMs } = classifyQuotaError(raw);
-        if (daily) park(model, nextPacificMidnight(now()), 'exhausted');
-        else park(model, now() + clampDelay(delayMs ?? UNKNOWN_429_COOLDOWN_MS), 'rate limited');
+        if (daily) parkPair(key, model, nextPacificMidnight(now()), 'exhausted');
+        else parkPair(key, model, now() + clampDelay(delayMs ?? UNKNOWN_429_COOLDOWN_MS), 'rate limited');
         continue;
       }
       if (response.status === 404 || (response.status === 400 && /not found|not supported|unsupported|not enabled|is not a valid model/i.test(raw))) {
-        park(model, now() + maxCooldownMs, 'unavailable (HTTP ' + response.status + ')');
+        parkModel(model, now() + maxCooldownMs, 'unavailable (HTTP ' + response.status + ')');
         continue;
       }
       const error = new Error('gemini HTTP ' + response.status);
@@ -431,18 +477,19 @@ export function createTranslator(options = {}) {
 /**
  * The usable providers of the chain, in order: `{ name, translate, delayMs,
  * cooldownMs }`. Gemini without a key is left out (disabled), so a deploy
- * without GEMINI_API_KEY behaves exactly like gtx only.
+ * without GEMINI_API_KEYS behaves exactly like gtx only.
  */
 export function buildTranslators(settings = config, options = {}) {
   const out = [];
   for (const name of parseProviderChain(settings.translateProvider)) {
     if (!PROVIDERS[name]) throw new Error('unknown TRANSLATE_PROVIDER: ' + name);
     if (name === 'gemini') {
-      if (!settings.geminiApiKey) continue;
+      const apiKeys = parseApiKeys(settings.geminiApiKeys);
+      if (!apiKeys.length) continue;
       out.push({
         name,
         translate: createTranslator({
-          provider: name, apiKey: settings.geminiApiKey, models: settings.geminiModels ?? settings.geminiModel,
+          provider: name, apiKeys, models: settings.geminiModels ?? settings.geminiModel,
           timeoutMs: settings.geminiTimeoutMs, cooldownMs: settings.geminiCooldownMs, delayMs: settings.geminiDelayMs,
           fetchImpl: options.fetchImpl, state: options.state, now: options.now, sleep: options.sleep
         }),

@@ -10,6 +10,12 @@ function csv(name, fallback = '') {
     .filter(Boolean);
 }
 
+/** Key list from a comma string (or array): trimmed, empties dropped, deduped, order kept. */
+export function parseApiKeys(value) {
+  const items = Array.isArray(value) ? value : String(value ?? '').split(',');
+  return [...new Set(items.map((item) => String(item ?? '').trim()).filter(Boolean))];
+}
+
 function boolean(name, fallback = false) {
   const value = process.env[name];
   if (value === undefined) return fallback;
@@ -102,7 +108,8 @@ export const config = Object.freeze({
   translateMaxConsecutiveErrors: integer('TRANSLATE_MAX_CONSECUTIVE_ERRORS', 5, 1),
   translateCooldownMs: integer('TRANSLATE_COOLDOWN_MS', 60 * 60 * 1000, 1000),
   translateTimeoutMs: integer('TRANSLATE_TIMEOUT_MS', 10000, 1000),
-  geminiApiKey: String(process.env.GEMINI_API_KEY || '').trim(),
+  // Deduped key list from GEMINI_API_KEYS. Quota is per Google project, so keys should come from different projects.
+  geminiApiKeys: parseApiKeys(process.env.GEMINI_API_KEYS),
   // Ordered `id[:rpm]` list. GEMINI_MODEL (single id) only applies when GEMINI_MODELS is empty.
   geminiModels: String(process.env.GEMINI_MODELS || process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODELS).trim(),
   geminiTimeoutMs: integer('GEMINI_TIMEOUT_MS', 30000, 1000),

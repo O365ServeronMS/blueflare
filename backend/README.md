@@ -205,8 +205,10 @@ review text is sent to a provider. A provider can start refusing us at any time
   (1s..`GEMINI_COOLDOWN_MS`); 429 per-day (`PerDay` in the body, or a delay over
   10 min): exhausted until 00:00 America/Los_Angeles, logged once as
   `gemini model X exhausted until <iso>`; 404 / "model not supported": that
-  model is off for `GEMINI_COOLDOWN_MS`; 401/403 (or invalid-key 400): the
-  whole provider is off for `GEMINI_COOLDOWN_MS`. When every model is parked the
+  model is off for `GEMINI_COOLDOWN_MS` for every key; 401/403 (or invalid-key
+  400): only that key is off for `GEMINI_COOLDOWN_MS` (logged once as
+  `gemini k3 (9f00aa) disabled: key rejected (HTTP 403)`). When every
+  (key, model) pair is parked, or every key is rejected, the
   provider is blocked (cooldown = earliest return, capped by
   `GEMINI_COOLDOWN_MS`) and the chain moves on. Gemma rejects `systemInstruction`,
   so the prompt is sent in the user turn with the review fenced between
@@ -214,11 +216,22 @@ review text is sent to a provider. A provider can start refusing us at any time
   safety/recitation/truncation answer from one model is tried on the next model;
   when all refuse (`TranslateContentError`) it is a per-review failure that does
   NOT count toward the consecutive-error limit. Per-model state is in memory. A
-  missing `GEMINI_API_KEY` skips Gemini silently (one warning is logged if no
+  empty `GEMINI_API_KEYS` skips Gemini silently (one warning is logged if no
   provider is usable at all, so the default config without a key translates
   nothing).
+- Multiple keys: `GEMINI_API_KEYS` (comma list, secret) is trimmed and deduped,
+  order kept. Quota is per Google project,
+  so use keys from different accounts/projects. Selection is "best model
+  first": for each model in order the keys are tried in order, and the next
+  model is used only when no key can serve the current one (the under-3 s wait
+  rule applies to the best model's keys). Spacing, RPM and daily exhaustion are
+  per (key, model) and live in `state.translators` (`pairs`, `models`, `keys`).
+  Logs name keys only as `k<n> (<first 6 hex of sha256(key)>)`; the key is sent
+  only in the `x-goog-api-key` header and is never logged or put into an error.
+  The DB still stores just `gemini:<model id>`.
 - Log line: `[worker] review translate checked= ok= failed= blocked=
-  providers=gemini:N models=gemini-3.5-flash-lite:A,gemini-3.1-flash-lite:B`.
+  providers=gemini:N models=gemini-3.5-flash-lite:A,gemini-3.1-flash-lite:B
+  keys=k1:N,k2:M` (`keys=` only when Gemini answered).
   `translate_provider` stores `gemini:<model id>` or `google-gtx`.
 - Storage: migration `026_review_translation.sql` adds `content_vi`,
   `translated_hash`, `translated_at`, `translate_failed_at`,
@@ -237,7 +250,7 @@ review text is sent to a provider. A provider can start refusing us at any time
   `TRANSLATE_REVIEWS_PER_CYCLE=150`, `TRANSLATE_DELAY_MS=1000`,
   `TRANSLATE_MAX_CONSECUTIVE_ERRORS=5`, `TRANSLATE_COOLDOWN_MS=3600000`,
   `TRANSLATE_TIMEOUT_MS=10000`. `TRANSLATE_PROVIDER` is a comma-separated
-  ordered chain, e.g. `gemini,google-gtx`. Gemini: `GEMINI_API_KEY` (secret;
+  ordered chain, e.g. `gemini,google-gtx`. Gemini: `GEMINI_API_KEYS` (secret, comma list;
   empty disables it), `GEMINI_MODELS` (see `.env.example`; `GEMINI_MODEL` only
   when it is empty), `GEMINI_TIMEOUT_MS=30000`, `GEMINI_DELAY_MS=0` (floor),
   `GEMINI_COOLDOWN_MS=21600000`. Remember to add the keys to the

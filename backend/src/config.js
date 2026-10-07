@@ -134,6 +134,12 @@ export const config = Object.freeze({
     : 'off',
   mergeAlertPending: integer('MERGE_ALERT_PENDING', 200, 1),
   mergeBatchLimit: integer('MERGE_BATCH_LIMIT', 50, 1),
+  // TMDB identity promotion: cast-verified tmdb_match_* rows become real tmdb_id (source 'inferred'),
+  // folding into the row that already holds the identity. off | dry-run | apply.
+  tmdbIdentityMode: ['off', 'dry-run', 'apply'].includes(process.env.TMDB_IDENTITY_MODE)
+    ? process.env.TMDB_IDENTITY_MODE
+    : 'off',
+  tmdbIdentityPromoteBatch: integer('TMDB_IDENTITY_PROMOTE_BATCH', 200, 1),
   tmdbMatchEnabled: boolean('TMDB_MATCH_ENABLED', false),
   tmdbMatchLimit: integer('TMDB_MATCH_LIMIT', 60, 1),
   tmdbMatchConcurrency: integer('TMDB_MATCH_CONCURRENCY', 2, 1),
@@ -148,6 +154,13 @@ export const config = Object.freeze({
   tmdbMatchGeminiBatch: integer('TMDB_MATCH_GEMINI_BATCH', 10, 1),
   tmdbMatchGeminiTimeoutMs: integer('TMDB_MATCH_GEMINI_TIMEOUT_MS', 30000, 1000),
   tmdbMatchGeminiCooldownMs: integer('TMDB_MATCH_GEMINI_COOLDOWN_MS', 6 * 60 * 60 * 1000, 1000),
+  tmdbMatchGeminiTransientParkMs: integer('TMDB_MATCH_GEMINI_TRANSIENT_PARK_MS', 45000, 1000),
+  tmdbMatchGeminiTransientParkMaxMs: integer('TMDB_MATCH_GEMINI_TRANSIENT_PARK_MAX_MS', 5 * 60 * 1000, 1000),
+  // Worker pass that applies the ranking: off | dry-run (audit rows only) | apply (assigns tmdb_id).
+  tmdbMatchAiMode: ['off', 'dry-run', 'apply'].includes(process.env.TMDB_MATCH_AI_MODE) ? process.env.TMDB_MATCH_AI_MODE : 'dry-run',
+  tmdbMatchAiLimit: integer('TMDB_MATCH_AI_LIMIT', 100, 1),
+  tmdbMatchAiRetryMs: integer('TMDB_MATCH_AI_RETRY_MS', 14 * 24 * 60 * 60 * 1000, 60 * 1000),
+  tmdbMatchAiErrorRetryMs: integer('TMDB_MATCH_AI_ERROR_RETRY_MS', 6 * 60 * 60 * 1000, 60 * 1000),
 
   // MDBList supplies both Rotten Tomatoes critic and audience percentages shown
   // on cards. Gated by the key list being non-empty, like TMDB above.

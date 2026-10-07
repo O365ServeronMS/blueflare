@@ -73,6 +73,8 @@ import { deadImageHosts, setLearnedDeadHosts } from './imageHostRegistry.js';
 import { probeUrl } from './imageHostHealth.js';
 import { runImageHostCheck } from './imageHostCheck.js';
 import { findCastVerifiedMatch } from './tmdbMatch.js';
+import { refreshTmdbAiMatches } from './tmdbMatchAiSync.js';
+import { promoteVerifiedMatches } from './tmdbIdentity.js';
 import { backfillMdblistRatings, formatMdblistStats, syncMdblistRatings } from './mdblistRatingsSync.js';
 import {
   fetchTmdbCredits,
@@ -824,6 +826,24 @@ async function syncCycle() {
       console.warn('[worker] tmdb match pass failed', error.message);
       return [];
     }));
+  }
+  if (!stopping) {
+    ratingChangedSlugs.push(...await refreshTmdbAiMatches().catch((error) => {
+      console.warn('[worker] tmdb ai match pass failed', error.message);
+      return [];
+    }));
+  }
+  // Dry-run is the report script's job: it cannot page, so every cycle would replay the same batch.
+  if (!stopping && config.tmdbIdentityMode === 'apply') {
+    const promoted = await promoteVerifiedMatches().catch((error) => {
+      console.warn('[worker] tmdb identity promotion failed', error.message);
+      return null;
+    });
+    if (promoted?.checked) {
+      console.log('[worker] tmdb identity promote checked=' + promoted.checked + ' assigned=' + promoted.assigned +
+        ' merged=' + promoted.merged + ' blocked=' + promoted.blocked + ' conflict=' + promoted.conflict);
+      ratingChangedSlugs.push(...promoted.slugs);
+    }
   }
   if (!stopping && config.tmdbMatchEnabled) {
     const corrected = await correctGuessedLookupIds().catch((error) => {

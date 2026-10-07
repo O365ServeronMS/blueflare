@@ -58,19 +58,28 @@ function tmdbIdentity(incoming) {
   return null;
 }
 
+// Writes a movie's TMDB identity and, when it changed, resets everything the image
+// pipeline derived from the previous one so it re-verifies. `source` (optional) is the
+// provenance column from migration 028; callers on the provider path leave it unset.
+export async function writeTmdbIdentity(client, movieId, identity, source = null) {
+  const changed = 'tmdb_id IS DISTINCT FROM $2 OR tmdb_media_type IS DISTINCT FROM $3 OR tmdb_season_number IS DISTINCT FROM $4';
+  const result = await client.query(
+    'UPDATE movies SET tmdb_id=$2, tmdb_media_type=$3, tmdb_season_number=$4, ' +
+    (source ? 'tmdb_id_source=$5, ' : '') +
+    `tmdb_identity_status=CASE WHEN ${changed} THEN 'pending' ELSE tmdb_identity_status END, ` +
+    `tmdb_identity_verified_at=CASE WHEN ${changed} THEN NULL ELSE tmdb_identity_verified_at END, ` +
+    `tmdb_thumb_asset_id=CASE WHEN ${changed} THEN NULL ELSE tmdb_thumb_asset_id END, ` +
+    `tmdb_poster_asset_id=CASE WHEN ${changed} THEN NULL ELSE tmdb_poster_asset_id END ` +
+    'WHERE id=$1 RETURNING *',
+    [movieId, identity.id, identity.mediaType, identity.season, ...(source ? [source] : [])]
+  );
+  return result.rows[0];
+}
+
 async function persistTmdbIdentity(client, movieId, incoming) {
   const identity = tmdbIdentity(incoming);
   if (!identity) return null;
-  const result = await client.query(
-    'UPDATE movies SET tmdb_id=$2, tmdb_media_type=$3, tmdb_season_number=$4, ' +
-    "tmdb_identity_status=CASE WHEN tmdb_id IS DISTINCT FROM $2 OR tmdb_media_type IS DISTINCT FROM $3 OR tmdb_season_number IS DISTINCT FROM $4 THEN 'pending' ELSE tmdb_identity_status END, " +
-    'tmdb_identity_verified_at=CASE WHEN tmdb_id IS DISTINCT FROM $2 OR tmdb_media_type IS DISTINCT FROM $3 OR tmdb_season_number IS DISTINCT FROM $4 THEN NULL ELSE tmdb_identity_verified_at END, ' +
-    'tmdb_thumb_asset_id=CASE WHEN tmdb_id IS DISTINCT FROM $2 OR tmdb_media_type IS DISTINCT FROM $3 OR tmdb_season_number IS DISTINCT FROM $4 THEN NULL ELSE tmdb_thumb_asset_id END, ' +
-    'tmdb_poster_asset_id=CASE WHEN tmdb_id IS DISTINCT FROM $2 OR tmdb_media_type IS DISTINCT FROM $3 OR tmdb_season_number IS DISTINCT FROM $4 THEN NULL ELSE tmdb_poster_asset_id END ' +
-    'WHERE id=$1 RETURNING *',
-    [movieId, identity.id, identity.mediaType, identity.season]
-  );
-  return result.rows[0];
+  return writeTmdbIdentity(client, movieId, identity);
 }
 
 

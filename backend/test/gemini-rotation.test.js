@@ -107,3 +107,69 @@ test('tmdb match rotation throws MatchBlockedError when every pair is rejected',
   }, { fetchImpl: async () => res(403, { error: {} }), warn: () => {} });
   await assert.rejects(call({ text: 'x', buildBody, parse }), (e) => e instanceof MatchBlockedError && e.blocked);
 });
+
+test('rotation: 503 parks the pair 45s, doubles on repeat, next model answers in the same call', async () => {
+  const seen = [];
+  const state = {};
+  const { call, t } = rotation({
+    state, cooldownMs: 600000,
+    fetchImpl: async (url) => { seen.push(url); return url.includes('m1') ? res(503, { error: { message: 'The model is overloaded, high demand' } }) : res(200, okBody('from-m2')); }
+  });
+  const m1 = () => state.pairs[Object.keys(state.pairs).find((k) => k.endsWith('|m1'))];
+  const start = t.now;
+  assert.equal(await call(), 'from-m2');
+  assert.equal(seen.filter((u) => u.includes('m1')).length, 1);
+  assert.equal(m1().until, start + 45000);
+  seen.length = 0;
+  await call();
+  assert.ok(seen.every((u) => u.includes('m2')), 'm1 stays parked, not retried');
+  t.now = m1().until + 1;
+  const second = t.now;
+  await call();
+  assert.ok(seen.some((u) => u.includes('m1')), 'retried after the park');
+  assert.equal(m1().until, second + 90000, 'second consecutive failure doubles the park');
+});
+
+test('rotation: timeout and network errors park the pair like 503; recovery clears the penalty', async () => {
+  for (const make of [() => Object.assign(new Error('timed out'), { name: 'TimeoutError' }), () => new TypeError('fetch failed')]) {
+    let healthy = false;
+    const { call, t } = rotation({
+      models: 'm1:5', fetchImpl: async () => { if (!healthy) throw make(); return res(200, okBody('ok')); }
+    });
+    await assert.rejects(call(), (e) => e.blocked && e.retryAfterMs === 45000);
+    await assert.rejects(call(), (e) => e.blocked, 'parked: no new request');
+    healthy = true;
+    t.now += 45001;
+    assert.equal(await call(), 'ok');
+  }
+});
+
+test('rotation: park never exceeds the max, and warnings carry no key or URL', async () => {
+  const warns = [];
+  const state = {};
+  const { call, t } = rotation({
+    state, models: 'm1:5', warn: (m) => warns.push(m), transientParkMs: 100000, transientParkMaxMs: 150000, cooldownMs: 600000,
+    fetchImpl: async () => res(502, 'bad gateway')
+  });
+  await assert.rejects(call(), (e) => e.blocked);
+  t.now += 100001;
+  await assert.rejects(call(), (e) => e.blocked);
+  const pair = Object.values(state.pairs)[0];
+  assert.equal(pair.until - t.now, 150000);
+  assert.ok(warns.length && warns.every((m) => !m.includes(K1) && !m.includes('http')));
+});
+
+test('rotation: a daily 429 still parks until Pacific midnight while 503 on another pair is short', async () => {
+  const t0 = Date.UTC(2026, 9, 7, 12, 0, 0);
+  const state = {};
+  const { call } = rotation({
+    state, now: () => t0, models: 'm1:5,m2:5',
+    fetchImpl: async (url) => (url.includes('m1')
+      ? res(429, { error: { details: [{ '@type': 'QuotaFailure', violations: [{ quotaId: 'GenerateRequestsPerDayPerProjectPerModel' }] }] } })
+      : res(503, 'high demand'))
+  });
+  await assert.rejects(call(), (e) => e.blocked);
+  const [p1, p2] = Object.entries(state.pairs).sort(([a], [b]) => a.localeCompare(b)).map(([, v]) => v);
+  assert.equal(p1.until, nextPacificMidnight(t0));
+  assert.equal(p2.until, t0 + 45000);
+});

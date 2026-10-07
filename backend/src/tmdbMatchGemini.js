@@ -36,6 +36,8 @@ export function createTmdbMatchRotation(settings = config, options = {}) {
     models: settings.tmdbMatchGeminiModels,
     timeoutMs: settings.tmdbMatchGeminiTimeoutMs,
     cooldownMs: settings.tmdbMatchGeminiCooldownMs,
+    transientParkMs: settings.tmdbMatchGeminiTransientParkMs,
+    transientParkMaxMs: settings.tmdbMatchGeminiTransientParkMaxMs,
     modelsName: 'TMDB_MATCH_GEMINI_MODELS',
     blockedError: (message) => new MatchBlockedError(message),
     contentError: (message) => new MatchContentError(message),

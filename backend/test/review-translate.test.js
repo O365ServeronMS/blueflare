@@ -274,7 +274,9 @@ test('gemini errors: 429 retryDelay honoured and capped, 401/403 blocked, 5xx re
   await assert.rejects(mk(gem(429, quota), 10000)('x'), (e) => e.blocked && e.retryAfterMs === 10000);
   await assert.rejects(mk(gem(429, { error: {} }))('x'), (e) => e.blocked && e.retryAfterMs === 60000);
   for (const status of [401, 403]) await assert.rejects(mk(gem(status, { error: {} }))('x'), (e) => e.blocked && e.retryAfterMs === 60000 && !e.message.includes(SECRET));
-  await assert.rejects(mk(gem(503, 'down'))('x'), (e) => !e.blocked && !e.permanent && e.status === 503 && !e.message.includes(SECRET));
+  // Changed on purpose: 503 used to be a hard error; it now parks the pair and ends blocked when nothing else can serve.
+  await assert.rejects(mk(gem(503, 'down'))('x'), (e) => e.blocked && e.retryAfterMs === 45000 && !e.message.includes(SECRET));
+  await assert.rejects(mk(gem(418, 'teapot'))('x'), (e) => !e.blocked && !e.permanent && e.status === 418 && !e.message.includes(SECRET));
 });
 
 test('gemini: safety block is not retried by the translator', async () => {

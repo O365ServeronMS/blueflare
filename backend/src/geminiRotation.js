@@ -15,6 +15,9 @@ const GEMMA_TPM = 16000;
 const FLASH_TPM = 250000;
 const UNKNOWN_429_COOLDOWN_MS = 60000;
 const DAILY_RETRY_DELAY_MS = 10 * 60 * 1000;
+/** Overload (5xx, 'high demand'), timeouts and network errors park the pair briefly, doubling on repeats. */
+const TRANSIENT_PARK_MS = 45000;
+const TRANSIENT_PARK_MAX_MS = 5 * 60 * 1000;
 
 /** Google error bodies carry details[].retryDelay as "34s" / "34.5s". Returns ms or null. */
 export function parseRetryDelayMs(body) {
@@ -119,6 +122,8 @@ export function createGeminiRotation(options = {}) {
   const makeBlocked = options.blockedError ?? ((message) => Object.assign(new Error(message), { blocked: true }));
   const makeContent = options.contentError ?? ((message) => Object.assign(new Error(message), { permanent: true }));
   const isContentError = options.isContentError ?? ((error) => error?.permanent === true);
+  const transientBaseMs = options.transientParkMs ?? TRANSIENT_PARK_MS;
+  const transientMaxMs = options.transientParkMaxMs ?? TRANSIENT_PARK_MAX_MS;
   const state = options.state ?? {};
   state.models ??= {};
   state.keys ??= {};
@@ -131,7 +136,7 @@ export function createGeminiRotation(options = {}) {
     state.keys[fingerprint] ??= { until: 0, announcedUntil: 0 };
     return { value, fingerprint, name: 'k' + (index + 1), label: 'k' + (index + 1) + ' (' + fingerprint + ')' };
   });
-  const pairOf = (key, model) => (state.pairs[key.fingerprint + '|' + model.id] ??= { until: 0, nextAt: 0, announcedUntil: 0 });
+  const pairOf = (key, model) => (state.pairs[key.fingerprint + '|' + model.id] ??= { until: 0, nextAt: 0, announcedUntil: 0, transientFails: 0 });
 
   const clampDelay = (ms) => Math.min(Math.max(ms, 1000), maxCooldownMs);
   const blocked = (message, retryAfterMs, status) => {
@@ -161,6 +166,13 @@ export function createGeminiRotation(options = {}) {
       entry.announcedUntil = until;
       warn('[worker] gemini model ' + model.id + ' ' + reason + ' until ' + new Date(until).toISOString());
     }
+  };
+  // Overload/timeout/network: park this pair 45s, 90s, 180s ... (capped), then try another pair in the same call.
+  const parkTransient = (key, model, reason) => {
+    const pair = pairOf(key, model);
+    pair.transientFails = (pair.transientFails ?? 0) + 1;
+    const ms = Math.min(transientBaseMs * 2 ** (pair.transientFails - 1), transientMaxMs, maxCooldownMs);
+    parkPair(key, model, now() + ms, reason);
   };
   const keyUntil = (key) => state.keys[key.fingerprint].until;
 
@@ -206,18 +218,26 @@ export function createGeminiRotation(options = {}) {
       const { model, key } = ready;
       pairOf(key, model).nextAt = t + spacingMs(model, text);
       const body = buildBody(model);
-      const response = await fetchImpl(base + encodeURIComponent(model.id) + ':generateContent', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-goog-api-key': key.value },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(timeoutMs)
-      });
+      let response;
+      try {
+        response = await fetchImpl(base + encodeURIComponent(model.id) + ':generateContent', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-goog-api-key': key.value },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(timeoutMs)
+        });
+      } catch (error) {
+        // Timeout or network failure; the message may carry the URL, so only the error name is logged.
+        parkTransient(key, model, (error?.name === 'TimeoutError' || error?.name === 'AbortError' ? 'timed out' : 'network error'));
+        continue;
+      }
 
       if (response.ok) {
         let json;
         try { json = JSON.parse(await response.text()); } catch { throw new Error('gemini response is not JSON'); }
         try {
           const out = parse(json);
+          pairOf(key, model).transientFails = 0;
           meta.model = model.id;
           meta.key = key.name;
           return out;
@@ -249,6 +269,10 @@ export function createGeminiRotation(options = {}) {
       }
       if (response.status === 404 || (response.status === 400 && /not found|not supported|unsupported|not enabled|is not a valid model/i.test(raw))) {
         parkModel(model, now() + maxCooldownMs, 'unavailable (HTTP ' + response.status + ')');
+        continue;
+      }
+      if (response.status >= 500 && response.status <= 599) {
+        parkTransient(key, model, 'overloaded (HTTP ' + response.status + ')');
         continue;
       }
       const error = new Error('gemini HTTP ' + response.status);

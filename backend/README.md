@@ -196,11 +196,10 @@ review text is sent to a provider. A provider can start refusing us at any time
   pauses for `TRANSLATE_COOLDOWN_MS`). Cooldown state is in memory (a worker
   restart retries once). A single failing review backs off for the same period
   without blocking the rest.
-- Gemini rotation: `GEMINI_MODELS` is an ordered `id[:rpm]` list (default 11
-  free-tier models, Flash-Lite first, Gemma last), each with its own quota. A
+- Gemini rotation: `GEMINI_MODELS` is an ordered `id[:rpm]` list (default 3
+  free-tier Flash-Lite models), each with its own quota. A
   request uses the first model that is not cooling down and whose spacing
-  (`ceil(60s/rpm)` + 250 ms, never below `GEMINI_DELAY_MS`; Gemma also by its
-  16K TPM) has elapsed; it waits on the best model only when that takes under
+  (`ceil(60s/rpm)` + 250 ms, never below `GEMINI_DELAY_MS`) has elapsed; it waits on the best model only when that takes under
   3 s, otherwise uses the next ready one, and sleeps only when every model is
   waiting on spacing. 429 per-minute: that model cools for `retryDelay`
   (1s..`GEMINI_COOLDOWN_MS`); 429 per-day (`PerDay` in the body, or a delay over
@@ -211,10 +210,8 @@ review text is sent to a provider. A provider can start refusing us at any time
   `gemini k3 (9f00aa) disabled: key rejected (HTTP 403)`). When every
   (key, model) pair is parked, or every key is rejected, the
   provider is blocked (cooldown = earliest return, capped by
-  `GEMINI_COOLDOWN_MS`) and the chain moves on. Gemma rejects `systemInstruction`,
-  so the prompt is sent in the user turn with the review fenced between
-  `BEGIN_REVIEW`/`END_REVIEW`; Gemma requests are capped at 6000 chars. A
-  safety/recitation/truncation answer from one model is tried on the next model;
+  `GEMINI_COOLDOWN_MS`) and the chain moves on. A
+  safety/recitation/truncation answer, or one with stray CJK characters for a source without any, from one model is tried on the next model;
   when all refuse (`TranslateContentError`) it is a per-review failure that does
   NOT count toward the consecutive-error limit. Per-model state is in memory. A
   empty `GEMINI_API_KEYS` skips Gemini silently (one warning is logged if no

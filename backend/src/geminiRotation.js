@@ -10,8 +10,6 @@ const SPACING_MARGIN_MS = 250;
 const PREFER_WAIT_MS = 3000;
 /** Never sleep longer than this inside one request: the provider reports blocked instead. */
 const MAX_SPACING_WAIT_MS = 30000;
-const GEMMA_CHUNK_MAX = 6000;
-const GEMMA_TPM = 16000;
 const FLASH_TPM = 250000;
 const UNKNOWN_429_COOLDOWN_MS = 60000;
 const DAILY_RETRY_DELAY_MS = 10 * 60 * 1000;
@@ -52,8 +50,6 @@ export function parseGeminiModels(value) {
   }
   return out;
 }
-
-export const isGemma = (id) => /^gemma/i.test(id);
 
 const PACIFIC = 'America/Los_Angeles';
 const pacificFormat = new Intl.DateTimeFormat('en-US', {
@@ -129,7 +125,7 @@ const DEFAULT_RELIABILITY = { window: 20, minSamples: 4, minRate: 0.5, windowMs:
  * the error classes and prompt shape:
  *  - `options.blockedError(message)`: error thrown when no key/model can serve;
  *    `retryAfterMs`/`status` are set on it here.
- *  - `options.contentError(message)`: per-text refusal (e.g. text too long for gemma).
+ *  - `options.contentError(message)`: per-text refusal.
  *  - `options.isContentError(error)`: true for errors `parse` throws that mean "this model
  *    refused, try the next model".
  *  - `options.modelsName`: env name used in the "empty" error message.
@@ -191,7 +187,7 @@ export function createGeminiRotation(options = {}) {
   const limitsOf = (model) => ({
     rpm: model.rpm,
     rpd: model.rpd ?? options.rpd ?? null,
-    tpm: options.tpm ?? (isGemma(model.id) ? GEMMA_TPM : FLASH_TPM)
+    tpm: options.tpm ?? FLASH_TPM
   });
   const recentOf = (model) => {
     const entry = state.models[model.id];
@@ -213,8 +209,7 @@ export function createGeminiRotation(options = {}) {
   };
   const spacingMs = (model, text, hint) => {
     const tokens = hint ?? Math.ceil(String(text).length / 3) + 300; // rough: review + prompt
-    const tpm = isGemma(model.id) ? GEMMA_TPM : FLASH_TPM;
-    return Math.max(Math.ceil(60000 / model.rpm) + SPACING_MARGIN_MS, floorMs, Math.ceil((tokens / tpm) * 60000));
+    return Math.max(Math.ceil(60000 / model.rpm) + SPACING_MARGIN_MS, floorMs, Math.ceil((tokens / FLASH_TPM) * 60000));
   };
   const parkPair = (key, model, until, reason) => {
     const pair = pairOf(key, model);
@@ -259,10 +254,6 @@ export function createGeminiRotation(options = {}) {
       const healthy = models.filter((model) => !demoted(model));
       for (const model of [...healthy, ...models.filter((model) => !healthy.includes(model))]) {
         if (refused.has(model.id)) continue;
-        if (isGemma(model.id) && String(text).length > GEMMA_CHUNK_MAX) {
-          refused.set(model.id, makeContent('text too long for ' + model.id));
-          continue;
-        }
         const modelState = state.models[model.id];
         const hold = demoted(model) ? (modelState.lastTryAt ?? 0) + reliability.probeMs : 0;
         for (const key of liveKeys) {

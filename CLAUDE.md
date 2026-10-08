@@ -119,6 +119,12 @@ secure copy off the machine.
 `verifier` agent (`.claude/`, not in the repo) runs it and reports only failures.
 What it runs:
 
+Production checks are separate and read-only. The local `prod-tester` agent (`quick` after each
+deploy, `full` adds the security probe and background-job review) writes its report under
+`~/.claude/reports/blueflare/`. The local `prod-stress-tester` agent drives
+`scripts/stress/stress-run.sh` (`cdn`, `origin`, `soak <conc>`; GET only, max 40 concurrent,
+aborts on host/health guardrails) and runs only when the user asks.
+
 Run `npm run build` and `npm test` (in `frontend/`) for frontend changes, and `(cd backend && node --test)` for backend changes. Validate the compose file with
 `BLUEFLARE_ENV_FILE=$PWD/backend/.env.example docker compose -f infra/compose.yml config --quiet`
 (the absolute `BLUEFLARE_ENV_FILE` is required because the real `.env` only exists in the stack directory), and a container smoke test for `/healthz`, `/list/phim-le?page=2`, `/list/phim-le?page=3`, and protected revalidation. Run `git diff --check HEAD`.

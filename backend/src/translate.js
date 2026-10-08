@@ -1,4 +1,5 @@
 import { config, parseApiKeys } from './config.js';
+import { newNonce, batchSystemPrompt, batchUserMessage, parseBatchResponse } from './translateBatch.js';
 import { createOpenRouterRotation, chatText } from './openrouter.js';
 import { createQuotaLedger } from './aiQuotaLedger.js';
 import { createPgQuotaStore } from './aiQuotaStore.js';
@@ -171,11 +172,12 @@ export function openrouterProvider(options = {}) {
     timeoutMs: options.timeoutMs ?? config.openrouterTimeoutMs,
     cooldownMs: options.cooldownMs ?? config.openrouterCooldownMs,
     dailyTokenCap: options.dailyTokenCap ?? config.openrouterTranslateDailyTokens,
+    paidDailyTokenCap: options.paidDailyTokenCap ?? config.openrouterTranslatePaidDailyTokens,
     blockedError: (message) => new TranslateBlockedError(message),
     contentError: (message) => new TranslateContentError(message),
     isContentError: (error) => error instanceof TranslateContentError
   });
-  return (text, meta = {}) => call({
+  const single = (text, meta = {}) => call({
     text,
     meta,
     parse: (json) => assertNoStrayCjk(text, chatText(json, (message) => new TranslateContentError(message))),
@@ -189,6 +191,28 @@ export function openrouterProvider(options = {}) {
       reasoning: { enabled: false }
     })
   });
+  /** Several texts in one request -> array of translations; a malformed answer is a content error (the caller splits the batch). */
+  single.batch = async (texts, meta = {}) => {
+    const nonce = newNonce();
+    const user = batchUserMessage(texts, nonce);
+    return call({
+      text: user,
+      meta,
+      parse: (json) => {
+        const out = chatText(json, (message) => new TranslateContentError(message));
+        const parsed = parseBatchResponse(out, texts, nonce);
+        if (!parsed.ok) throw new TranslateContentError('batch answer rejected: ' + parsed.reason);
+        return parsed.items;
+      },
+      buildBody: () => ({
+        messages: [{ role: 'system', content: batchSystemPrompt(nonce) }, { role: 'user', content: user }],
+        temperature: 0.2,
+        max_tokens: 16384,
+        reasoning: { enabled: false }
+      })
+    });
+  };
+  return single;
 }
 
 const PROVIDERS = { 'google-gtx': googleGtxProvider, openrouter: openrouterProvider };
@@ -228,7 +252,7 @@ export function createTranslator(options = {}) {
     }
   }
 
-  return async function translate(text, meta = {}) {
+  const translate = async function translate(text, meta = {}) {
     let out = '';
     for (const chunk of planChunks(text, options.chunkMax ?? TRANSLATE_CHUNK_MAX)) {
       // Edge newlines (blank lines at a chunk boundary) are re-applied from the source: the provider's trim is not trusted.
@@ -239,6 +263,8 @@ export function createTranslator(options = {}) {
     }
     return out;
   };
+  if (typeof chunkFn.batch === 'function') translate.batch = chunkFn.batch;
+  return translate;
 }
 
 /**
@@ -258,7 +284,7 @@ export function buildTranslators(settings = config, options = {}) {
         translate: createTranslator({
           provider: name, apiKeys, models: settings.openrouterTranslateModels, baseUrl: settings.openrouterBaseUrl,
           timeoutMs: settings.openrouterTimeoutMs, cooldownMs: settings.openrouterCooldownMs,
-          dailyTokenCap: settings.openrouterTranslateDailyTokens, ledger: options.ledger ?? translateLedger(),
+          dailyTokenCap: settings.openrouterTranslateDailyTokens, paidDailyTokenCap: settings.openrouterTranslatePaidDailyTokens, ledger: options.ledger ?? translateLedger(),
           fetchImpl: options.fetchImpl, state: options.state, now: options.now, sleep: options.sleep
         }),
         delayMs: 0, // spacing is per model inside the rotation

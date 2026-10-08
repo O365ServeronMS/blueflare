@@ -1,5 +1,6 @@
 import { config } from './config.js';
 import { buildTranslators } from './translate.js';
+import { packBatches } from './translateBatch.js';
 import {
   listPendingReviewTranslations,
   recordReviewTranslation,
@@ -56,7 +57,7 @@ export async function syncReviewTranslations(deps = {}) {
   const available = () => chain.filter((p) => now() >= stateOf(p.name).cooldownUntil);
   if (!available().length) return [];
 
-  const pending = await list(settings.translateReviewsPerCycle);
+  let pending = await list(settings.translateReviewsPerCycle);
   if (!pending.length) return [];
 
   const changed = new Set();
@@ -71,6 +72,58 @@ export async function syncReviewTranslations(deps = {}) {
     const wait = Number(error.retryAfterMs) > 0 ? error.retryAfterMs : provider.cooldownMs ?? settings.translateCooldownMs;
     stateOf(provider.name).cooldownUntil = now() + wait;
   };
+
+  if (settings.translateBatchEnabled) {
+    const batcher = available().find((p) => typeof p.translate.batch === 'function');
+    if (batcher) {
+      const leftover = new Set(pending.map((r) => r.id));
+      const batchStats = { requests: 0, split: 0 };
+      // Translate `group` in one request; a rejected answer splits it in two, down to single reviews (per-review path below).
+      const run = async (group) => {
+        if (group.length < 2 || now() < stateOf(batcher.name).cooldownUntil) return;
+        const meta = {};
+        let items;
+        batchStats.requests += 1;
+        try {
+          items = await batcher.translate.batch(group.map((r) => r.content), meta);
+        } catch (error) {
+          if (error?.blocked) {
+            counts.blocked += 1;
+            console.warn('[worker] review translate blocked (' + label(batcher.name) + ', batch):', error.message);
+            openCooldown(batcher, error);
+            return;
+          }
+          if (error?.permanent) {
+            batchStats.split += 1;
+            const mid = Math.ceil(group.length / 2);
+            await run(group.slice(0, mid));
+            await run(group.slice(mid));
+            return;
+          }
+          console.warn('[worker] review translate batch failed:', error?.message);
+          return;
+        }
+        for (let i = 0; i < group.length; i += 1) {
+          const review = group[i];
+          const value = normalized(items[i]) === normalized(review.content) ? '' : items[i];
+          counts.checked += 1;
+          if (await record(review.id, review.contentHash, value, meta.model ? batcher.name + ':' + meta.model : batcher.name)) {
+            counts.ok += 1;
+            used[label(batcher.name)] += 1;
+            if (meta.model) modelUsed[meta.model] = (modelUsed[meta.model] ?? 0) + 1;
+            if (value) changed.add(review.slug);
+          }
+          leftover.delete(review.id);
+        }
+      };
+      for (const group of packBatches(pending, { maxChars: settings.translateBatchMaxChars, maxItems: settings.translateBatchMaxItems })) {
+        if (now() < stateOf(batcher.name).cooldownUntil) break;
+        await run(group);
+      }
+      pending = pending.filter((r) => leftover.has(r.id));
+      console.log('[worker] review translate batch requests=' + batchStats.requests + ' splits=' + batchStats.split + ' remaining=' + pending.length);
+    }
+  }
 
   outer:
   for (const review of pending) {

@@ -124,6 +124,7 @@ export function createOpenRouterRotation(options = {}) {
   const transientMaxMs = options.transientParkMaxMs ?? TRANSIENT_PARK_MAX_MS;
   const ledger = options.ledger ?? null;
   const tokenCap = Number(options.dailyTokenCap) > 0 ? Number(options.dailyTokenCap) : null;
+  const paidCap = Number(options.paidDailyTokenCap) > 0 ? Number(options.paidDailyTokenCap) : null;
   const state = options.state ?? {};
   state.models ??= {};
   state.keys ??= {};
@@ -153,6 +154,14 @@ export function createOpenRouterRotation(options = {}) {
     return used;
   };
   const capReached = (t) => tokenCap != null && tokensToday(t) >= tokenCap;
+  /** Tokens spent today on models that are not `:free`. */
+  const paidTokensToday = (t) => {
+    if (!ledger) return 0;
+    let used = 0;
+    for (const key of keys) for (const model of models) if (!isFree(model.id)) used += ledger.snapshot(key.ledgerId, model.id, t).tokens;
+    return used;
+  };
+  const paidCapReached = (t) => paidCap != null && paidTokensToday(t) >= paidCap;
 
   const parkPair = (key, model, until, reason) => {
     const pair = pairOf(key, model);
@@ -191,8 +200,10 @@ export function createOpenRouterRotation(options = {}) {
       }
       const usable = []; // best model first, keys in order inside a model
       const eligibleAt = [];
+      const paidSpent = paidCapReached(t); // paid models sit out for the rest of the UTC day; `:free` ones carry on
       for (const model of models) {
         if (refused.has(model.id)) continue;
+        if (paidSpent && !isFree(model.id)) { eligibleAt.push(nextUtcMidnight(t)); continue; }
         for (const key of liveKeys) {
           const check = ledger
             ? ledger.availability(key.ledgerId, model.id, { rpm: model.rpm || null, rpd: model.rpd ?? null, tpm: null }, t, estTokens)
@@ -316,5 +327,6 @@ export function createOpenRouterRotation(options = {}) {
     return { total: null, remaining: null, pairs: 0, resetAt };
   };
   call.tokensToday = (t = now()) => tokensToday(t);
+  call.paidTokensToday = (t = now()) => paidTokensToday(t);
   return call;
 }

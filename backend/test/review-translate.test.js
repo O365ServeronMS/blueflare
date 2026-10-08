@@ -170,10 +170,10 @@ test('pending selection: stale or missing translation, ready rows, retry-gated, 
   try {
     await listPendingReviewTranslations(150);
     const { sql, params } = c.calls[0];
-    assert.match(sql, /content_vi IS NULL OR r\.translated_hash IS DISTINCT FROM r\.content_hash/);
+    assert.match(sql, /content_vi IS NULL OR translated_hash IS DISTINCT FROM content_hash/);
     assert.match(sql, /catalog_state='ready'/);
-    assert.match(sql, /translate_retry_at IS NULL OR r\.translate_retry_at <= now\(\)/);
-    assert.match(sql, /ORDER BY r\.created_at ASC/);
+    assert.match(sql, /translate_retry_at IS NULL OR translate_retry_at <= now\(\)/);
+    assert.match(sql, /ORDER BY \(shown <= 5\) DESC, created_at ASC/);
     assert.deepEqual(params, [150]);
   } finally { c.restore(); }
 });
@@ -422,4 +422,42 @@ test('sync: with only openrouter and the key rejected the pass ends without fail
   } finally { globalThis.fetch = realFetch; console.log = orig; console.warn = warn; }
   assert.deepEqual(failed, []);
   assert.equal(state.cooldownUntil, 1000 + 600000);
+});
+
+const batchEcho = (mutate = (items) => items) => async (url, init) => {
+  const body = JSON.parse(init.body);
+  const user = body.messages.at(-1).content;
+  const nonce = user.match(/^<<<(\w+):1>>>/)?.[1];
+  if (!nonce) return or(200, ok('vi'));
+  const n = [...user.matchAll(new RegExp(`<<<${nonce}:(\\d+)>>>`, 'g'))].length;
+  const items = mutate(Array.from({ length: n }, (_, i) => 'dịch ' + i));
+  return or(200, ok(items.map((t, i) => `<<<${nonce}:${i + 1}>>>\n${t}`).join('\n') + `\n<<<${nonce}:end>>>`));
+};
+
+test('sync batch: one request records every review of the group', async () => {
+  let requests = 0;
+  const echo = batchEcho();
+  const log = await runSync({ ...orSettings('openrouter'), translateBatchEnabled: true, translateBatchMaxChars: 8000, translateBatchMaxItems: 12 },
+    async (...a) => { requests += 1; return echo(...a); }, { count: 5 });
+  assert.equal(requests, 1);
+  assert.equal(log.recorded.length, 5);
+  assert.deepEqual(log.recorded[1], ['dịch 1', 'openrouter:m1']);
+  assert.ok(log.logs.some((m) => /batch requests=1 splits=0 remaining=0/.test(m)), log.logs.join('\n'));
+});
+
+test('sync batch: a rejected answer splits the group, every review still ends translated', async () => {
+  let requests = 0;
+  const echo = batchEcho((items) => (items.length > 2 ? items.slice(1) : items)); // groups over 2 drop an item
+  const log = await runSync({ ...orSettings('openrouter'), translateBatchEnabled: true, translateBatchMaxChars: 8000, translateBatchMaxItems: 12 },
+    async (...a) => { requests += 1; return echo(...a); }, { count: 5 });
+  assert.equal(log.recorded.length, 5);
+  assert.ok(requests > 1);
+  assert.ok(log.logs.some((m) => /splits=[1-9]/.test(m)), log.logs.join('\n'));
+});
+
+test('sync batch: blocked batch leaves the reviews to the per-review path of the next provider', async () => {
+  const log = await runSync({ ...orSettings('openrouter,google-gtx'), translateBatchEnabled: true, translateBatchMaxChars: 8000, translateBatchMaxItems: 12 },
+    async (url) => (/translate_a\/single/.test(String(url)) ? res(200, JSON.stringify([[['gtx vi', 'x']]])) : or(401, { error: { message: 'no auth' } })),
+    { count: 3 });
+  assert.deepEqual(log.recorded.map((r) => r[1]), ['google-gtx', 'google-gtx', 'google-gtx']);
 });

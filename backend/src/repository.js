@@ -1920,13 +1920,18 @@ export async function purgeDeadHostImages(deadHosts, isCached, limit) {
  * source changed since), oldest first, skipping those backing off after a failure.
  */
 export async function listPendingReviewTranslations(limit) {
+  // Reviews likely on page 1 of their title (spoiler-flagged and best score band first, the display
+  // order of reviewOrder.js without its daily shuffle) go first, then oldest first.
   const result = await pool.query(
-    'SELECT r.id, r.content, r.content_hash AS "contentHash", m.canonical_slug AS slug ' +
+    'WITH ranked AS (' +
+    'SELECT r.id, r.content, r.content_hash, r.content_vi, r.translated_hash, r.translate_retry_at, r.created_at, m.canonical_slug, ' +
+    'rank() OVER (PARTITION BY r.movie_id ORDER BY r.has_spoiler DESC, floor(r.score / 10) DESC) AS shown ' +
     'FROM movie_reviews r JOIN movies m ON m.id = r.movie_id ' +
-    "WHERE m.catalog_state='ready' " +
-    'AND (r.content_vi IS NULL OR r.translated_hash IS DISTINCT FROM r.content_hash) ' +
-    'AND (r.translate_retry_at IS NULL OR r.translate_retry_at <= now()) ' +
-    'ORDER BY r.created_at ASC, r.id ASC LIMIT $1',
+    "WHERE m.catalog_state='ready') " +
+    'SELECT id, content, content_hash AS "contentHash", canonical_slug AS slug FROM ranked ' +
+    'WHERE (content_vi IS NULL OR translated_hash IS DISTINCT FROM content_hash) ' +
+    'AND (translate_retry_at IS NULL OR translate_retry_at <= now()) ' +
+    'ORDER BY (shown <= 5) DESC, created_at ASC, id ASC LIMIT $1',
     [Math.max(1, Math.floor(limit))]
   );
   return result.rows;

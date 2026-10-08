@@ -104,6 +104,10 @@ export function mergeGuard(target, holder, source) {
   if (source !== 'inferred') return null;
   if (target.imdb_id && holder.imdb_id && target.imdb_id !== holder.imdb_id) return 'imdb-differs';
   if (Number.isInteger(target.year) && Number.isInteger(holder.year) && Math.abs(target.year - holder.year) > 1) return 'year-differs';
+  // Both titles name a season and they disagree: another page of the same series, whatever tmdb_season_number says.
+  const targetSeason = nguoncSeason(target);
+  const holderSeason = nguoncSeason(holder);
+  if (targetSeason !== null && holderSeason !== null && targetSeason !== holderSeason) return 'season-differs';
   return null;
 }
 

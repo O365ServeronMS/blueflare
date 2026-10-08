@@ -52,6 +52,10 @@ test('an inferred identity is not folded into a row with another imdb id or a di
   assert.equal(mergeGuard({ year: 2000 }, { year: 2003 }, 'inferred'), 'year-differs');
   assert.equal(mergeGuard({ year: 2000 }, { year: 2001 }, 'inferred'), null);
   assert.equal(mergeGuard({ year: 2000 }, { year: 2010 }, 'provider'), null);
+  assert.equal(mergeGuard({ title: 'Cá Đỏ (Phần 1)' }, { title: 'Cá Đỏ (Phần 3)' }, 'inferred'), 'season-differs');
+  assert.equal(mergeGuard({ title: 'Cá Đỏ (Phần 1)' }, { title: 'Cá Đỏ (Phần 1)' }, 'inferred'), null);
+  assert.equal(mergeGuard({ title: 'Cá Đỏ (Phần 1)' }, { title: 'Cá Đỏ' }, 'inferred'), null);
+  assert.equal(mergeGuard({ title: 'Cá Đỏ (Phần 1)' }, { title: 'Cá Đỏ (Phần 3)' }, 'provider'), null);
 });
 
 test('promoteVerifiedMatches: off does nothing; dry-run counts plans and pages by lastId', async () => {

@@ -27,7 +27,7 @@ function boolean(name, fallback = false) {
 const DEFAULT_GEMINI_MODELS = [
   'gemini-3.5-flash-lite:15', 'gemini-3.1-flash-lite:15'
 ].join(',');
-const DEFAULT_TMDB_MATCH_GEMINI_MODELS = 'gemini-3.8-flash:5,gemini-3.7-flash:5,gemini-3.6-flash:5';
+const DEFAULT_TMDB_MATCH_GEMINI_MODELS = 'gemini-3.8-flash:5,gemini-3.7-flash:5,gemini-3.6-flash:5,gemini-3.5-flash:5';
 const nodeEnv = process.env.NODE_ENV || 'development';
 const syncIntervalMs = integer('SYNC_INTERVAL_MS', 15 * 60 * 1000, 1000);
 const imageSigningSecret = process.env.IMAGE_SIGNING_SECRET || (

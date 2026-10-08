@@ -6,7 +6,7 @@ import { retryDelayMs, waitFor } from './workerLoop.js';
  * Fourth background loop (next to provider sync, image prewarm and the cache sweep):
  * works through the TMDB AI match backlog without holding up the
  * sync cycle. It wakes every TMDB_MATCH_AI_LOOP_MS, ranks one token-packed batch per tick until
- * the backlog is gone or OPENROUTER_MATCH_DAILY_TOKENS is spent (then it waits for the UTC reset).
+ * the backlog is gone or the daily token cap is spent (then it waits for the UTC reset).
  * The reserve (TMDB_MATCH_AI_RESERVE_PCT) only applies to providers that report a request budget.
  * Never on a request path. Promotion of verified matches stays in the sync cycle.
  */

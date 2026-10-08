@@ -111,7 +111,6 @@ export const config = Object.freeze({
   openrouterTimeoutMs: integer('OPENROUTER_TIMEOUT_MS', 60000, 1000),
   openrouterCooldownMs: integer('OPENROUTER_COOLDOWN_MS', 60 * 60 * 1000, 1000),
   openrouterTranslateModels: String(process.env.OPENROUTER_TRANSLATE_MODELS || DEFAULT_OPENROUTER_TRANSLATE_MODELS).trim(),
-  openrouterTranslateDailyTokens: integer('OPENROUTER_TRANSLATE_DAILY_TOKENS', 5000000, 0),
   // Output (completion) tokens per UTC day, summed over all paid (non-`:free`) models; 0 = no separate cap.
   openrouterTranslatePaidDailyOutputTokens: integer('OPENROUTER_TRANSLATE_PAID_DAILY_OUTPUT_TOKENS', 0, 0),
   // Several reviews per request (one free-tier request instead of one per review).
@@ -119,7 +118,6 @@ export const config = Object.freeze({
   translateBatchMaxChars: integer('TRANSLATE_BATCH_MAX_CHARS', 8000, 500),
   translateBatchMaxItems: integer('TRANSLATE_BATCH_MAX_ITEMS', 12, 1),
   openrouterMatchModels: String(process.env.OPENROUTER_MATCH_MODELS || DEFAULT_OPENROUTER_MATCH_MODELS).trim(),
-  openrouterMatchDailyTokens: integer('OPENROUTER_MATCH_DAILY_TOKENS', 5000000, 0),
   openrouterMatchPaidDailyOutputTokens: integer('OPENROUTER_MATCH_PAID_DAILY_OUTPUT_TOKENS', 0, 0),
   // Score 0-100 = rating*10 (neutral 50 when unrated), length and recency parts.
   reviewScore: Object.freeze({

@@ -173,7 +173,7 @@ Separate worker-only pass (`reviewTranslateSync.js`, right after the reviews
 pass in each sync cycle). It translates the English `content` to Vietnamese
 through an ordered provider chain (`TRANSLATE_PROVIDER`, `translate.js`): by
 default OpenRouter (`openrouter`: `OPENROUTER_API_KEYS`, ordered `OPENROUTER_TRANSLATE_MODELS`,
-free models first, `OPENROUTER_TRANSLATE_DAILY_TOKENS` cap per UTC day, see
+free models first, see
 "OpenRouter rotation" below) and the free, unofficial Google gtx endpoint (`google-gtx`) as a fallback;
 no request path calls either. Gemini models, if wanted, are listed in `OPENROUTER_*_MODELS` like any
 other model. Only public TMDB
@@ -250,8 +250,8 @@ independent gate decide. The model never supplies an id, only picks among fetche
   a `:free` model parks all `:free` models until 00:00 UTC, otherwise parked by `Retry-After` /
   `X-RateLimit-Reset`; 404 / "no endpoints" model off; 408/5xx transient park (doubles). An
   error body inside HTTP 200 is treated like its code. Free models default to 20 rpm.
-  `OPENROUTER_MATCH_DAILY_TOKENS` / `OPENROUTER_TRANSLATE_DAILY_TOKENS` (5000000) cap tokens per
-  UTC day through the ledger; at the cap the call is blocked until the UTC reset.
+  `OPENROUTER_*_PAID_DAILY_OUTPUT_TOKENS` cap the completion tokens of all non-`:free` models per
+  UTC day through the ledger; at the cap they are blocked until the UTC reset (`:free` keep serving).
 - Gate (`decideAiMatch`, pure): the model's pick is `verified` only if tier 1 holds (catalog
   cast >= 2 and >= 2 names overlap the candidate's cast, year and size compatible; TV season
   not above the candidate's season count) or tier 2 holds (exact name + year + size, no other

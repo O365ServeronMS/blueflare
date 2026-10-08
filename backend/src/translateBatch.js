@@ -64,18 +64,20 @@ export function parseBatchResponse(output, sources, nonce) {
   const text = String(output ?? '');
   const markers = [...text.matchAll(new RegExp(`<<<${nonce}:(\\d+|end)>>>`, 'g'))];
   const n = sources.length;
-  if (markers.length !== n + 1) return { ok: false, reason: `expected ${n + 1} markers, got ${markers.length}` };
+  // The closing marker is optional: models often leave it out. Item markers 1..n are mandatory, in order.
+  if (markers.length !== n && markers.length !== n + 1) return { ok: false, reason: `expected ${n} or ${n + 1} markers, got ${markers.length}` };
+  const hasEnd = markers.length === n + 1;
   const items = [];
   for (let i = 0; i < n; i += 1) {
     if (markers[i][1] !== String(i + 1)) return { ok: false, reason: 'marker out of order at ' + (i + 1) };
     const start = markers[i].index + markers[i][0].length;
-    const body = text.slice(start, markers[i + 1].index).trim();
+    const body = text.slice(start, i + 1 < markers.length ? markers[i + 1].index : undefined).trim();
     const problem = plausible(sources[i], body);
     if (problem) return { ok: false, reason: `item ${i + 1}: ${problem}` };
     items.push(body);
   }
-  if (markers[n][1] !== 'end') return { ok: false, reason: 'missing end marker' };
+  if (hasEnd && markers[n][1] !== 'end') return { ok: false, reason: 'bad end marker' };
   if (text.slice(0, markers[0].index).trim()) return { ok: false, reason: 'text before first marker' };
-  if (text.slice(markers[n].index + markers[n][0].length).trim()) return { ok: false, reason: 'text after end marker' };
+  if (hasEnd && text.slice(markers[n].index + markers[n][0].length).trim()) return { ok: false, reason: 'text after end marker' };
   return { ok: true, items };
 }

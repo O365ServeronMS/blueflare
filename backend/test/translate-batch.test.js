@@ -22,6 +22,13 @@ test('parseBatchResponse: accepts a well-formed answer', () => {
   assert.equal(r.items.length, 2);
 });
 
+test('parseBatchResponse: a missing end marker is accepted', () => {
+  const a = 'Phim hay với dàn diễn viên đáng yêu và cái kết mạnh mẽ.';
+  const b = 'Tệ. Tôi ghét từng phút của bộ phim này, thật lòng.';
+  const r = parseBatchResponse(`<<<ab12:1>>>\n${a}\n<<<ab12:2>>>\n${b}`, sources, 'ab12');
+  assert.deepEqual(r.items, [a, b]);
+});
+
 test('parseBatchResponse: rejects missing/forged/misordered markers, empty, CJK, odd length, extra text', () => {
   const a = 'Phim hay với dàn diễn viên đáng yêu và cái kết mạnh mẽ.';
   const b = 'Tệ. Tôi ghét từng phút của bộ phim này, thật lòng.';

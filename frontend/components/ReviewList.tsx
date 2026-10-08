@@ -5,7 +5,7 @@ import { getReviewsPage } from "@/lib/catalog";
 import { formatReviewDate, isLongReview, reviewInitial } from "@/lib/reviews";
 import type { Review } from "@/lib/types";
 
-const PAGE_SIZE = 5;
+const PAGE_SIZE = 2;
 
 function ReviewCard({ review }: { review: Review }) {
   const [open, setOpen] = useState(false);

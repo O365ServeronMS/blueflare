@@ -48,7 +48,7 @@ export function createQuotaLedger(options = {}) {
     const id = keyFp + '|' + model + '|' + day;
     let entry = entries.get(id);
     if (!entry) {
-      entry = { keyFp, model, day, requests: 0, successes: 0, failures: 0, tokens: 0, recent: [], lastRequestAt: null };
+      entry = { keyFp, model, day, requests: 0, successes: 0, failures: 0, tokens: 0, outputTokens: 0, recent: [], lastRequestAt: null };
       entries.set(id, entry);
     }
     return entry;
@@ -71,7 +71,7 @@ export function createQuotaLedger(options = {}) {
           const entry = entryFor(row.keyFp, row.model, row.day);
           Object.assign(entry, {
             requests: Number(row.requests) || 0, successes: Number(row.successes) || 0, failures: Number(row.failures) || 0,
-            tokens: Number(row.tokens) || 0, recent: (row.recent ?? []).map(([ts, n]) => [Number(ts), Number(n)]),
+            tokens: Number(row.tokens) || 0, outputTokens: Number(row.outputTokens) || 0, recent: (row.recent ?? []).map(([ts, n]) => [Number(ts), Number(n)]),
             lastRequestAt: row.lastRequestAt == null ? null : Number(row.lastRequestAt)
           });
         }
@@ -123,11 +123,12 @@ export function createQuotaLedger(options = {}) {
       return { entry, stamp };
     },
     /** `tokens`: real prompt tokens when reported (replaces the estimate in the window). */
-    async finish(handle, { ok, tokens = null, totalTokens = null } = {}) {
+    async finish(handle, { ok, tokens = null, totalTokens = null, outputTokens = null } = {}) {
       const { entry, stamp } = handle;
       if (ok) entry.successes += 1; else entry.failures += 1;
       if (tokens != null) stamp[1] = Math.max(0, Math.round(tokens));
       entry.tokens += Math.max(0, Math.round(totalTokens ?? tokens ?? 0));
+      entry.outputTokens = (entry.outputTokens || 0) + Math.max(0, Math.round(outputTokens ?? 0));
       await persist(entry);
     },
     /** The provider reported the daily quota spent: make our count agree. */
@@ -139,7 +140,7 @@ export function createQuotaLedger(options = {}) {
     },
     snapshot(keyFp, model, t = now()) {
       const entry = view(keyFp, model, t);
-      return { requests: entry.requests, successes: entry.successes, failures: entry.failures, tokens: entry.tokens, lastRequestAt: entry.lastRequestAt };
+      return { requests: entry.requests, successes: entry.successes, failures: entry.failures, tokens: entry.tokens, outputTokens: entry.outputTokens || 0, lastRequestAt: entry.lastRequestAt };
     },
     flush: () => chain
   };

@@ -21,7 +21,7 @@ import {
 import { creditIdentity, normalizeCreditRole } from './people.js';
 import { orderReviews, reviewCard } from './reviewOrder.js';
 
-export const DETAIL_REVIEW_COUNT = 5;
+export const DETAIL_REVIEW_COUNT = 2;
 const REVIEWS_MAX_LIMIT = 20;
 const REVIEWS_DEFAULT_LIMIT = 10;
 

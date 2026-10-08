@@ -172,7 +172,7 @@ export function openrouterProvider(options = {}) {
     timeoutMs: options.timeoutMs ?? config.openrouterTimeoutMs,
     cooldownMs: options.cooldownMs ?? config.openrouterCooldownMs,
     dailyTokenCap: options.dailyTokenCap ?? config.openrouterTranslateDailyTokens,
-    paidDailyTokenCap: options.paidDailyTokenCap ?? config.openrouterTranslatePaidDailyTokens,
+    paidDailyOutputCap: options.paidDailyOutputCap ?? config.openrouterTranslatePaidDailyOutputTokens,
     blockedError: (message) => new TranslateBlockedError(message),
     contentError: (message) => new TranslateContentError(message),
     isContentError: (error) => error instanceof TranslateContentError
@@ -284,7 +284,7 @@ export function buildTranslators(settings = config, options = {}) {
         translate: createTranslator({
           provider: name, apiKeys, models: settings.openrouterTranslateModels, baseUrl: settings.openrouterBaseUrl,
           timeoutMs: settings.openrouterTimeoutMs, cooldownMs: settings.openrouterCooldownMs,
-          dailyTokenCap: settings.openrouterTranslateDailyTokens, paidDailyTokenCap: settings.openrouterTranslatePaidDailyTokens, ledger: options.ledger ?? translateLedger(),
+          dailyTokenCap: settings.openrouterTranslateDailyTokens, paidDailyOutputCap: settings.openrouterTranslatePaidDailyOutputTokens, ledger: options.ledger ?? translateLedger(),
           fetchImpl: options.fetchImpl, state: options.state, now: options.now, sleep: options.sleep
         }),
         delayMs: 0, // spacing is per model inside the rotation

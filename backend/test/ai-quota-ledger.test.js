@@ -44,7 +44,7 @@ test('RPD: every started request counts, failures included; the pair closes at t
   }
   const closed = ledger.availability('k', 'm', limits, c.t);
   assert.deepEqual([closed.ok, closed.reason, closed.until], [false, 'rpd', nextUtcMidnight(c.t)]);
-  assert.deepEqual(ledger.snapshot('k', 'm', c.t), { requests: 3, successes: 1, failures: 2, tokens: 0, lastRequestAt: T0 + 40000 });
+  assert.deepEqual(ledger.snapshot('k', 'm', c.t), { requests: 3, successes: 1, failures: 2, tokens: 0, outputTokens: 0, lastRequestAt: T0 + 40000 });
   assert.equal(ledger.availability('k', 'other', limits, c.t).ok, true, 'other model unaffected');
   assert.equal(ledger.availability('k2', 'm', limits, c.t).ok, true, 'other key unaffected');
 });
@@ -140,7 +140,7 @@ test('PG store: statements carry the fingerprint, day and window only; no key ma
   await store.save({ keyFp: 'abc123abc123', model: 'm', day: '2026-10-07', requests: 2, successes: 1, failures: 1, tokens: 5, recent: [[T0, 7]], lastRequestAt: T0 });
   assert.match(calls[0].sql, /INSERT INTO ai_quota_ledger/);
   assert.match(calls[0].sql, /ON CONFLICT \(key_fp, model, day\) DO UPDATE/);
-  assert.deepEqual(calls[0].params, ['abc123abc123', 'm', '2026-10-07', 2, 1, 1, 5, '[[1791374400000,7]]', T0]);
+  assert.deepEqual(calls[0].params, ['abc123abc123', 'm', '2026-10-07', 2, 1, 1, 5, '[[1791374400000,7]]', T0, 0]);
   assert.equal(Math.max(...[...calls[0].sql.matchAll(/\$(\d+)/g)].map((m) => Number(m[1]))), calls[0].params.length);
   await store.loadDay('2026-10-07');
   assert.deepEqual(calls[1].params, ['2026-10-07']);
@@ -160,9 +160,18 @@ dbTest('PG store round trip survives a restart (real database)', async () => {
   await first.flush();
   const second = createQuotaLedger({ store: createPgQuotaStore(), now: c.now });
   await second.ready();
-  assert.deepEqual(second.snapshot('fp0123456789', 'model-x', c.t), { requests: 2, successes: 1, failures: 0, tokens: 1200, lastRequestAt: c.t + 5 });
+  assert.deepEqual(second.snapshot('fp0123456789', 'model-x', c.t), { requests: 2, successes: 1, failures: 0, tokens: 1200, outputTokens: 0, lastRequestAt: c.t + 5 });
   const limited = second.availability('fp0123456789', 'model-x', { rpm: 5, rpd: 2, tpm: 100000 }, c.t + 10);
   assert.equal(limited.reason, 'rpd');
   await pool.query('DELETE FROM ai_quota_ledger');
   await pool.end();
+});
+
+test('ledger tracks output tokens separately from the total', async () => {
+  const ledger = createQuotaLedger({ store: createMemoryQuotaStore(), now: () => Date.UTC(2026, 0, 1, 12) });
+  await ledger.ready();
+  const h = await ledger.begin('k', 'm', 10);
+  await ledger.finish(h, { ok: true, tokens: 100, totalTokens: 150, outputTokens: 50 });
+  assert.equal(ledger.snapshot('k', 'm').tokens, 150);
+  assert.equal(ledger.snapshot('k', 'm').outputTokens, 50);
 });

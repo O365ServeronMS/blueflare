@@ -42,6 +42,7 @@ export function createTmdbMatchRotation(settings = config, options = {}) {
     transientParkMs: settings.tmdbMatchAiTransientParkMs,
     transientParkMaxMs: settings.tmdbMatchAiTransientParkMaxMs,
     dailyTokenCap: settings.openrouterMatchDailyTokens,
+    paidDailyOutputCap: settings.openrouterMatchPaidDailyOutputTokens,
     ledger: options.ledger ?? null,
     signal: options.signal,
     blockedError: (message) => new MatchBlockedError(message),

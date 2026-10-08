@@ -291,9 +291,9 @@ test('reviews cache key normalizes and bounds the slug', async () => {
   assert.equal(reviewsCacheKey('X'.repeat(500), 1, 5), 'reviews:' + 'x'.repeat(160) + ':1:5');
 });
 
-test('reviews invalidation covers pages 1..4 for limits 5 and 10', async () => {
+test('reviews invalidation covers pages 1..4 for limits 2 and 10', async () => {
   const { reviewsInvalidationKeys } = await import('../src/reviewOrder.js');
   const keys = reviewsInvalidationKeys('phim-a');
   assert.equal(keys.length, 8);
-  for (const limit of [5, 10]) for (let p = 1; p <= 4; p += 1) assert.ok(keys.includes('reviews:phim-a:' + p + ':' + limit));
+  for (const limit of [2, 10]) for (let p = 1; p <= 4; p += 1) assert.ok(keys.includes('reviews:phim-a:' + p + ':' + limit));
 });

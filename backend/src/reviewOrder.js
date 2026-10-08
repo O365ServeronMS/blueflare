@@ -47,7 +47,7 @@ export function reviewCard(row) {
 
 const REVIEWS_KEY_SLUG_MAX = 160;
 const REVIEWS_INVALIDATE_PAGES = 4;
-const REVIEWS_INVALIDATE_LIMITS = [5, 10];
+const REVIEWS_INVALIDATE_LIMITS = [2, 10];
 
 export function reviewsCacheKey(slug, page, limit) {
   const normalized = String(slug || '').trim().toLowerCase().slice(0, REVIEWS_KEY_SLUG_MAX);

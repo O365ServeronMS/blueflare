@@ -95,7 +95,7 @@ either way.
 
 ## API contract: reviews
 
-`GET /api/movie/:slug` gains `movie.reviews` (the first 5 reviews) and
+`GET /api/movie/:slug` gains `movie.reviews` (the first 2 reviews) and
 `movie.reviewCount` (total stored). Both are empty/0 when the title has no
 TMDB reviews.
 

@@ -884,7 +884,7 @@ async function invalidateForSlugs(changedSlugs) {
   }
   for (const movieSlug of changedSlugs) keys.push('movie:' + movieSlug);
   for (const movieSlug of changedSlugs) keys.push('recommendations:' + movieSlug);
-  // Drop the review pages clients actually request (limit 5 from the UI, 10 as the API default);
+  // Drop the review pages clients actually request (limit 2 from the UI, 10 as the API default);
   // deeper pages simply expire on their 60s TTL.
   for (const movieSlug of changedSlugs) keys.push(...reviewsInvalidationKeys(movieSlug));
   for (const movie of changedMovies) {

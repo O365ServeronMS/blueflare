@@ -42,11 +42,11 @@ test('parseBatchResponse: rejects missing/forged/misordered markers, empty, CJK,
   assert.equal(parseBatchResponse(answer('ab12', a, b) + '\nNote: done', sources, 'ab12').ok, false);
 });
 
-test('paid token cap: paid models sit out once spent, the free one still serves', async () => {
-  const used = { 'f/free:free': 0, 'p/paid': 1500 };
+test('paid output cap: paid models sit out once spent, the free one still serves', async () => {
+  const used = { 'f/free:free': 0, 'p/paid': 1500 }; // output tokens
   const ledger = {
     ready: async () => {},
-    snapshot: (_k, model) => ({ tokens: used[model] ?? 0 }),
+    snapshot: (_k, model) => ({ tokens: 99999999, outputTokens: used[model] ?? 0 }),
     availability: () => ({ ok: true, rpmAt: 0 }),
     begin: async () => ({}),
     finish: async () => {}
@@ -56,7 +56,7 @@ test('paid token cap: paid models sit out once spent, the free one still serves'
     seen.push(JSON.parse(init.body).model);
     return { ok: true, status: 200, headers: new Headers(), text: async () => JSON.stringify({ choices: [{ message: { content: 'xin chào' }, finish_reason: 'stop' }], usage: { prompt_tokens: 5, completion_tokens: 5, total_tokens: 10 } }) };
   };
-  const mk = (cap) => createOpenRouterRotation({ apiKeys: ['k'], models: 'p/paid,f/free:free:0', ledger, fetchImpl, paidDailyTokenCap: cap, sleep: async () => {} });
+  const mk = (cap) => createOpenRouterRotation({ apiKeys: ['k'], models: 'p/paid,f/free:free:0', ledger, fetchImpl, paidDailyOutputCap: cap, sleep: async () => {} });
   await mk(1000)({ text: 'hi', buildBody: () => ({ messages: [] }), parse: (j) => j });
   assert.deepEqual(seen, ['f/free:free']);
   seen.length = 0;

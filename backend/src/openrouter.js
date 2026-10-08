@@ -124,7 +124,7 @@ export function createOpenRouterRotation(options = {}) {
   const transientMaxMs = options.transientParkMaxMs ?? TRANSIENT_PARK_MAX_MS;
   const ledger = options.ledger ?? null;
   const tokenCap = Number(options.dailyTokenCap) > 0 ? Number(options.dailyTokenCap) : null;
-  const paidCap = Number(options.paidDailyTokenCap) > 0 ? Number(options.paidDailyTokenCap) : null;
+  const paidCap = Number(options.paidDailyOutputCap) > 0 ? Number(options.paidDailyOutputCap) : null;
   const state = options.state ?? {};
   state.models ??= {};
   state.keys ??= {};
@@ -154,11 +154,11 @@ export function createOpenRouterRotation(options = {}) {
     return used;
   };
   const capReached = (t) => tokenCap != null && tokensToday(t) >= tokenCap;
-  /** Tokens spent today on models that are not `:free`. */
+  /** Output (completion) tokens produced today by models that are not `:free`, summed over all of them. */
   const paidTokensToday = (t) => {
     if (!ledger) return 0;
     let used = 0;
-    for (const key of keys) for (const model of models) if (!isFree(model.id)) used += ledger.snapshot(key.ledgerId, model.id, t).tokens;
+    for (const key of keys) for (const model of models) if (!isFree(model.id)) used += ledger.snapshot(key.ledgerId, model.id, t).outputTokens;
     return used;
   };
   const paidCapReached = (t) => paidCap != null && paidTokensToday(t) >= paidCap;
@@ -229,7 +229,7 @@ export function createOpenRouterRotation(options = {}) {
       const { model, key } = ready;
       if (model.rpm) pairOf(key, model).nextAt = t + Math.ceil(60000 / model.rpm) + SPACING_MARGIN_MS;
       const handle = ledger ? await ledger.begin(key.ledgerId, model.id, estTokens, t) : null;
-      const settle = async (ok, usage) => { if (ledger) await ledger.finish(handle, { ok, tokens: usage?.promptTokens ?? null, totalTokens: usage?.totalTokens ?? null }); };
+      const settle = async (ok, usage) => { if (ledger) await ledger.finish(handle, { ok, tokens: usage?.promptTokens ?? null, totalTokens: usage?.totalTokens ?? null, outputTokens: usage?.outputTokens ?? (usage?.totalTokens != null && usage?.promptTokens != null ? usage.totalTokens - usage.promptTokens : null) }); };
       let response;
       try {
         response = await fetchImpl(endpoint, {

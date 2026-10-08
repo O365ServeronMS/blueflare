@@ -237,7 +237,7 @@ export function normalizeReviewsPage(payload: any): ReviewsPage {
   };
 }
 
-export async function getReviewsPage(slug: string, page = 1, limit = 5): Promise<ReviewsPage> {
+export async function getReviewsPage(slug: string, page = 1, limit = 2): Promise<ReviewsPage> {
   const safePage = normalizePage(page);
   const safeLimit = Math.min(20, Math.max(1, Math.trunc(limit) || 5));
   const payload = await fetchJson<any>(

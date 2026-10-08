@@ -64,7 +64,7 @@ test('apply calls assign with the exact contract and returns survivor + dropped 
   const calls = [];
   const results = [
     { action: 'assigned', survivorSlug: 'slug-1' },
-    { action: 'merged', survivorSlug: 'kk-2', droppedSlug: 'slug-2' },
+    { action: 'merged', survivorSlug: 'kk-2', survivorId: 'kk-id-2', droppedSlug: 'slug-2' },
     { action: 'conflict', reason: 'taken' }
   ];
   const h = harness([movie(1), movie(2), movie(3)], {
@@ -77,6 +77,7 @@ test('apply calls assign with the exact contract and returns survivor + dropped 
   assert.equal(calls[0].opts.evidence.tier, 'T2');
   assert.deepEqual(h.runs.map((r) => r.status), ['applied', 'applied', 'skipped']);
   assert.equal(h.runs[2].evidence.action, 'conflict');
+  assert.equal(h.runs[1].movieId, 'kk-id-2'); // the merged-away row no longer exists: the run is kept on the survivor
   assert.match(h.logs.at(-1), /merged=1 assigned=1/);
 });
 

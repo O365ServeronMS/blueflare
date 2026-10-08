@@ -152,6 +152,7 @@ export async function runAiMatchPass(deps = {}, options = {}) {
     const pick = decision.pick ?? null;
     const evidence = { tier: decision.tier ?? null, reason: decision.reason ?? null, ...decision.evidence };
     let status = RUN_STATUS[decision.status];
+    let runMovieId = row.id; // a merge may delete this row: the run is then kept on the survivor
     if (decision.status === 'verified' && mode === 'apply') {
       try {
         const result = await assign(row.id, { tmdbId: pick.id, mediaType: pick.type, numberOfSeasons: pick.seasons ?? null }, { source: 'inferred', evidence: { ...evidence, candidate: pick.key, model, aiRun: runId } });
@@ -160,7 +161,10 @@ export async function runAiMatchPass(deps = {}, options = {}) {
         if (result?.action === 'assigned' || result?.action === 'merged' || result?.action === 'noop') status = 'applied';
         else status = 'skipped';
         if (result?.action === 'assigned') counts.assigned += 1;
-        if (result?.action === 'merged') counts.merged += 1;
+        if (result?.action === 'merged') {
+          counts.merged += 1;
+          if (result.survivorId) runMovieId = result.survivorId;
+        }
         if (result?.action === 'assigned' || result?.action === 'merged') {
           for (const slug of [result.survivorSlug, result.droppedSlug]) if (slug) changed.push(slug);
         }
@@ -172,7 +176,7 @@ export async function runAiMatchPass(deps = {}, options = {}) {
     }
     if (decision.status === 'error') evidence.error = decision.reason;
     await record({
-      runId, mode, movieId: row.id, candidates: compactForStore(candidates), chosenTmdbId: pick?.id, mediaType: pick?.type,
+      runId, mode, movieId: runMovieId, candidates: compactForStore(candidates), chosenTmdbId: pick?.id, mediaType: pick?.type,
       confidence: evidence.confidence ?? null, evidence, status,
       outcome: status === 'error' && decision.status === 'verified' ? 'error' : decision.status, model
     }).catch((error) => warn('[worker] tmdb ai match could not record run for ' + row.canonical_slug + ': ' + error.message));

@@ -5,8 +5,8 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { config } from '../src/config.js';
-import { parseGeminiModels } from '../src/geminiRotation.js';
-import { createTmdbMatchRotation } from '../src/tmdbMatchGemini.js';
+import { parseOpenRouterModels } from '../src/openrouter.js';
+import { createTmdbMatchRotation } from '../src/tmdbMatchRotation.js';
 import { exactNameMatch, catalogFacts, decideAiMatch, DEFAULT_AI_POLICY, isAsianRow, matchInput } from '../src/tmdbMatchAi.js';
 import { connectReadOnly, INPUT_COLUMNS, jsonlCache, OUT, shuffle, csvCell } from './lib/aiTools.mjs';
 import { collectAll, openTmdbClient, rankAll } from './lib/pipeline.mjs';
@@ -37,22 +37,22 @@ const { client: tmdb } = await openTmdbClient();
 const collected = await collectAll(sample, tmdb, { onProgress: (d, n) => log(`collect ${d}/${n}`) });
 const evidence = sample.map((row) => ({ row, ...collected.get(row.id) }));
 let choices = new Map();
-if (args.includes('--no-gemini')) {
-  // Gemini quota exhausted: stand-in "model" = first pre-ranked candidate whose names match exactly. Proxy only.
+if (args.includes('--no-ai')) {
+  // model quota exhausted: stand-in "model" = first pre-ranked candidate whose names match exactly. Proxy only.
   for (const e of evidence) {
     const facts = catalogFacts(matchInput(e.row));
     const pick = e.candidates.find((c) => exactNameMatch(c, facts));
     choices.set(e.row.id, { chosenId: pick ? pick.key : null, confidence: 0.5, reasons: ['stand-in: exact-name candidate'] });
   }
 } else {
-  const rotations = parseGeminiModels(config.tmdbMatchGeminiModels).map((m) => ({
-    model: m.id, call: createTmdbMatchRotation({ ...config, tmdbMatchGeminiModels: m.id + ':' + m.rpm }, { warn: () => {} })
+  const rotations = parseOpenRouterModels(config.openrouterMatchModels).map((m) => ({
+    model: m.id, call: createTmdbMatchRotation({ ...config, openrouterMatchModels: m.id + ':' + (m.rpm ?? 0) }, { warn: () => {} })
   }));
   assert.ok(rotations.every((r) => r.call));
-  const cache = await jsonlCache(OUT + '/gemini-rank-cache.jsonl');
-  const ranked = await rankAll(evidence, rotations, { batch: config.tmdbMatchGeminiBatch, cache, log, onProgress: (d, n) => log(`rank ${d}/${n}`) });
+  const cache = await jsonlCache(OUT + '/ai-rank-cache.jsonl');
+  const ranked = await rankAll(evidence, rotations, { batch: config.tmdbMatchAiBatchMax, cache, log, onProgress: (d, n) => log(`rank ${d}/${n}`) });
   choices = ranked.choices;
-  log('gemini ' + JSON.stringify({ ...ranked.stats, latencyMs: undefined }));
+  log('ai ' + JSON.stringify({ ...ranked.stats, latencyMs: undefined }));
 }
 
 const runId = randomUUID();

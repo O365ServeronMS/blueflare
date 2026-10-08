@@ -16,7 +16,7 @@ export async function connectReadOnly() {
 /** Columns the matcher may see (never tmdb_id / imdb_id / tmdb_match_*). */
 export const INPUT_COLUMNS = 'id, title, original_title, year, media_type, display_type, countries, actors, episode_total, duration, overview';
 
-/** Append-only JSONL key/value cache, so a replay under another rule does not hit TMDB or Gemini again. */
+/** Append-only JSONL key/value cache, so a replay under another rule does not hit TMDB or the model again. */
 export async function jsonlCache(file) {
   const map = new Map();
   if (existsSync(file)) {

@@ -172,9 +172,11 @@ not irreplaceable state.
 Separate worker-only pass (`reviewTranslateSync.js`, right after the reviews
 pass in each sync cycle). It translates the English `content` to Vietnamese
 through an ordered provider chain (`TRANSLATE_PROVIDER`, `translate.js`): by
-default Gemini (`gemini`, AI Studio free tier, rotating across several models),
-optionally the free, unofficial Google gtx endpoint (`google-gtx`) as a fallback;
-no request path calls either. Only public TMDB
+default OpenRouter (`openrouter`: `OPENROUTER_API_KEYS`, ordered `OPENROUTER_TRANSLATE_MODELS`,
+free models first, `OPENROUTER_TRANSLATE_DAILY_TOKENS` cap per UTC day, see
+"OpenRouter rotation" below) and the free, unofficial Google gtx endpoint (`google-gtx`) as a fallback;
+no request path calls either. Gemini models, if wanted, are listed in `OPENROUTER_*_MODELS` like any
+other model. Only public TMDB
 review text is sent to a provider. A provider can start refusing us at any time
 (gtx is unofficial, free quotas run out), so everything fails open: the API simply serves English.
 
@@ -182,7 +184,7 @@ review text is sent to a provider. A provider can start refusing us at any time
   or `translated_hash` differs from `content_hash`), oldest first, at most
   `TRANSLATE_REVIEWS_PER_CYCLE` per cycle, skipping rows backing off
   (`translate_retry_at`). Sequential, spaced per provider: `TRANSLATE_DELAY_MS`
-  for gtx; Gemini spaces each model by its own RPM (see below). Long text is
+  for gtx; OpenRouter spaces each model by its own RPM (see "OpenRouter rotation"). Long text is
   split into chunks of at most 4000 chars on paragraph/sentence boundaries and
   rejoined keeping line breaks; transient errors retry twice with backoff.
 - Backlog: after the first deploy every stored review is pending, so the
@@ -196,41 +198,19 @@ review text is sent to a provider. A provider can start refusing us at any time
   pauses for `TRANSLATE_COOLDOWN_MS`). Cooldown state is in memory (a worker
   restart retries once). A single failing review backs off for the same period
   without blocking the rest.
-- Gemini rotation: `GEMINI_MODELS` is an ordered `id[:rpm]` list (default 2
-  free-tier Flash-Lite models), each with its own quota. A
-  request uses the first model that is not cooling down and whose spacing
-  (`ceil(60s/rpm)` + 250 ms, never below `GEMINI_DELAY_MS`) has elapsed; it waits on the best model only when that takes under
-  3 s, otherwise uses the next ready one, and sleeps only when every model is
-  waiting on spacing. 429 per-minute: that model cools for `retryDelay`
-  (1s..`GEMINI_COOLDOWN_MS`); 429 per-day (`PerDay` in the body, or a delay over
-  10 min): exhausted until 00:00 America/Los_Angeles, logged once as
-  `gemini model X exhausted until <iso>`; 404 / "model not supported": that
-  model is off for `GEMINI_COOLDOWN_MS` for every key; 401/403 (or invalid-key
-  400): only that key is off for `GEMINI_COOLDOWN_MS` (logged once as
-  `gemini k3 (9f00aa) disabled: key rejected (HTTP 403)`). When every
-  (key, model) pair is parked, or every key is rejected, the
-  provider is blocked (cooldown = earliest return, capped by
-  `GEMINI_COOLDOWN_MS`) and the chain moves on. A
-  safety/recitation/truncation answer, or one with stray CJK characters for a source without any, from one model is tried on the next model;
-  when all refuse (`TranslateContentError`) it is a per-review failure that does
-  NOT count toward the consecutive-error limit. Per-model state is in memory. A
-  empty `GEMINI_API_KEYS` skips Gemini silently (one warning is logged if no
-  provider is usable at all, so the default config without a key translates
-  nothing).
-- Multiple keys: `GEMINI_API_KEYS` (comma list, secret) is trimmed and deduped,
-  order kept. Quota is per Google project,
-  so use keys from different accounts/projects. Selection is "best model
-  first": for each model in order the keys are tried in order, and the next
-  model is used only when no key can serve the current one (the under-3 s wait
-  rule applies to the best model's keys). Spacing, RPM and daily exhaustion are
-  per (key, model) and live in `state.translators` (`pairs`, `models`, `keys`).
-  Logs name keys only as `k<n> (<first 6 hex of sha256(key)>)`; the key is sent
-  only in the `x-goog-api-key` header and is never logged or put into an error.
-  The DB still stores just `gemini:<model id>`.
+- Content refusals: a `content_filter`/truncated answer, or one with stray CJK characters for
+  a source without any, from one model is tried on the next model; when all refuse
+  (`TranslateContentError`) it is a per-review failure that does NOT count toward the
+  consecutive-error limit. Per-model state is in memory. Without `OPENROUTER_API_KEYS` the
+  OpenRouter provider is skipped silently (one warning is logged if no provider is usable at
+  all, so a chain with only `openrouter` and no key translates nothing).
+- Keys: `OPENROUTER_API_KEYS` (comma list, secret) is trimmed and deduped, order kept. Logs name
+  keys only as `k<n> (<first 6 hex of sha256(key)>)`; the key is sent only in the
+  `authorization` header and is never logged or put into an error.
 - Log line: `[worker] review translate checked= ok= failed= blocked=
-  providers=gemini:N models=gemini-3.5-flash-lite:A,gemini-3.1-flash-lite:B
-  keys=k1:N,k2:M` (`keys=` only when Gemini answered).
-  `translate_provider` stores `gemini:<model id>` or `google-gtx`.
+  providers=openrouter:N models=<model id>:A,<model id>:B keys=k1:N,k2:M` (`keys=` only when
+  OpenRouter answered). `translate_provider` stores `openrouter:<model id>` or `google-gtx`
+  (rows written earlier may still say `gemini:<model>`).
 - Storage: migration `026_review_translation.sql` adds `content_vi`,
   `translated_hash`, `translated_at`, `translate_failed_at`,
   `translate_retry_at` to `movie_reviews`; migration
@@ -244,29 +224,34 @@ review text is sent to a provider. A provider can start refusing us at any time
 - API: each review has `contentVi` (string, or `null` when there is no fresh
   translation); see the reviews contract in `docs/backend-architecture.md`.
   Changed titles are invalidated the same way as a reviews change.
-- Env (defaults): `TRANSLATE_ENABLED=true`, `TRANSLATE_PROVIDER=gemini`,
+- Env (defaults): `TRANSLATE_ENABLED=true`, `TRANSLATE_PROVIDER=openrouter`,
   `TRANSLATE_REVIEWS_PER_CYCLE=150`, `TRANSLATE_DELAY_MS=1000`,
   `TRANSLATE_MAX_CONSECUTIVE_ERRORS=5`, `TRANSLATE_COOLDOWN_MS=3600000`,
   `TRANSLATE_TIMEOUT_MS=10000`. `TRANSLATE_PROVIDER` is a comma-separated
-  ordered chain, e.g. `gemini,google-gtx`. Gemini: `GEMINI_API_KEYS` (secret, comma list;
-  empty disables it), `GEMINI_MODELS` (see `.env.example`; `GEMINI_MODEL` only
-  when it is empty), `GEMINI_TIMEOUT_MS=30000`, `GEMINI_DELAY_MS=0` (floor),
-  `GEMINI_COOLDOWN_MS=21600000`. Remember to add the keys to the
-  stack `.env`.
-- The rotation itself (keys x models, spacing, cooldowns, Pacific-day helpers)
-  lives in `geminiRotation.js` and is shared with the TMDB AI match pass, which
-  owns a separate instance (own keys, own state) of it.
+  ordered chain, e.g. `openrouter,google-gtx`. OpenRouter: see `.env.example`
+  (`OPENROUTER_API_KEYS`, `OPENROUTER_TRANSLATE_MODELS`, `OPENROUTER_TIMEOUT_MS`,
+  `OPENROUTER_COOLDOWN_MS`). Remember to add new keys to the stack `.env`.
+- The rotation itself (keys x models, spacing, cooldowns, UTC-day helpers) lives in
+  `openrouter.js` and is shared with the TMDB AI match pass, which owns a separate instance
+  (own scope, own state, own token cap) of it.
 
 ## TMDB AI match
 
-Worker-only; no request path calls TMDB or Gemini. For ready titles with no `tmdb_id`
-the pass fetches real TMDB candidates (`tmdbMatchAi.js`), has Gemini rank them, and lets an
-independent gate decide. Gemini never supplies an id, only picks among fetched candidates.
+Worker-only; no request path calls TMDB or the model. For ready titles with no `tmdb_id`
+the pass fetches real TMDB candidates (`tmdbMatchAi.js`), has an OpenRouter model rank them, and lets an
+independent gate decide. The model never supplies an id, only picks among fetched candidates.
 
-- Keys and models: `TMDB_MATCH_GEMINI_API_KEYS` (secret, comma list, ideally from
-  different Google projects) and `TMDB_MATCH_GEMINI_MODELS` (`id[:rpm[:rpd]]`). It never
-  falls back to `GEMINI_API_KEYS`. The pass runs only with `TMDB_MATCH_AI_ENABLED=true`,
-  non-empty keys, `TMDB_MATCH_AI_MODE` other than `off`, and `TMDB_ENABLED` plus a TMDB key.
+- Keys and models: `OPENROUTER_API_KEYS` (secret, shared with translation) and
+  `OPENROUTER_MATCH_MODELS` (`id[:rpm[:rpd]]`, free first, e.g. paid `deepseek/deepseek-v4-flash`
+  later). The pass runs only with `TMDB_MATCH_AI_ENABLED=true`, a key, `TMDB_MATCH_AI_MODE`
+  other than `off`, and `TMDB_ENABLED` plus a TMDB key.
+- OpenRouter rotation (`openrouter.js`, scope `tmdb-match` or `translate`, so the two jobs keep
+  separate counters): 401 key off; 402 (or 403 "Key limit exceeded") model parked; any other 403 is a content refusal, next model; 429 daily on
+  a `:free` model parks all `:free` models until 00:00 UTC, otherwise parked by `Retry-After` /
+  `X-RateLimit-Reset`; 404 / "no endpoints" model off; 408/5xx transient park (doubles). An
+  error body inside HTTP 200 is treated like its code. Free models default to 20 rpm.
+  `OPENROUTER_MATCH_DAILY_TOKENS` / `OPENROUTER_TRANSLATE_DAILY_TOKENS` (5000000) cap tokens per
+  UTC day through the ledger; at the cap the call is blocked until the UTC reset.
 - Gate (`decideAiMatch`, pure): the model's pick is `verified` only if tier 1 holds (catalog
   cast >= 2 and >= 2 names overlap the candidate's cast, year and size compatible; TV season
   not above the candidate's season count) or tier 2 holds (exact name + year + size, no other
@@ -287,26 +272,25 @@ independent gate decide. Gemini never supplies an id, only picks among fetched c
   (films first seen within `TMDB_MATCH_AI_FRESH_MS`, 3 days, and films whose last run errored)
   runs first; the old backlog (`all`) only runs while more than `TMDB_MATCH_AI_RESERVE_PCT`
   (10, max 90) of the day's request budget remains.
-- Batching: films are packed into one request until `TMDB_MATCH_GEMINI_BATCH_TOKENS` (40000,
+- Batching: films are packed into one request until `TMDB_MATCH_AI_BATCH_TOKENS` (24000,
   estimated chars/3 and corrected from the prompt token count each response reports) or
-  `TMDB_MATCH_GEMINI_BATCH_MAX` (40, defaults to the old `TMDB_MATCH_GEMINI_BATCH`) is reached;
+  `TMDB_MATCH_AI_BATCH_MAX` (20) is reached;
   a batch holds one tier only. A request the model refuses is bisected until the offending
-  film is alone (then `model-refused`). Thinking tokens: `TMDB_MATCH_GEMINI_THINK_T1=0`
-  (films with a cast, 0 = not sent), `TMDB_MATCH_GEMINI_THINK_T2=4096`. Timeout
-  `TMDB_MATCH_GEMINI_TIMEOUT_MS=180000`; other failure handling (cooldown, transient park)
-  uses the `TMDB_MATCH_GEMINI_*` counterparts of the `GEMINI_*` variables.
-- Quota ledger (`geminiQuotaLedger.js`, table `gemini_quota_ledger`, migration 031): per
-  key+model counts of requests per Pacific day (`TMDB_MATCH_GEMINI_RPD`, default 20, or the
-  model's own `rpd`), RPM spacing from the persisted last request, and a 60 s token window
-  (`TMDB_MATCH_GEMINI_TPM`). A request counts when it starts and stays counted if it fails
-  or times out. When Google answers a daily-quota 429 the count is raised to the limit
+  film is alone (then `model-refused`). Reasoning tokens: `TMDB_MATCH_AI_THINK_T1=0`
+  (films with a cast, 0 = reasoning off), `TMDB_MATCH_AI_THINK_T2=4096`. Timeout
+  `TMDB_MATCH_AI_TIMEOUT_MS=180000`; transient parking uses
+  `TMDB_MATCH_AI_TRANSIENT_PARK_MS` / `_MAX_MS`; the pause between batches is `TMDB_MATCH_AI_WORKED_MS` (2000).
+- Quota ledger (`aiQuotaLedger.js`, table `ai_quota_ledger`, migration 031, renamed by 032): per
+  key+model counts of requests per day (UTC days; the model's own `rpd`), per-day token
+  totals for the OpenRouter cap, and RPM spacing from the persisted last request. A request counts when it starts and stays counted if it fails
+  or times out. When OpenRouter answers a daily-quota 429 the count is raised to the limit
   (`exhaust`) even if the ledger thought some requests were left. Keys are stored only as a
   12-hex sha256 fingerprint. The table is disposable (see Backup and restore).
 - Log lines: `[worker] tmdb ai match mode= scope= requests= checked= verified= unverifiable=
   none= error= merged= assigned= tokens=prompt/output/thoughts models=`; the loop logs state
   changes only (`[worker] tmdb ai match loop: quota|blocked|idle`); warnings
   `tmdb ai match batch failed`, `... assign failed for <slug>`, `... could not record run`,
-  `[worker] gemini quota ledger save failed|could not load`. Promotion logs
+  `[worker] ai quota ledger save failed|could not load`. Promotion logs
   `[worker] tmdb identity promote checked= assigned= merged= blocked= conflict=`.
 - Audit and undo: every assign, merge, blocked and conflict is a row in
   `tmdb_identity_changes` (migration 030; merges point at the `movie_merges` snapshot).
@@ -316,10 +300,10 @@ independent gate decide. Gemini never supplies an id, only picks among fetched c
   writes to the database only, so the affected slugs must be invalidated afterwards
   (Valkey keys and Next render tags, as the worker does after a sync) or readers keep the
   old page.
-- Development scripts (read-only against the catalog, they hit TMDB and Gemini):
+- Development scripts (read-only against the catalog, they hit TMDB and OpenRouter):
   `scripts/tmdb-ai-backtest.mjs` (precision against provider-supplied ids),
   `tmdb-ai-classify.mjs` (breakdown of rows still without identity), `tmdb-ai-dryrun.mjs`
-  (dry run of the pass on real rows), `tmdb-ai-quota-probe.mjs` (measures what the keys allow).
+  (dry run of the pass on real rows).
 
 ## Duplicate merge (NguonC + KKPhim)
 
@@ -346,7 +330,7 @@ and region for R2, Backblaze B2, Wasabi, AWS S3 and MinIO.
 
 The dump also carries user accounts, sessions and per-title watch history (tables from
 migrations `020_users_sessions.sql` and `021_history_episode.sql`); a restore brings them back with the catalog.
-The TMDB identity audit/undo log `tmdb_identity_changes` (migration `030`) is in the dump too. `gemini_quota_ledger`
+The TMDB identity audit/undo log `tmdb_identity_changes` (migration `030`) is in the dump too. `ai_quota_ledger`
 (migration `031`) is disposable: after a restore without it the ledger counts from zero until Google answers 429.
 
 For a backup outside the schedule:
@@ -359,7 +343,7 @@ The repository carries everything except secrets and data:
 
 1. Clone the repository and run `infra/scripts/bootstrap-vps.sh`. It regenerates
    `POSTGRES_PASSWORD`, `IMAGE_SIGNING_SECRET`, `FRONTEND_REVALIDATE_SECRET`
-   and `METRICS_TOKEN`. `TMDB_API_KEY` (like the Gemini key lists) cannot be regenerated,
+   and `METRICS_TOKEN`. `TMDB_API_KEY` (like the OpenRouter key list) cannot be regenerated,
    so those keys have to be kept somewhere off the machine.
 2. Fill in the `BACKUP_S3_*` credentials and download the newest object under
    `s3://<bucket>/postgres/`.

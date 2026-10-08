@@ -2,16 +2,16 @@ import { randomUUID } from 'node:crypto';
 import { config } from './config.js';
 import { pool } from './db.js';
 import { mapLimit } from './concurrency.js';
-import { createTmdbMatchRotation, tmdbMatchAiAvailable, MatchBlockedError, MatchContentError } from './tmdbMatchGemini.js';
-import { createQuotaLedger } from './geminiQuotaLedger.js';
-import { createPgQuotaStore } from './geminiQuotaStore.js';
+import { createTmdbMatchRotation, tmdbMatchAiAvailable, MatchBlockedError, MatchContentError } from './tmdbMatchRotation.js';
+import { createQuotaLedger } from './aiQuotaLedger.js';
+import { createPgQuotaStore } from './aiQuotaStore.js';
 import {
   RANK_PROMPT_OVERHEAD_CHARS, calibrateTokens, catalogFacts, collectAiCandidates, createTmdbClient, createTokenCalibration,
   decideAiMatch, DEFAULT_AI_POLICY, estimateTokens, matchInput, promptEntry, rankBatch
 } from './tmdbMatchAi.js';
 
 /**
- * Worker pass: rank real TMDB candidates with Gemini, let the independent gate
+ * Worker pass: rank real TMDB candidates with an OpenRouter model, let the independent gate
  * (decideAiMatch) decide, record every verdict in tmdb_match_ai_runs, and in
  * `apply` mode hand verified picks to assignTmdbIdentity. Never on a request path.
  *
@@ -85,7 +85,7 @@ async function resolveAssign(deps) {
   return module.assignTmdbIdentity;
 }
 
-/** The pass can run at all: mode, own Gemini keys, TMDB. */
+/** The pass can run at all: mode, OpenRouter key, TMDB. */
 export function aiPassAvailable(settings = config) {
   return settings.tmdbMatchAiMode !== 'off' && tmdbMatchAiAvailable(settings) && Boolean(settings.tmdbEnabled) && Boolean(settings.tmdbApiKey);
 }
@@ -125,8 +125,8 @@ export async function runAiMatchPass(deps = {}, options = {}) {
     }
   }
 
-  const batchMax = Math.max(1, settings.tmdbMatchGeminiBatchMax ?? DEFAULT_BATCH_MAX);
-  const batchTokens = Math.max(1000, settings.tmdbMatchGeminiBatchTokens ?? DEFAULT_BATCH_TOKENS);
+  const batchMax = Math.max(1, settings.tmdbMatchAiBatchMax ?? DEFAULT_BATCH_MAX);
+  const batchTokens = Math.max(1000, settings.tmdbMatchAiBatchTokens ?? DEFAULT_BATCH_TOKENS);
   const conc = Math.min(4, settings.tmdbMatchConcurrency ?? 2);
   const list = deps.list ?? listAiMatchCandidates;
   const record = deps.record ?? recordAiRun;
@@ -240,7 +240,7 @@ export async function runAiMatchPass(deps = {}, options = {}) {
     const chars = entries.reduce((sum, entry) => sum + JSON.stringify(entry).length + 1, 0);
     const meta = {};
     out.requests += 1;
-    const think = group[0].tier === 2 ? settings.tmdbMatchGeminiThinkT2 : settings.tmdbMatchGeminiThinkT1;
+    const think = group[0].tier === 2 ? settings.tmdbMatchAiThinkT2 : settings.tmdbMatchAiThinkT1;
     try {
       const choices = await rankBatch(rotation, entries, undefined, meta, { tokens: tokensFor(chars), thinkingBudget: think });
       return { choices, meta };

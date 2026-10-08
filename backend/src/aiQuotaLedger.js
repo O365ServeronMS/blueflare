@@ -1,9 +1,12 @@
-import { nextPacificMidnight, pacificDay } from './geminiRotation.js';
+/** Calendar day (YYYY-MM-DD) in UTC: the unit OpenRouter resets its daily limits in. */
+export const utcDay = (ts) => new Date(ts).toISOString().slice(0, 10);
+/** Next 00:00 UTC strictly after `ts`. */
+export const nextUtcMidnight = (ts) => Math.floor(ts / 86400000) * 86400000 + 86400000;
 
 /**
- * Persistent view of the free-tier limits per API key + model.
+ * Persistent view of the per-day limits per API key + model.
  *
- *  - RPD: requests counted per Pacific day (the day Google resets quotas on). A request counts the
+ *  - RPD: requests counted per UTC day (the day OpenRouter resets its limits on). A request counts the
  *    moment it is started and stays counted when it fails or times out: the provider may have
  *    charged it, and being wrong in that direction only costs a few requests.
  *  - RPM: spacing from the persisted `lastRequestAt`, so a restart does not burst.
@@ -19,7 +22,7 @@ const RPM_MARGIN_MS = 250;
 
 const clone = (row) => ({ ...row, recent: row.recent.map((pair) => [...pair]) });
 
-/** Same contract as the PostgreSQL store (geminiQuotaStore.js), for tests and for running without a database. */
+/** Same contract as the PostgreSQL store (aiQuotaStore.js), for tests and for running without a database. */
 export function createMemoryQuotaStore() {
   const rows = new Map();
   return {
@@ -34,6 +37,8 @@ export function createQuotaLedger(options = {}) {
   const store = options.store ?? createMemoryQuotaStore();
   const now = options.now ?? (() => Date.now());
   const warn = options.warn ?? ((message) => console.warn(message));
+  const dayOf = options.dayOf ?? utcDay;
+  const nextReset = options.nextReset ?? nextUtcMidnight;
   const entries = new Map();
   let loadedDay = null;
   let loading = null;
@@ -51,12 +56,12 @@ export function createQuotaLedger(options = {}) {
   // Writes keep their order even when callers do not await one another.
   const persist = (entry) => {
     const row = clone(entry);
-    chain = chain.then(() => store.save(row)).catch((error) => warn('[worker] gemini quota ledger save failed: ' + String(error.message).slice(0, 160)));
+    chain = chain.then(() => store.save(row)).catch((error) => warn('[worker] ai quota ledger save failed: ' + String(error.message).slice(0, 160)));
     return chain;
   };
 
   async function ready() {
-    const day = pacificDay(now());
+    const day = dayOf(now());
     if (loadedDay === day) return;
     loading ??= (async () => {
       try {
@@ -73,7 +78,7 @@ export function createQuotaLedger(options = {}) {
         loadedDay = day;
         await store.prune?.(day).catch(() => {});
       } catch (error) {
-        warn('[worker] gemini quota ledger could not load, counting from zero for now: ' + String(error.message).slice(0, 160));
+        warn('[worker] ai quota ledger could not load, counting from zero for now: ' + String(error.message).slice(0, 160));
       } finally {
         loading = null;
       }
@@ -81,7 +86,7 @@ export function createQuotaLedger(options = {}) {
     await loading;
   }
 
-  const view = (keyFp, model, t) => entryFor(keyFp, model, pacificDay(t));
+  const view = (keyFp, model, t) => entryFor(keyFp, model, dayOf(t));
 
   return {
     ready,
@@ -91,7 +96,7 @@ export function createQuotaLedger(options = {}) {
      */
     availability(keyFp, model, limits, t, estTokens = 0) {
       const entry = view(keyFp, model, t);
-      if (limits.rpd && entry.requests >= limits.rpd) return { ok: false, reason: 'rpd', until: nextPacificMidnight(t) };
+      if (limits.rpd && entry.requests >= limits.rpd) return { ok: false, reason: 'rpd', until: nextReset(t) };
       entry.recent = entry.recent.filter(([ts]) => ts > t - TPM_WINDOW_MS);
       if (limits.tpm && entry.recent.length) {
         const used = entry.recent.reduce((sum, [, n]) => sum + n, 0);

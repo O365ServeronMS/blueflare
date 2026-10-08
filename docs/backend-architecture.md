@@ -42,7 +42,7 @@ provides normal DNS/proxy/CDN caching only; there is no frontend Worker.
 
 ## Accounts
 
-User accounts, sessions and the last watched episode per title (`user_history`) live in PostgreSQL (migrations 020, 021). The TMDB identity audit/undo log `tmdb_identity_changes` (migration 030) is irreplaceable state in the same dump; `gemini_quota_ledger` (031) is disposable.
+User accounts, sessions and the last watched episode per title (`user_history`) live in PostgreSQL (migrations 020, 021). The TMDB identity audit/undo log `tmdb_identity_changes` (migration 030) is irreplaceable state in the same dump; `ai_quota_ledger` (031) is disposable.
 `auth.js` handles password hashing and sessions; `meApi.js` serves `/api/auth/*`
 and `/api/me/*`, never response-cached (Valkey is used only for auth rate-limit counters). Browsers reach them only through the
 Next proxy on `phim.bluesia.net` (`bf_session` cookie, HttpOnly, SameSite=Lax);
@@ -75,7 +75,7 @@ that account out of login for up to an hour.
 each entry `{ name, slug, character, photo }`. It is populated only when the
 canonical row carries a **verified** TMDB identity (`tmdb_id` + `tmdb_media_type`,
 not the looser recommendation/image-fallback ids). That identity may come from the
-provider, from the worker's AI match pass (Gemini ranks real TMDB candidates, an
+provider, from the worker's AI match pass (an OpenRouter model ranks real TMDB candidates, an
 independent gate decides, source `inferred`), or from promotion of a cast-verified
 match; `tmdbIdentity.js` assigns, merges into the row already holding it, or promotes,
 and every change is logged in `tmdb_identity_changes` and can be undone; most of the catalog has empty
@@ -107,7 +107,7 @@ TMDB reviews.
   translation, or null when none exists for the current `content`), createdAt,
   url (themoviedb.org or null), hasSpoiler }`. `hasSpoiler` and the ordering
   score are computed on the English `content`. The worker fills `contentVi`
-  asynchronously (Gemini model rotation from `geminiRotation.js`, optional gtx fallback; either can be blocked), so clients must
+  asynchronously (OpenRouter model rotation from `openrouter.js`, gtx fallback; any can be blocked), so clients must
   treat it as optional and fall back to `content`.
 - 404 `{ error: 'Movie not found' }` for an unknown slug.
 - Order: `hasSpoiler` first, then score band, then a shuffle stable per slug and

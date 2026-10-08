@@ -1,5 +1,5 @@
 import { config } from './config.js';
-import { createGeminiRotation } from './geminiRotation.js';
+import { createOpenRouterRotation } from './openrouter.js';
 
 /** The match pass was refused by every key/model; retry later. */
 export class MatchBlockedError extends Error {
@@ -20,28 +20,28 @@ export class MatchContentError extends Error {
   }
 }
 
-/** The AI pass runs only when enabled AND it has its own keys. GEMINI_API_KEYS is deliberately never consulted. */
+/** The AI pass runs only when enabled AND an OpenRouter key exists. */
 export function tmdbMatchAiAvailable(settings = config) {
-  return Boolean(settings.tmdbMatchAiEnabled) && (settings.tmdbMatchGeminiApiKeys?.length ?? 0) > 0;
+  return Boolean(settings.tmdbMatchAiEnabled) && (settings.openrouterApiKeys?.length ?? 0) > 0;
 }
 
 /**
- * Rotation instance for TMDB candidate ranking, with its own state. Returns
- * null (pass off) without its own keys. `call({ text, buildBody(model), parse(json), meta })`.
+ * Rotation instance for TMDB candidate ranking, with its own state. Returns null (pass off)
+ * without a key. `call({ text, buildBody(model), parse(json), meta })`; the provider is OpenRouter.
  */
 export function createTmdbMatchRotation(settings = config, options = {}) {
   if (!tmdbMatchAiAvailable(settings)) return null;
-  return createGeminiRotation({
-    apiKeys: settings.tmdbMatchGeminiApiKeys,
-    models: settings.tmdbMatchGeminiModels,
-    timeoutMs: settings.tmdbMatchGeminiTimeoutMs,
-    cooldownMs: settings.tmdbMatchGeminiCooldownMs,
-    transientParkMs: settings.tmdbMatchGeminiTransientParkMs,
-    transientParkMaxMs: settings.tmdbMatchGeminiTransientParkMaxMs,
-    modelsName: 'TMDB_MATCH_GEMINI_MODELS',
-    rpd: settings.tmdbMatchGeminiRpd,
-    tpm: settings.tmdbMatchGeminiTpm,
-    reliability: options.reliability ?? {},
+  return createOpenRouterRotation({
+    scope: 'tmdb-match',
+    apiKeys: settings.openrouterApiKeys,
+    models: settings.openrouterMatchModels,
+    modelsName: 'OPENROUTER_MATCH_MODELS',
+    baseUrl: settings.openrouterBaseUrl,
+    timeoutMs: settings.tmdbMatchAiTimeoutMs,
+    cooldownMs: settings.openrouterCooldownMs,
+    transientParkMs: settings.tmdbMatchAiTransientParkMs,
+    transientParkMaxMs: settings.tmdbMatchAiTransientParkMaxMs,
+    dailyTokenCap: settings.openrouterMatchDailyTokens,
     ledger: options.ledger ?? null,
     signal: options.signal,
     blockedError: (message) => new MatchBlockedError(message),

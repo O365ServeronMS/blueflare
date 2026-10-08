@@ -4,11 +4,10 @@ import { retryDelayMs, waitFor } from './workerLoop.js';
 
 /**
  * Fourth background loop (next to provider sync, image prewarm and the cache sweep):
- * spends the Gemini free-tier quota on the TMDB AI match backlog without holding up the
- * sync cycle. It wakes every TMDB_MATCH_AI_LOOP_MS, asks the quota ledger what is left of
- * today's requests (Pacific day), and ranks one token-packed batch per tick until the day's
- * quota or the backlog is gone. About TMDB_MATCH_AI_RESERVE_PCT of the day is kept for new
- * films and retries ('priority' scope); the old backlog may only use what lies above that.
+ * works through the TMDB AI match backlog without holding up the
+ * sync cycle. It wakes every TMDB_MATCH_AI_LOOP_MS, ranks one token-packed batch per tick until
+ * the backlog is gone or OPENROUTER_MATCH_DAILY_TOKENS is spent (then it waits for the UTC reset).
+ * The reserve (TMDB_MATCH_AI_RESERVE_PCT) only applies to providers that report a request budget.
  * Never on a request path. Promotion of verified matches stays in the sync cycle.
  */
 
@@ -34,7 +33,7 @@ export async function tmdbMatchAiTick(deps = {}) {
     return { ...result, status: 'quota', retryAfterMs: Math.max(0, (quota.resetAt ?? 0) - (deps.now ?? Date.now)()) };
   }
   const reserve = quota.total ? Math.ceil((quota.total * (settings.tmdbMatchAiReservePct ?? 10)) / 100) : 0;
-  const rowLimit = Math.max(1, settings.tmdbMatchGeminiBatchMax ?? 40);
+  const rowLimit = Math.max(1, settings.tmdbMatchAiBatchMax ?? 40);
 
   const run = async (scope) => {
     let last;
@@ -75,10 +74,11 @@ export async function runTmdbMatchAiLoop(options = {}) {
         await Promise.resolve(onChanged(tick.changed)).catch((error) => warn('[worker] tmdb ai match invalidation failed: ' + error.message));
       }
       if (tick.status === 'idle') delay = baseMs * IDLE_FACTOR;
+      if (tick.status === 'worked') delay = settings.tmdbMatchAiWorkedMs ?? 2000;
       if (tick.status === 'blocked') delay = Math.min(MAX_DELAY_MS, Math.max(baseMs, tick.retryAfterMs ?? 0));
       if (tick.status === 'quota') delay = Math.min(MAX_DELAY_MS, Math.max(baseMs, Math.min(tick.retryAfterMs ?? 0, MAX_DELAY_MS)));
       if (tick.status !== lastStatus && ['quota', 'blocked', 'idle'].includes(tick.status)) {
-        log('[worker] tmdb ai match loop: ' + tick.status + (tick.status === 'idle' ? ' (backlog empty)' : tick.status === 'quota' ? ' (daily requests spent until the Pacific reset)' : ''));
+        log('[worker] tmdb ai match loop: ' + tick.status + (tick.status === 'idle' ? ' (backlog empty)' : tick.status === 'quota' ? ' (daily token cap reached, waiting for the UTC reset)' : ''));
       }
       lastStatus = tick.status;
     } catch (error) {

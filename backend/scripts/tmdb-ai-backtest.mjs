@@ -1,12 +1,12 @@
-// Backtest of "Gemini ranks TMDB candidates, independent gate decides" against provider-supplied tmdb_ids.
+// Backtest of "the model ranks TMDB candidates, independent gate decides" against provider-supplied tmdb_ids.
 //   run    [--per-cell 175] [--limit N] [--seed 1] [--label x]  select sample, collect candidates, rank (network), write evidence
 //   report [--label x]                                          replay evidence under every policy variant (offline)
 // The pipeline only ever receives matchInput(row); ground truth lives in a separate map.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { config } from '../src/config.js';
-import { createTmdbMatchRotation } from '../src/tmdbMatchGemini.js';
-import { parseGeminiModels } from '../src/geminiRotation.js';
+import { createTmdbMatchRotation } from '../src/tmdbMatchRotation.js';
+import { parseOpenRouterModels } from '../src/openrouter.js';
 import { catalogFacts, decideAiMatch, DEFAULT_AI_POLICY, isAsianRow, matchInput, MATCH_INPUT_FIELDS, wilsonLower } from '../src/tmdbMatchAi.js';
 import { connectReadOnly, INPUT_COLUMNS, jsonlCache, OUT, shuffle, csvCell } from './lib/aiTools.mjs';
 import { entriesHash } from './lib/pipeline.mjs';
@@ -67,17 +67,17 @@ async function run() {
   let stats = { skipped: true };
   if (!rest.includes('--collect-only')) {
     // One rotation per model so a 503 ("high demand") on the best model falls through to the next one.
-    const rotations = parseGeminiModels(config.tmdbMatchGeminiModels).map((m) => ({
+    const rotations = parseOpenRouterModels(config.openrouterMatchModels).map((m) => ({
       model: m.id,
-      call: createTmdbMatchRotation({ ...config, tmdbMatchGeminiModels: m.id + ':' + m.rpm }, { warn: (msg) => log(msg.replace(/AIza\S+/g, '[key]')) })
+      call: createTmdbMatchRotation({ ...config, openrouterMatchModels: m.id + ':' + (m.rpm ?? 0) }, { warn: (msg) => log(msg.replace(/sk-or-\S+/g, '[key]')) })
     }));
-    assert.ok(rotations.every((r) => r.call), 'rotation unavailable: TMDB_MATCH_GEMINI_API_KEYS missing');
-    const cache = await jsonlCache(OUT + '/gemini-rank-cache.jsonl');
+    assert.ok(rotations.every((r) => r.call), 'rotation unavailable: OPENROUTER_API_KEYS missing');
+    const cache = await jsonlCache(OUT + '/ai-rank-cache.jsonl');
     ({ choices, stats } = await rankAll(evidence, rotations, {
-      batch: Number(arg('batch', config.tmdbMatchGeminiBatch)), cache, log, parallel: Number(arg('parallel', 3)),
+      batch: Number(arg('batch', config.tmdbMatchAiBatchMax)), cache, log, parallel: Number(arg('parallel', 3)),
       onProgress: (d, n) => log(`rank ${d}/${n} requests ${cache.size()}`)
     }));
-    log('gemini stats ' + JSON.stringify({ ...stats, latencyMs: undefined, p50: median(stats.latencyMs), max: Math.max(0, ...stats.latencyMs) }));
+    log('ai stats ' + JSON.stringify({ ...stats, latencyMs: undefined, p50: median(stats.latencyMs), max: Math.max(0, ...stats.latencyMs) }));
   }
   writeFileSync(evidenceFile, evidence.map((e) => JSON.stringify({
     id: e.row.id, input: e.row, gt: truth.get(e.row.id), queries: e.queries, candidates: e.candidates, error: e.error || null, choice: choices.get(e.row.id) || null
@@ -93,8 +93,8 @@ function loadEvidence() {
   const evidence = readFileSync(evidenceFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
   const how = arg('choice', 'real');
   if (how === 'real') {
-    // Re-derive the batches exactly as rankAll built them and look the answers up in the Gemini cache file.
-    const answers = new Map(readFileSync(OUT + '/gemini-rank-cache.jsonl', 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)));
+    // Re-derive the batches exactly as rankAll built them and look the answers up in the rank cache file.
+    const answers = new Map(readFileSync(OUT + '/ai-rank-cache.jsonl', 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)));
     const withCands = evidence.filter((e) => e.candidates.length);
     for (let i = 0; i < withCands.length; i += Number(arg('batch', 10))) {
       const group = withCands.slice(i, i + Number(arg('batch', 10)));
@@ -103,7 +103,7 @@ function loadEvidence() {
     }
     return evidence.filter((e) => !e.candidates.length || e.choice);
   }
-  // Stand-ins for the model, to measure the gate on its own (no Gemini quota needed).
+  // Stand-ins for the model, to measure the gate on its own (no model quota needed).
   for (const e of evidence) {
     const gt = e.candidates.find((c) => c.type === e.gt.type && c.id === e.gt.id);
     const decoy = e.candidates.find((c) => c !== gt);

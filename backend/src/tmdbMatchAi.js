@@ -1,9 +1,10 @@
 import { castOverlap, actorKeys, seasonOf, tmdbEndpointFor } from './tmdbMatch.js';
 import { fetchTmdb } from './tmdb.js';
-import { MatchContentError } from './tmdbMatchGemini.js';
+import { MatchContentError } from './tmdbMatchRotation.js';
+import { chatText } from './openrouter.js';
 
 /**
- * "Gemini ranks real TMDB candidates, an independent gate decides".
+ * "An LLM (OpenRouter) ranks real TMDB candidates, an independent gate decides".
  *
  * The model only chooses among candidates that TMDB itself returned; its choice
  * is never trusted on its own. `decideAiMatch` re-derives the evidence from the
@@ -303,7 +304,7 @@ export async function collectAiCandidates(inputRow, client, options = {}) {
   return { queries, candidates };
 }
 
-// ---- Gemini ranking ------------------------------------------------------------
+// ---- LLM ranking (OpenRouter) ------------------------------------------------------------
 
 export const RANK_SYSTEM_PROMPT = [
   'You match entries of a Vietnamese streaming catalog to the correct TheMovieDB (TMDB) entry.',
@@ -315,22 +316,8 @@ export const RANK_SYSTEM_PROMPT = [
   '- Use years, episode counts, runtime, cast, overview and alternative titles together. Do not guess: when no candidate is clearly the same work, answer null.',
   '- chosenId must be exactly one candidate id from that entry\'s list (e.g. "tv:1399"), or null.',
   '- confidence is 0..1. reasons is 1-3 short English phrases naming the evidence.',
-  'Answer only the JSON array, one object per catalog entry, using the entry\'s movieKey.'
+  'Answer only a JSON object {"results": [...]} holding one object per catalog entry, each with movieKey, chosenId, confidence and reasons, using the entry\'s movieKey. No markdown, no commentary.'
 ].join('\n');
-
-export const RANK_RESPONSE_SCHEMA = {
-  type: 'ARRAY',
-  items: {
-    type: 'OBJECT',
-    properties: {
-      movieKey: { type: 'STRING' },
-      chosenId: { type: 'STRING', nullable: true },
-      confidence: { type: 'NUMBER' },
-      reasons: { type: 'ARRAY', items: { type: 'STRING' } }
-    },
-    required: ['movieKey', 'chosenId', 'confidence', 'reasons']
-  }
-};
 
 const clip = (text, n) => String(text || '').replace(/\s+/g, ' ').trim().slice(0, n);
 
@@ -375,23 +362,22 @@ export function buildRankPrompt(entries) {
 }
 
 /**
- * `thinkingBudget` (tokens, > 0) lets the model reason before answering; those tokens count as
- * output, so the output ceiling grows with it and with the number of entries.
+ * Chat-completions body (the rotation adds `model`). `thinkingBudget` (tokens, > 0) lets the model
+ * reason before answering; those tokens count as output, so the ceiling grows with it and with the
+ * number of entries. 0 asks the provider to skip reasoning (models that cannot ignore it).
  */
 export function rankRequestBody(entries, options = {}) {
   const thinking = Number(options.thinkingBudget) > 0 ? Math.floor(Number(options.thinkingBudget)) : 0;
-  const body = {
-    systemInstruction: { parts: [{ text: RANK_SYSTEM_PROMPT }] },
-    contents: [{ role: 'user', parts: [{ text: buildRankPrompt(entries) }] }],
-    generationConfig: {
-      temperature: 0,
-      maxOutputTokens: Math.min(65536, Math.max(8192, 1500 + 150 * entries.length + thinking)),
-      responseMimeType: 'application/json',
-      responseSchema: RANK_RESPONSE_SCHEMA
-    }
+  return {
+    messages: [
+      { role: 'system', content: RANK_SYSTEM_PROMPT },
+      { role: 'user', content: buildRankPrompt(entries) }
+    ],
+    temperature: 0,
+    max_tokens: Math.min(65536, Math.max(8192, 1500 + 150 * entries.length + thinking)),
+    response_format: { type: 'json_object' },
+    reasoning: thinking ? { max_tokens: thinking } : { enabled: false }
   };
-  if (thinking) body.generationConfig.thinkingConfig = { thinkingBudget: thinking };
-  return body;
 }
 
 /** Characters of the system prompt + wrapper that every request pays for. */
@@ -412,24 +398,29 @@ export function calibrateTokens(calibration, chars, promptTokens) {
 
 export const estimateTokens = (calibration, chars) => Math.ceil(chars / (calibration?.charsPerToken || 3));
 
+/** The model's JSON: a bare array, or {results:[...]} (also found inside prose or a code fence). */
+export function parseRankJson(text) {
+  const clean = String(text).replace(/<think>[\s\S]*?<\/think>/gi, '').trim().replace(/^```(?:json)?\s*|\s*```$/g, '');
+  const attempts = [clean, clean.slice(clean.indexOf('{'), clean.lastIndexOf('}') + 1), clean.slice(clean.indexOf('['), clean.lastIndexOf(']') + 1)];
+  for (const attempt of attempts) {
+    if (!attempt) continue;
+    let value;
+    try { value = JSON.parse(attempt); } catch { continue; }
+    if (Array.isArray(value)) return value;
+    if (Array.isArray(value?.results)) return value.results;
+  }
+  return null;
+}
+
 /**
- * Turn a generateContent response into { movieKey -> {chosenId, confidence, reasons} }.
+ * Turn a chat completion into { movieKey -> {chosenId, confidence, reasons} }.
  * A chosenId outside that movie's candidate list becomes null (reason 'not-a-candidate'):
  * the model cannot invent an id. Entries the model skipped are simply absent.
  * Throws `makeError(message)` for refusals / unparsable output so the rotation tries the next model.
  */
 export function parseRankResponse(json, entries, makeError = (m) => new Error(m)) {
-  const blockReason = json?.promptFeedback?.blockReason;
-  if (blockReason) throw makeError('gemini blocked prompt: ' + blockReason);
-  const candidate = json?.candidates?.[0];
-  if (!candidate) throw new Error('gemini response has no candidate');
-  if (['SAFETY', 'RECITATION', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'SPII'].includes(candidate.finishReason)) throw makeError('gemini refused: ' + candidate.finishReason);
-  if (candidate.finishReason === 'MAX_TOKENS') throw makeError('gemini output truncated');
-  const text = (Array.isArray(candidate.content?.parts) ? candidate.content.parts : [])
-    .filter((p) => !p.thought && typeof p.text === 'string').map((p) => p.text).join('');
-  let list;
-  try { list = JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, '')); } catch { throw makeError('gemini returned invalid JSON'); }
-  if (!Array.isArray(list)) throw makeError('gemini JSON is not an array');
+  const list = parseRankJson(chatText(json, makeError));
+  if (!list) throw makeError('model returned invalid JSON');
   const allowed = new Map(entries.map((e) => [e.movieKey, new Set(e.candidates.map((c) => c.id))]));
   const out = new Map();
   for (const item of list) {
@@ -447,7 +438,7 @@ export function parseRankResponse(json, entries, makeError = (m) => new Error(m)
   return out;
 }
 
-/** One Gemini call for a batch of prompt entries via a `createTmdbMatchRotation` function. */
+/** One model call for a batch of prompt entries via a `createTmdbMatchRotation` function. */
 export async function rankBatch(rotation, entries, makeError = (m) => new MatchContentError(m), meta = {}, options = {}) {
   const prompt = buildRankPrompt(entries);
   meta.promptChars = prompt.length + RANK_SYSTEM_PROMPT.length;

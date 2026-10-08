@@ -22,12 +22,9 @@ function boolean(name, fallback = false) {
   return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
 }
 
-// Free-tier rotation, best first. Translation uses the flash-lite family only (500 RPD per key);
-// the 20-RPD flash models are left to the TMDB match pass. Ids verified against ai.google.dev.
-const DEFAULT_GEMINI_MODELS = [
-  'gemini-3.5-flash-lite:15', 'gemini-3.1-flash-lite:15'
-].join(',');
-const DEFAULT_TMDB_MATCH_GEMINI_MODELS = 'gemini-3.8-flash:5,gemini-3.7-flash:5,gemini-3.6-flash:5,gemini-3.5-flash:5';
+// Free models first (20 req/min, 1000 req/day after a 10 USD top-up); switching to paid models is an env change.
+const DEFAULT_OPENROUTER_TRANSLATE_MODELS = 'nvidia/nemotron-3-super-120b-a12b:free';
+const DEFAULT_OPENROUTER_MATCH_MODELS = 'nvidia/nemotron-3-super-120b-a12b:free';
 const nodeEnv = process.env.NODE_ENV || 'development';
 const syncIntervalMs = integer('SYNC_INTERVAL_MS', 15 * 60 * 1000, 1000);
 const imageSigningSecret = process.env.IMAGE_SIGNING_SECRET || (
@@ -102,19 +99,21 @@ export const config = Object.freeze({
   tmdbReviewsMaxPerMovie: integer('TMDB_REVIEWS_MAX_PER_MOVIE', 40, 1),
   // English -> Vietnamese machine translation of stored reviews (worker only).
   translateEnabled: boolean('TRANSLATE_ENABLED', true),
-  translateProvider: String(process.env.TRANSLATE_PROVIDER || 'gemini'),
+  translateProvider: String(process.env.TRANSLATE_PROVIDER || 'openrouter'),
   translateReviewsPerCycle: integer('TRANSLATE_REVIEWS_PER_CYCLE', 150, 1),
   translateDelayMs: integer('TRANSLATE_DELAY_MS', 1000, 0),
   translateMaxConsecutiveErrors: integer('TRANSLATE_MAX_CONSECUTIVE_ERRORS', 5, 1),
   translateCooldownMs: integer('TRANSLATE_COOLDOWN_MS', 60 * 60 * 1000, 1000),
   translateTimeoutMs: integer('TRANSLATE_TIMEOUT_MS', 10000, 1000),
-  // Deduped key list from GEMINI_API_KEYS. Quota is per Google project, so keys should come from different projects.
-  geminiApiKeys: parseApiKeys(process.env.GEMINI_API_KEYS),
-  // Ordered `id[:rpm]` list. GEMINI_MODEL (single id) only applies when GEMINI_MODELS is empty.
-  geminiModels: String(process.env.GEMINI_MODELS || process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODELS).trim(),
-  geminiTimeoutMs: integer('GEMINI_TIMEOUT_MS', 30000, 1000),
-  geminiDelayMs: integer('GEMINI_DELAY_MS', 0, 0),
-  geminiCooldownMs: integer('GEMINI_COOLDOWN_MS', 6 * 60 * 60 * 1000, 1000),
+  // OpenRouter serves review translation and the TMDB AI match (ordered `id[:rpm[:rpd]]` model lists).
+  openrouterApiKeys: parseApiKeys(process.env.OPENROUTER_API_KEYS || process.env.OPENROUTER_API_KEY),
+  openrouterBaseUrl: String(process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').trim(),
+  openrouterTimeoutMs: integer('OPENROUTER_TIMEOUT_MS', 60000, 1000),
+  openrouterCooldownMs: integer('OPENROUTER_COOLDOWN_MS', 60 * 60 * 1000, 1000),
+  openrouterTranslateModels: String(process.env.OPENROUTER_TRANSLATE_MODELS || DEFAULT_OPENROUTER_TRANSLATE_MODELS).trim(),
+  openrouterTranslateDailyTokens: integer('OPENROUTER_TRANSLATE_DAILY_TOKENS', 5000000, 0),
+  openrouterMatchModels: String(process.env.OPENROUTER_MATCH_MODELS || DEFAULT_OPENROUTER_MATCH_MODELS).trim(),
+  openrouterMatchDailyTokens: integer('OPENROUTER_MATCH_DAILY_TOKENS', 5000000, 0),
   // Score 0-100 = rating*10 (neutral 50 when unrated), length and recency parts.
   reviewScore: Object.freeze({
     ratingWeight: 0.6,
@@ -146,23 +145,17 @@ export const config = Object.freeze({
   tmdbMatchRetryMs: integer('TMDB_MATCH_RETRY_MS', 6 * 60 * 60 * 1000, 60 * 1000),
   // Primary-country slugs left unmatched on purpose (cast names do not transliterate).
   tmdbMatchSkipCountries: csv('TMDB_MATCH_SKIP_COUNTRIES', 'trung-quoc,hong-kong,nhat-ban,han-quoc,thai-lan'),
-  // AI candidate ranking for TMDB matching. Own keys/models on purpose: never falls back to GEMINI_API_KEYS.
+  // AI candidate ranking for TMDB matching (OpenRouter; keys and models above).
   tmdbMatchAiEnabled: boolean('TMDB_MATCH_AI_ENABLED', false),
-  tmdbMatchGeminiApiKeys: parseApiKeys(process.env.TMDB_MATCH_GEMINI_API_KEYS),
-  tmdbMatchGeminiModels: String(process.env.TMDB_MATCH_GEMINI_MODELS || DEFAULT_TMDB_MATCH_GEMINI_MODELS).trim(),
-  // Films are packed into one request until either limit. TMDB_MATCH_GEMINI_BATCH is the deprecated name of BATCH_MAX.
-  tmdbMatchGeminiBatchTokens: integer('TMDB_MATCH_GEMINI_BATCH_TOKENS', 40000, 1000),
-  tmdbMatchGeminiBatchMax: integer('TMDB_MATCH_GEMINI_BATCH_MAX', integer('TMDB_MATCH_GEMINI_BATCH', 40, 1), 1),
-  tmdbMatchGeminiTimeoutMs: integer('TMDB_MATCH_GEMINI_TIMEOUT_MS', 180000, 1000),
-  // Free-tier limits per key+model. RPD is the binding one; a model entry may override it as id:rpm:rpd.
-  tmdbMatchGeminiRpd: integer('TMDB_MATCH_GEMINI_RPD', 20, 1),
-  tmdbMatchGeminiTpm: integer('TMDB_MATCH_GEMINI_TPM', 250000, 1000),
-  // Thinking tokens per request: batches of rows with a cast (tier 1) and without (tier 2, name+year only). 0 = not sent.
-  tmdbMatchGeminiThinkT1: integer('TMDB_MATCH_GEMINI_THINK_T1', 0, 0),
-  tmdbMatchGeminiThinkT2: integer('TMDB_MATCH_GEMINI_THINK_T2', 4096, 0),
-  tmdbMatchGeminiCooldownMs: integer('TMDB_MATCH_GEMINI_COOLDOWN_MS', 6 * 60 * 60 * 1000, 1000),
-  tmdbMatchGeminiTransientParkMs: integer('TMDB_MATCH_GEMINI_TRANSIENT_PARK_MS', 45000, 1000),
-  tmdbMatchGeminiTransientParkMaxMs: integer('TMDB_MATCH_GEMINI_TRANSIENT_PARK_MAX_MS', 5 * 60 * 1000, 1000),
+  // Films are packed into one request until either limit.
+  tmdbMatchAiBatchTokens: integer('TMDB_MATCH_AI_BATCH_TOKENS', 24000, 1000),
+  tmdbMatchAiBatchMax: integer('TMDB_MATCH_AI_BATCH_MAX', 20, 1),
+  tmdbMatchAiTimeoutMs: integer('TMDB_MATCH_AI_TIMEOUT_MS', 180000, 1000),
+  // Reasoning tokens per request: batches of rows with a cast (tier 1) and without (tier 2, name+year only). 0 = reasoning off.
+  tmdbMatchAiThinkT1: integer('TMDB_MATCH_AI_THINK_T1', 0, 0),
+  tmdbMatchAiThinkT2: integer('TMDB_MATCH_AI_THINK_T2', 4096, 0),
+  tmdbMatchAiTransientParkMs: integer('TMDB_MATCH_AI_TRANSIENT_PARK_MS', 45000, 1000),
+  tmdbMatchAiTransientParkMaxMs: integer('TMDB_MATCH_AI_TRANSIENT_PARK_MAX_MS', 5 * 60 * 1000, 1000),
   // Worker pass that applies the ranking: off | dry-run (audit rows only) | apply (assigns tmdb_id).
   tmdbMatchAiMode: ['off', 'dry-run', 'apply'].includes(process.env.TMDB_MATCH_AI_MODE) ? process.env.TMDB_MATCH_AI_MODE : 'dry-run',
   tmdbMatchAiLimit: integer('TMDB_MATCH_AI_LIMIT', 100, 1),
@@ -171,6 +164,8 @@ export const config = Object.freeze({
   // Own background loop (tmdbMatchAiLoop.js) spends the daily quota; false puts the pass back into the sync cycle.
   tmdbMatchAiLoop: boolean('TMDB_MATCH_AI_LOOP', true),
   tmdbMatchAiLoopMs: integer('TMDB_MATCH_AI_LOOP_MS', 60 * 1000, 5000),
+  // Pause between two packs while the backlog lasts (the rotation itself spaces requests per model).
+  tmdbMatchAiWorkedMs: integer('TMDB_MATCH_AI_WORKED_MS', 2000, 0),
   // Share of the daily requests kept for new films and retries; the old backlog may not touch it.
   tmdbMatchAiReservePct: Math.min(90, integer('TMDB_MATCH_AI_RESERVE_PCT', 10, 0)),
   // A film is "new" for the reserve this long after it was first seen.

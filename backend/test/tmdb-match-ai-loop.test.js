@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { aiLoopEnabled, runTmdbMatchAiLoop, tmdbMatchAiTick } from '../src/tmdbMatchAiLoop.js';
-import { MatchBlockedError } from '../src/tmdbMatchGemini.js';
+import { MatchBlockedError } from '../src/tmdbMatchRotation.js';
 
 const settings = (over = {}) => ({
-  tmdbEnabled: true, tmdbApiKey: 't', tmdbMatchAiEnabled: true, tmdbMatchGeminiApiKeys: ['k'], tmdbMatchAiMode: 'dry-run',
-  tmdbMatchAiLimit: 100, tmdbMatchAiRetryMs: 1, tmdbMatchAiErrorRetryMs: 1, tmdbMatchGeminiBatchMax: 3, tmdbMatchConcurrency: 2,
+  tmdbEnabled: true, tmdbApiKey: 't', tmdbMatchAiEnabled: true, openrouterApiKeys: ['k'], tmdbMatchAiMode: 'dry-run',
+  tmdbMatchAiLimit: 100, tmdbMatchAiRetryMs: 1, tmdbMatchAiErrorRetryMs: 1, tmdbMatchAiBatchMax: 3, tmdbMatchConcurrency: 2,
   tmdbMatchAiLoop: true, tmdbMatchAiLoopMs: 60000, tmdbMatchAiReservePct: 10, tmdbMatchAiFreshMs: 1000, ...over
 });
 const movie = (n) => ({ id: 'id' + n, canonical_slug: 's' + n, title: 'Mây Họa Ánh Trăng', original_title: 'Moonlight Drawn By Clouds', year: 2016, media_type: 'tv', countries: [], actors: [], episode_total: '18', duration: '60' });
@@ -45,7 +45,7 @@ test('the loop flag defaults on and only an explicit false hands the pass back t
 });
 
 test('tick is off without AI, keys or mode', async () => {
-  for (const config of [{ tmdbMatchAiMode: 'off' }, { tmdbMatchGeminiApiKeys: [] }, { tmdbMatchAiEnabled: false }]) {
+  for (const config of [{ tmdbMatchAiMode: 'off' }, { openrouterApiKeys: [] }, { tmdbMatchAiEnabled: false }]) {
     const h = harness({ config, lists: { priority: [movie(1)] } });
     assert.equal((await tmdbMatchAiTick(h.deps)).status, 'off');
     assert.deepEqual(h.calls, []);
@@ -133,7 +133,7 @@ test('loop: wakes at the configured interval, idles slower, backs off after quot
   const c3 = new AbortController();
   const d3 = [];
   await runTmdbMatchAiLoop({ ...busy.deps, signal: c3.signal, sleep: async (ms) => { d3.push(ms); c3.abort(); } });
-  assert.deepEqual(d3, [60_000]);
+  assert.deepEqual(d3, [2_000], 'backlog left: short pause, the rotation spaces the requests');
 });
 
 test('loop: a failing tick is logged and retried with growing delay, never thrown', async () => {

@@ -108,11 +108,15 @@ test('parseRankResponse: a chosenId outside the candidates becomes null, skipped
     { movieKey: 'a', chosenId: 'tv:3', confidence: 2, reasons: ['x'] },
     { movieKey: 'z', chosenId: 'tv:1', confidence: 1, reasons: [] }
   ]);
-  const out = parseRankResponse({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text }] } }] }, entries);
+  const chat = (content, finish = 'stop') => ({ choices: [{ finish_reason: finish, message: { content } }] });
+  const out = parseRankResponse(chat(text), entries);
   assert.equal(out.size, 1);
   assert.deepEqual(out.get('a'), { chosenId: null, confidence: 1, reasons: ['x', 'not-a-candidate'] });
-  assert.throws(() => parseRankResponse({ candidates: [{ content: { parts: [{ text: 'nope' }] } }] }, entries), /invalid JSON/);
-  assert.throws(() => parseRankResponse({ candidates: [{ finishReason: 'MAX_TOKENS' }] }, entries), /truncated/);
+  assert.throws(() => parseRankResponse(chat('nope'), entries), /invalid JSON/);
+  assert.throws(() => parseRankResponse(chat('[]', 'length'), entries), /truncated/);
+  // {results:[...]} wrapper, code fences and a leading <think> block are accepted
+  const wrapped = '<think>hmm</think>\n```json\n' + JSON.stringify({ results: [{ movieKey: 'b', chosenId: 'tv:3', confidence: 0.9, reasons: [] }] }) + '\n```';
+  assert.equal(parseRankResponse(chat(wrapped), entries).get('b').chosenId, 'tv:3');
 });
 
 test('compactCandidate flattens names, translations and the top cast', () => {
@@ -211,13 +215,15 @@ test('prompt levels: rich carries more alt names and overview than standard, com
   assert.deepEqual(promptEntry('m1', { ...matchInput(row()), overview: long }, [c]), at('standard'), 'default level');
 });
 
-test('rankRequestBody: thinking budget only when asked, output ceiling grows with it and with the entries', () => {
-  assert.equal(rankRequestBody([]).generationConfig.thinkingConfig, undefined);
-  assert.equal(rankRequestBody([], { thinkingBudget: 0 }).generationConfig.thinkingConfig, undefined);
+test('rankRequestBody: reasoning only when asked, output ceiling grows with it and with the entries', () => {
+  assert.deepEqual(rankRequestBody([]).reasoning, { enabled: false });
+  assert.deepEqual(rankRequestBody([], { thinkingBudget: 0 }).reasoning, { enabled: false });
   const body = rankRequestBody(Array.from({ length: 40 }, (_, i) => ({ movieKey: 'm' + i })), { thinkingBudget: 4096 });
-  assert.deepEqual(body.generationConfig.thinkingConfig, { thinkingBudget: 4096 });
-  assert.equal(body.generationConfig.maxOutputTokens, 1500 + 150 * 40 + 4096);
-  assert.equal(rankRequestBody([]).generationConfig.maxOutputTokens, 8192);
+  assert.deepEqual(body.reasoning, { max_tokens: 4096 });
+  assert.equal(body.max_tokens, 1500 + 150 * 40 + 4096);
+  assert.equal(rankRequestBody([]).max_tokens, 8192);
+  assert.deepEqual(body.response_format, { type: 'json_object' });
+  assert.equal(body.messages[0].role, 'system');
 });
 
 test('token calibration follows the reported prompt tokens and ignores nonsense', () => {

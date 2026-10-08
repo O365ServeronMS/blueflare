@@ -48,7 +48,7 @@ export async function syncReviewTranslations(deps = {}) {
   if (!chain.length) {
     if (!state.warnedNoProvider) {
       state.warnedNoProvider = true;
-      console.warn('[worker] review translate: no usable provider (is GEMINI_API_KEYS set?)');
+      console.warn('[worker] review translate: no usable provider (is OPENROUTER_API_KEYS set?)');
     }
     return [];
   }

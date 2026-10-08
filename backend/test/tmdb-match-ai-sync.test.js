@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { pool } from '../src/db.js';
 import { listAiMatchCandidates, recordAiRun, refreshTmdbAiMatches } from '../src/tmdbMatchAiSync.js';
-import { MatchBlockedError, MatchContentError } from '../src/tmdbMatchGemini.js';
+import { MatchBlockedError, MatchContentError } from '../src/tmdbMatchRotation.js';
 
 const settings = (over = {}) => ({
-  tmdbEnabled: true, tmdbApiKey: 'tmdb-test', tmdbMatchAiEnabled: true, tmdbMatchGeminiApiKeys: ['k'],
+  tmdbEnabled: true, tmdbApiKey: 'tmdb-test', tmdbMatchAiEnabled: true, openrouterApiKeys: ['k'],
   tmdbMatchAiMode: 'dry-run', tmdbMatchAiLimit: 100, tmdbMatchAiRetryMs: 1000, tmdbMatchAiErrorRetryMs: 10,
-  tmdbMatchGeminiBatchMax: 2, tmdbMatchConcurrency: 2, ...over
+  tmdbMatchAiBatchMax: 2, tmdbMatchConcurrency: 2, ...over
 });
 
 const movie = (n, over = {}) => ({
@@ -38,7 +38,7 @@ function harness(rows, extra = {}) {
 }
 
 test('pass is off when mode off, AI unavailable, or TMDB disabled', async () => {
-  for (const config of [{ tmdbMatchAiMode: 'off' }, { tmdbMatchAiEnabled: false }, { tmdbMatchGeminiApiKeys: [] }, { tmdbEnabled: false }, { tmdbApiKey: '' }]) {
+  for (const config of [{ tmdbMatchAiMode: 'off' }, { tmdbMatchAiEnabled: false }, { openrouterApiKeys: [] }, { tmdbEnabled: false }, { tmdbApiKey: '' }]) {
     const h = harness([movie(1)], { config });
     assert.deepEqual(await refreshTmdbAiMatches(h.deps), []);
     assert.equal(h.runs.length, 0);
@@ -101,7 +101,7 @@ test('assign throwing is isolated to that title', async () => {
 
 test('blocked rotation stops cleanly: nothing recorded for unranked titles, next cycles wait', async () => {
   let calls = 0;
-  const rotation = async () => { calls += 1; throw Object.assign(new MatchBlockedError('gemini: every model is cooling down or exhausted'), { retryAfterMs: 5000 }); };
+  const rotation = async () => { calls += 1; throw Object.assign(new MatchBlockedError('openrouter: every model is cooling down or exhausted'), { retryAfterMs: 5000 }); };
   const h = harness([movie(1), movie(2), movie(3), movie(4)], { rotation });
   assert.deepEqual(await refreshTmdbAiMatches(h.deps), []);
   assert.equal(calls, 1, 'no further requests after blocked');
@@ -117,7 +117,7 @@ test('blocked rotation stops cleanly: nothing recorded for unranked titles, next
   assert.ok(h.deps.listArgs, 'resumes after retryAfter');
 });
 
-test('titles without candidates are none without a Gemini call; tmdb failures are error only for that title', async () => {
+test('titles without candidates are none without an AI call; tmdb failures are error only for that title', async () => {
   let ranked = 0;
   const h = harness([movie(1), movie(2)], { client: { empty: true }, rotation: async () => { ranked += 1; return pickAll(); } });
   await refreshTmdbAiMatches(h.deps);
@@ -182,7 +182,7 @@ const cast = ['Aa Bb', 'Cc Dd', 'Ee Ff'];
 /** Prompt chars one film adds, measured through the engine itself (a pack of one). */
 async function filmChars() {
   const seen = [];
-  const h = harness([movie(1)], { config: { tmdbMatchGeminiBatchMax: 1 }, rotation: async (req) => { seen.push(req.text.length); return manyChoices(); } });
+  const h = harness([movie(1)], { config: { tmdbMatchAiBatchMax: 1 }, rotation: async (req) => { seen.push(req.text.length); return manyChoices(); } });
   await refreshTmdbAiMatches(h.deps);
   const { RANK_PROMPT_OVERHEAD_CHARS } = await import('../src/tmdbMatchAi.js');
   return seen[0] - RANK_PROMPT_OVERHEAD_CHARS;
@@ -193,7 +193,7 @@ test('packing: films are added until the estimated token budget is full', async 
   const budget = Math.ceil((((await import('../src/tmdbMatchAi.js')).RANK_PROMPT_OVERHEAD_CHARS) + 2.5 * e) / 3); // room for 2, not 3
   const sizes = [];
   const h = harness(Array.from({ length: 5 }, (_, i) => movie(i + 1)), {
-    config: { tmdbMatchGeminiBatchTokens: budget, tmdbMatchGeminiBatchMax: 40 },
+    config: { tmdbMatchAiBatchTokens: budget, tmdbMatchAiBatchMax: 40 },
     rotation: async (req) => { sizes.push(countKeys(req)); assert.ok(req.tokens <= budget, 'estimate stays inside the budget'); return manyChoices(); }
   });
   await refreshTmdbAiMatches(h.deps);
@@ -204,7 +204,7 @@ test('packing: films are added until the estimated token budget is full', async 
 test('packing: the film-count limit applies even when tokens would allow more', async () => {
   const sizes = [];
   const h = harness(Array.from({ length: 7 }, (_, i) => movie(i + 1)), {
-    config: { tmdbMatchGeminiBatchTokens: 1e9, tmdbMatchGeminiBatchMax: 3 },
+    config: { tmdbMatchAiBatchTokens: 1e9, tmdbMatchAiBatchMax: 3 },
     rotation: async (req) => { sizes.push(countKeys(req)); return manyChoices(); }
   });
   await refreshTmdbAiMatches(h.deps);
@@ -215,12 +215,12 @@ test('packing: a film alone is never split off by the budget; tiers (cast / no c
   const sizes = [];
   const rows = [movie(1, { actors: cast }), movie(2, { actors: cast }), movie(3), movie(4), movie(5, { actors: cast })];
   const h = harness(rows, {
-    config: { tmdbMatchGeminiBatchTokens: 1000, tmdbMatchGeminiBatchMax: 40 },
+    config: { tmdbMatchAiBatchTokens: 1000, tmdbMatchAiBatchMax: 40 },
     rotation: async (req) => { sizes.push(countKeys(req)); return manyChoices(); }
   });
   await refreshTmdbAiMatches(h.deps);
   assert.equal(sizes.reduce((a, b) => a + b, 0), 5);
-  const sameTier = harness(rows, { config: { tmdbMatchGeminiBatchTokens: 1e9, tmdbMatchGeminiBatchMax: 40 }, rotation: async (req) => { sizes.length = 0; sizes.push(countKeys(req)); return manyChoices(); } });
+  const sameTier = harness(rows, { config: { tmdbMatchAiBatchTokens: 1e9, tmdbMatchAiBatchMax: 40 }, rotation: async (req) => { sizes.length = 0; sizes.push(countKeys(req)); return manyChoices(); } });
   const batches = [];
   sameTier.deps.rotation = async (req) => { batches.push(countKeys(req)); return manyChoices(); };
   await refreshTmdbAiMatches(sameTier.deps);
@@ -233,7 +233,7 @@ test('calibration: the prompt token count a response reports corrects the next p
   const budget = Math.ceil((RANK_PROMPT_OVERHEAD_CHARS + 2.5 * e) / 3);
   const sizes = [];
   const h = harness(Array.from({ length: 12 }, (_, i) => movie(i + 1)), {
-    config: { tmdbMatchGeminiBatchTokens: budget, tmdbMatchGeminiBatchMax: 40 },
+    config: { tmdbMatchAiBatchTokens: budget, tmdbMatchAiBatchMax: 40 },
     rotation: async (req) => {
       sizes.push(countKeys(req));
       req.meta.usage = { promptTokens: Math.round(req.text.length / 6), outputTokens: 10, thoughtTokens: 0, totalTokens: 0 }; // twice as dense as assumed
@@ -252,7 +252,7 @@ test('bisection: a refused batch is halved until the offending film is alone (ab
   const requests = [];
   const rows = Array.from({ length: 8 }, (_, i) => movie(i + 1, i === 5 ? { original_title: 'Poison', title: 'Poison' } : {}));
   const h = harness(rows, {
-    config: { tmdbMatchGeminiBatchMax: 40 },
+    config: { tmdbMatchAiBatchMax: 40 },
     rotation: async (req) => { requests.push(countKeys(req)); if (req.text.includes('Poison')) throw new MatchContentError('refused'); return manyChoices(); }
   });
   await refreshTmdbAiMatches(h.deps);
@@ -265,7 +265,7 @@ test('bisection: a provider outage in the middle stops the pass without recordin
   let calls = 0;
   const rows = Array.from({ length: 4 }, (_, i) => movie(i + 1, i === 3 ? { original_title: 'Poison', title: 'Poison' } : {}));
   const h = harness(rows, {
-    config: { tmdbMatchGeminiBatchMax: 40 },
+    config: { tmdbMatchAiBatchMax: 40 },
     rotation: async (req) => {
       calls += 1;
       if (calls === 1) throw new MatchContentError('refused');
@@ -280,15 +280,15 @@ test('bisection: a provider outage in the middle stops the pass without recordin
 
 test('thinking budget: larger for films without a cast (tier 2), omitted for tier 1 when 0', async () => {
   const bodies = [];
-  const rotation = async (req) => { bodies.push(req.buildBody({ id: 'm' }).generationConfig); return manyChoices(); };
+  const rotation = async (req) => { bodies.push(req.buildBody({ id: 'm' })); return manyChoices(); };
   const h = harness([movie(1, { actors: cast }), movie(2)], {
-    config: { tmdbMatchGeminiThinkT1: 0, tmdbMatchGeminiThinkT2: 4096 }, rotation
+    config: { tmdbMatchAiThinkT1: 0, tmdbMatchAiThinkT2: 4096 }, rotation
   });
   await refreshTmdbAiMatches(h.deps);
   assert.equal(bodies.length, 2);
-  assert.equal(bodies[0].thinkingConfig, undefined);
-  assert.equal(bodies[1].thinkingConfig.thinkingBudget, 4096);
-  assert.ok(bodies[1].maxOutputTokens >= 4096 + 1500);
+  assert.deepEqual(bodies[0].reasoning, { enabled: false });
+  assert.deepEqual(bodies[1].reasoning, { max_tokens: 4096 });
+  assert.ok(bodies[1].max_tokens >= 4096 + 1500);
 });
 
 test('scope priority and fresh window reach the listing; legacy pass lists scope all', async () => {

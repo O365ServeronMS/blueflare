@@ -828,7 +828,7 @@ async function syncCycle() {
       return [];
     }));
   }
-  // With the loop on, its own wake-ups spend the Gemini quota; the two never run the same pass.
+  // With the loop on, its own wake-ups spend the OpenRouter budget; the two never run the same pass.
   if (!stopping && !aiLoopEnabled(config)) {
     ratingChangedSlugs.push(...await refreshTmdbAiMatches().catch((error) => {
       console.warn('[worker] tmdb ai match pass failed', error.message);
@@ -1028,7 +1028,7 @@ function startTmdbMatchAiLoop() {
 
 try {
   await runWorkerLoop({
-    // The loop needs the migrated schema (gemini_quota_ledger); it is started once, after the first successful migrate.
+    // The loop needs the migrated schema (ai_quota_ledger); it is started once, after the first successful migrate.
     initialize: async () => { await migrate(); startTmdbMatchAiLoop(); },
     runCycle: async () => {
       await refreshHeroTrendingIfDue();
@@ -1047,7 +1047,7 @@ try {
 } finally {
   // A timed-out cycle can still hold a pooled client or a wedged Valkey socket,
   // which would stall a graceful close forever. Bound it, then exit.
-  // The loop stops after its current request (the signal aborts an in-flight Gemini call); bound the wait.
+  // The loop stops after its current request (the signal aborts an in-flight AI call); bound the wait.
   if (aiLoop) await Promise.race([aiLoop, new Promise((resolve) => setTimeout(resolve, 5000).unref())]);
   await Promise.race([
     Promise.allSettled([closeCache(), closeDatabase()]),

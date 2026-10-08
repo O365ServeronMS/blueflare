@@ -1,4 +1,4 @@
-/** PostgreSQL side of geminiQuotaLedger.js (table gemini_quota_ledger, migration 031). Holds fingerprints, never keys. */
+/** PostgreSQL side of aiQuotaLedger.js (table ai_quota_ledger, migrations 031/032). Holds fingerprints, never keys. */
 
 const KEEP_DAYS = 30;
 
@@ -10,7 +10,7 @@ export function createPgQuotaStore(options = {}) {
       const result = await pool.query(
         'SELECT key_fp, model, day::text AS day, requests, successes, failures, tokens, recent_tokens, ' +
         '(extract(epoch FROM last_request_at) * 1000)::bigint AS last_request_ms ' +
-        'FROM gemini_quota_ledger WHERE day = $1::date',
+        'FROM ai_quota_ledger WHERE day = $1::date',
         [day]
       );
       return result.rows.map((row) => ({
@@ -22,7 +22,7 @@ export function createPgQuotaStore(options = {}) {
     async save(row) {
       const pool = await getPool();
       await pool.query(
-        'INSERT INTO gemini_quota_ledger (key_fp, model, day, requests, successes, failures, tokens, recent_tokens, last_request_at, updated_at) ' +
+        'INSERT INTO ai_quota_ledger (key_fp, model, day, requests, successes, failures, tokens, recent_tokens, last_request_at, updated_at) ' +
         'VALUES ($1, $2, $3::date, $4, $5, $6, $7, $8::jsonb, CASE WHEN $9::bigint IS NULL THEN NULL ELSE to_timestamp($9::bigint / 1000.0) END, now()) ' +
         'ON CONFLICT (key_fp, model, day) DO UPDATE SET requests = EXCLUDED.requests, successes = EXCLUDED.successes, ' +
         'failures = EXCLUDED.failures, tokens = EXCLUDED.tokens, recent_tokens = EXCLUDED.recent_tokens, ' +
@@ -32,7 +32,7 @@ export function createPgQuotaStore(options = {}) {
     },
     async prune(day) {
       const pool = await getPool();
-      await pool.query("DELETE FROM gemini_quota_ledger WHERE day < $1::date - $2::int", [day, KEEP_DAYS]);
+      await pool.query("DELETE FROM ai_quota_ledger WHERE day < $1::date - $2::int", [day, KEEP_DAYS]);
     }
   };
 }

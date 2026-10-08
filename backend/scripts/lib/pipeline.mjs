@@ -27,7 +27,7 @@ export const entriesHash = (entries) => createHash('sha256').update(JSON.stringi
 
 /**
  * Rank rows in batches. `evidence`: [{ row, candidates }]. Returns Map(rowId -> choice) plus request stats.
- * Gemini answers are cached by prompt content, so replays cost nothing.
+ * Model answers are cached by prompt content, so replays cost nothing.
  */
 export async function rankAll(evidence, rotations, { batch = 10, parallel = 3, cache, onProgress, log = () => {} } = {}) {
   const withCands = evidence.filter((e) => e.candidates.length);

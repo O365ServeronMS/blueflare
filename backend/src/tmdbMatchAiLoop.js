@@ -5,10 +5,8 @@ import { retryDelayMs, waitFor } from './workerLoop.js';
 /**
  * Fourth background loop (next to provider sync, image prewarm and the cache sweep):
  * works through the TMDB AI match backlog without holding up the
- * sync cycle. It wakes every TMDB_MATCH_AI_LOOP_MS, ranks one token-packed batch per tick until
- * the backlog is gone or the daily token cap is spent (then it waits for the UTC reset).
- * The reserve (TMDB_MATCH_AI_RESERVE_PCT) only applies to providers that report a request budget.
- * Never on a request path. Promotion of verified matches stays in the sync cycle.
+ * sync cycle. It wakes every TMDB_MATCH_AI_LOOP_MS and ranks one token-packed batch per tick
+ * until the backlog is gone. Never on a request path. Promotion of verified matches stays in the sync cycle.
  */
 
 const MAX_FREE_SWEEPS = 50;
@@ -18,9 +16,9 @@ const IDLE_FACTOR = 5;
 export const aiLoopEnabled = (settings = config) => settings.tmdbMatchAiLoop !== false;
 
 /**
- * One wake-up. Returns `{ status: 'off'|'quota'|'blocked'|'worked'|'idle', changed, requests, retryAfterMs? }`.
+ * One wake-up. Returns `{ status: 'off'|'blocked'|'worked'|'idle', changed, requests, retryAfterMs? }`.
  * Passes that only finished films needing no model (no candidates, TMDB errors) cost no
- * quota, so they repeat within the tick until a request is made or the listing is empty.
+ * request, so they repeat within the tick until a request is made or the listing is empty.
  */
 export async function tmdbMatchAiTick(deps = {}) {
   const settings = deps.config ?? config;
@@ -28,11 +26,6 @@ export async function tmdbMatchAiTick(deps = {}) {
   if (!aiPassAvailable(settings)) return result;
   const rotation = deps.rotation ?? sharedAiRotation(settings, deps);
   await rotation.ready?.();
-  const quota = rotation.quota?.() ?? { total: null, remaining: null };
-  if (quota.remaining != null && quota.remaining <= 0) {
-    return { ...result, status: 'quota', retryAfterMs: Math.max(0, (quota.resetAt ?? 0) - (deps.now ?? Date.now)()) };
-  }
-  const reserve = quota.total ? Math.ceil((quota.total * (settings.tmdbMatchAiReservePct ?? 10)) / 100) : 0;
   const rowLimit = Math.max(1, settings.tmdbMatchAiBatchMax ?? 40);
 
   const run = async (scope) => {
@@ -47,7 +40,7 @@ export async function tmdbMatchAiTick(deps = {}) {
   };
 
   let pass = await run('priority');
-  if (!pass.blocked && !pass.skipped && pass.listed === 0 && (quota.remaining == null || quota.remaining > reserve)) pass = await run('all');
+  if (!pass.blocked && !pass.skipped && pass.listed === 0) pass = await run('all');
   if (pass.blocked) return { ...result, status: 'blocked', retryAfterMs: pass.blocked.retryAfterMs ?? null };
   if (pass.skipped) return { ...result, status: 'off' };
   return { ...result, status: pass.listed === 0 ? 'idle' : 'worked' };
@@ -76,9 +69,8 @@ export async function runTmdbMatchAiLoop(options = {}) {
       if (tick.status === 'idle') delay = baseMs * IDLE_FACTOR;
       if (tick.status === 'worked') delay = settings.tmdbMatchAiWorkedMs ?? 2000;
       if (tick.status === 'blocked') delay = Math.min(MAX_DELAY_MS, Math.max(baseMs, tick.retryAfterMs ?? 0));
-      if (tick.status === 'quota') delay = Math.min(MAX_DELAY_MS, Math.max(baseMs, Math.min(tick.retryAfterMs ?? 0, MAX_DELAY_MS)));
-      if (tick.status !== lastStatus && ['quota', 'blocked', 'idle'].includes(tick.status)) {
-        log('[worker] tmdb ai match loop: ' + tick.status + (tick.status === 'idle' ? ' (backlog empty)' : tick.status === 'quota' ? ' (daily token cap reached, waiting for the UTC reset)' : ''));
+      if (tick.status !== lastStatus && ['blocked', 'idle'].includes(tick.status)) {
+        log('[worker] tmdb ai match loop: ' + tick.status + (tick.status === 'idle' ? ' (backlog empty)' : ''));
       }
       lastStatus = tick.status;
     } catch (error) {

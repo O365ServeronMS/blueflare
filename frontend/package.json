@@ -7,7 +7,6 @@
     "build": "next build",
     "start": "node .next/standalone/server.js",
     "preview": "node .next/standalone/server.js",
-    "deploy": "docker build -f Dockerfile.frontend -t blueflare-frontend:latest .",
     "test": "vitest run"
   },
   "dependencies": {

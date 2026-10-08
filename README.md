@@ -28,7 +28,7 @@ Same repo, same house: `backend/` owns provider sync, PostgreSQL, Valkey caching
 | 📡 Providers | NguonC primary, KKPhim fills the gaps |
 | 🗄️ Data/cache | PostgreSQL + Valkey + Next render cache |
 | 🖼️ Images | Two variants only: `/i/m/` portrait, `/i/d/` landscape |
-| 💾 Backup | Nightly dump to R2 (any S3-compatible store) |
+| 💾 Backup | Optional nightly dump to R2 (any S3-compatible store), on when `BACKUP_ENABLED=true` |
 | ▶️ Video | hls.js light (lazy) + provider embeds |
 
 ## 🏃 Run locally
@@ -53,7 +53,7 @@ cd /opt/stacks/blueflare && docker compose up -d --build
 
 ## 🚢 Deploy on the VPS
 
-Codebase và runtime nằm ở hai chỗ (xem [ADR-001](docs/adr/ADR-001-tach-stack-runtime-khoi-codebase.md)):
+Codebase và runtime nằm ở hai chỗ (xem mục "Runtime/codebase split" trong [backend/README.md](backend/README.md)):
 
 | | Đường dẫn | Nội dung |
 |---|---|---|
@@ -99,7 +99,10 @@ stack rồi mới áp dụng:
 ⚠️ Đừng bao giờ chạy `docker compose down -v` — cờ `-v` xóa named volume, tức là mất
 toàn bộ Postgres. Backup: `./deploy/backup-postgres.sh`.
 
-Then reload Caddy per [`backend/README.md`](backend/README.md). ✅
+Caddy: `bootstrap-vps.sh` tự chèn hai khối `phim.bluesia.net`/`img.bluesia.net` vào
+`/etc/caddy/Caddyfile` (idempotent, có marker) rồi `caddy fmt`/`validate`/reload — không
+cần reload tay lần đầu. Chỉ khi sửa một Caddyfile đã triển khai (script bỏ qua khối đã có)
+mới phải sửa tay rồi reload, xem [`backend/README.md`](backend/README.md). ✅
 
 ## 🗂️ Project layout
 
@@ -108,7 +111,6 @@ frontend/          # Next.js app: src/app, components, lib, public, Dockerfile
 backend/           # VPS origin: API, worker, migrations, tests, Dockerfile
 infra/             # compose.yml, scripts/ (bootstrap, sync), cloudflare/, backup/
 scripts/           # deploy, rollback, verify
-docs/              # Live specs and ADR-001
 ```
 
 🧭 Category context rides in `returnTo=<encoded path+search>` — page 2/3/etc. stays addressable and reload-safe.

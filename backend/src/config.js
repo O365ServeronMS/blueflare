@@ -129,12 +129,10 @@ export const config = Object.freeze({
     neutralRating: 50
   }),
 
-  // Cast-verified TMDB identity for rows the provider gave no tmdb_id. Stored in
-  // tmdb_match_*, never in tmdb_id. Off by default: it costs ~7 TMDB calls per row.
   // NguonC-only rows folded into the KKPhim row of the same work: off | dry-run | apply.
   mergeDuplicatesMode: ['off', 'dry-run', 'apply'].includes(process.env.MERGE_DUPLICATES_MODE)
     ? process.env.MERGE_DUPLICATES_MODE
-    : 'off',
+    : 'apply',
   mergeAlertPending: integer('MERGE_ALERT_PENDING', 200, 1),
   mergeBatchLimit: integer('MERGE_BATCH_LIMIT', 50, 1),
   // TMDB identity promotion: cast-verified tmdb_match_* rows become real tmdb_id (source 'inferred'),
@@ -172,7 +170,6 @@ export const config = Object.freeze({
   // Pause between two packs while the backlog lasts (the rotation itself spaces requests per model).
   tmdbMatchAiWorkedMs: integer('TMDB_MATCH_AI_WORKED_MS', 2000, 0),
   // Share of the daily requests kept for new films and retries; the old backlog may not touch it.
-  tmdbMatchAiReservePct: Math.min(90, integer('TMDB_MATCH_AI_RESERVE_PCT', 10, 0)),
   // A film is "new" for the reserve this long after it was first seen.
   tmdbMatchAiFreshMs: integer('TMDB_MATCH_AI_FRESH_MS', 3 * 24 * 60 * 60 * 1000, 60 * 1000),
 

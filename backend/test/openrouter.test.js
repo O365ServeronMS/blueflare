@@ -89,25 +89,6 @@ test('content refusal (finish_reason content_filter) goes to the next model, the
   assert.deepEqual(seen, ['a/one:free', 'b/two']);
 });
 
-test('daily token cap: persistent ledger counts tokens, over the cap the call is blocked until 00:00 UTC', async () => {
-  const c = clock();
-  const ledger = createQuotaLedger({ now: c.now, dayOf: utcDay, nextReset: nextUtcMidnight, warn: () => {} });
-  let n = 0;
-  const call = createOpenRouterRotation({
-    apiKeys: [KEY], models: 'a/one:0', timeoutMs: 1000, cooldownMs: 24 * 3600000, dailyTokenCap: 300, ledger,
-    now: c.now, sleep: c.sleep, warn: () => {}, fetchImpl: async () => { n += 1; return res(200, chat('ok')); }
-  });
-  const go = () => call({ text: 'x', buildBody: () => ({}), parse });
-  await go(); await go(); // 150 + 150 = 300
-  await assert.rejects(go(), (e) => e.blocked === true && /token cap/.test(e.message) && e.retryAfterMs === nextUtcMidnight(c.now()) - c.now());
-  assert.equal(n, 2, 'no third request was sent');
-  assert.equal(call.quota().remaining, 0);
-  c.t.now = nextUtcMidnight(c.now()) + 1000;
-  await go();
-  assert.equal(n, 3, 'new UTC day: cap resets');
-  assert.equal(call.quota().remaining, null);
-});
-
 test('rate spacing: a :free model is spaced 3s apart (20 rpm) through the clock', async () => {
   const { call, c } = make({ models: 'a/one:free' });
   await call();
@@ -131,7 +112,7 @@ test('openrouterProvider translates with the shared prompt, rejects stray CJK on
   const bodies = [];
   const answers = ['xin chào 妻', 'xin chào'];
   const translate = openrouterProvider({
-    apiKeys: [KEY], models: 'a/one:0,b/two:0', dailyTokenCap: 0,
+    apiKeys: [KEY], models: 'a/one:0,b/two:0',
     fetchImpl: async (url, init) => { bodies.push(JSON.parse(init.body)); return res(200, chat(answers.shift())); }
   });
   const meta = {};
@@ -143,7 +124,7 @@ test('openrouterProvider translates with the shared prompt, rejects stray CJK on
 });
 
 test('buildTranslators: openrouter is in the chain only with a key; blocked errors are TranslateBlockedError', async () => {
-  const settings = { translateProvider: 'openrouter', openrouterApiKeys: [], openrouterTranslateModels: 'a/one:0', openrouterTimeoutMs: 1000, openrouterCooldownMs: 1000, openrouterTranslateDailyTokens: 0 };
+  const settings = { translateProvider: 'openrouter', openrouterApiKeys: [], openrouterTranslateModels: 'a/one:0', openrouterTimeoutMs: 1000, openrouterCooldownMs: 1000 };
   assert.equal(buildTranslators(settings).length, 0);
   const [provider] = buildTranslators({ ...settings, openrouterApiKeys: [KEY] }, { ledger: createQuotaLedger({ warn: () => {} }), fetchImpl: async () => res(401, {}) });
   assert.equal(provider.name, 'openrouter');

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Backtest for the cast-evidence TMDB matcher (docs/adr/PLAN-005, Phase 0).
+ * Backtest for the cast-evidence TMDB matcher.
  *
  *   collect   rows JSON on stdin → evidence JSON on stdout. Calls TMDB (read-only)
  *             and needs TMDB_API_KEY. Run it where the worker's env exists.

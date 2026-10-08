@@ -41,7 +41,6 @@ export function createTmdbMatchRotation(settings = config, options = {}) {
     cooldownMs: settings.openrouterCooldownMs,
     transientParkMs: settings.tmdbMatchAiTransientParkMs,
     transientParkMaxMs: settings.tmdbMatchAiTransientParkMaxMs,
-    dailyTokenCap: settings.openrouterMatchDailyTokens,
     paidDailyOutputCap: settings.openrouterMatchPaidDailyOutputTokens,
     ledger: options.ledger ?? null,
     signal: options.signal,

@@ -11,7 +11,7 @@
       "default": 60
     }
   },
-  "expression": "(http.host eq \"img.bluesia.net\" and http.request.method in {\"GET\" \"HEAD\"} and (http.request.uri.path eq \"/api/home-data\" or http.request.uri.path eq \"/api/list\" or http.request.uri.path eq \"/api/genre\" or http.request.uri.path eq \"/api/country\" or http.request.uri.path eq \"/api/categories\" or http.request.uri.path eq \"/api/countries\" or starts_with(http.request.uri.path, \"/api/movie/\") or starts_with(http.request.uri.path, \"/api/recommendation/\")))",
+  "expression": "(http.host eq \"img.bluesia.net\" and http.request.method in {\"GET\" \"HEAD\"} and (http.request.uri.path eq \"/api/home-data\" or http.request.uri.path eq \"/api/list\" or http.request.uri.path eq \"/api/genre\" or http.request.uri.path eq \"/api/country\" or http.request.uri.path eq \"/api/categories\" or http.request.uri.path eq \"/api/countries\" or starts_with(http.request.uri.path, \"/api/movie/\") or starts_with(http.request.uri.path, \"/api/recommendations/\")))",
   "description": "Blueflare catalog API allowlist: cache read-only catalog responses for 5m edge / 60s browser",
   "enabled": true,
   "ref": "blueflare_catalog_api_cache"

@@ -1,5 +1,20 @@
 # Blueflare UI v2
 
+## Contents
+
+- [Product direction](#product-direction)
+- [Token model](#token-model)
+- [Component hierarchy](#component-hierarchy)
+- [Home architecture](#home-architecture)
+- [Media behavior](#media-behavior)
+- [Detail and playback](#detail-and-playback)
+- [Search and lists](#search-and-lists)
+- [Responsive rules](#responsive-rules)
+- [Interaction and motion](#interaction-and-motion)
+- [Accessibility](#accessibility)
+- [Image and LCP strategy](#image-and-lcp-strategy)
+- [Performance budget](#performance-budget)
+
 ## Product direction
 
 Blueflare is a premium cinematic discovery surface. Content is the interface, pure black is the stage, artwork supplies nearly all color, and `#e4312a` is reserved for the brand, active indicators, and primary playback actions. The visual language is dense, compact, and confident rather than decorative.
@@ -51,8 +66,9 @@ The fixed navigation begins transparent and becomes near-black after scroll. The
 
 ## Media behavior
 
-- Home rails use landscape `poster_url` backdrops in 16:9 frames when available.
-- Catalog, search, favorites, and history use 2:3 `thumb_url` posters.
+- API image field naming is counter-intuitive: `poster_url` is the landscape `d` variant (1280x720) and `thumb_url` is the portrait `m` variant (480x720) (`backend/src/viewmodels.js`).
+- Home rails use landscape `poster_url` (`d`) backdrops in 16:9 frames when available.
+- Catalog, search, favorites, and history use 2:3 `thumb_url` (`m`) posters.
 - Poster cards carry only the Top-10 numeral over the artwork; status, ratings and year share one meta line below the title.
 - Desktop hover scales inside an overlay layer without changing document flow; keyboard focus reveals the same treatment.
 - Rail arrows use native `scrollBy`; touch remains native horizontal swipe.
@@ -62,7 +78,13 @@ The fixed navigation begins transparent and becomes near-black after scroll. The
 
 The detail route opens on a full-width backdrop that fades into black. Title, critical metadata, overview, and the Play action remain above the fold. The player expands below the hero and keeps the existing two-step no-autoplay contract. Episodes are grouped by server in compact horizontal selectors instead of a wall of bordered cards. Credits and secondary data follow as quiet editorial copy. Recommendations reuse the home rail.
 
-TMDB user reviews sit in a block below the cast (hidden when a title has none): heading with the count, a two-column grid of text cards (author initial in a circle, never an avatar image, so the two-variant image rule holds; rating, date, body clamped to 4 lines with "Đọc tiếp", "Xem trên TMDB" link) and a "Xem thêm đánh giá" button that loads 5 more at a time. When a review has a Vietnamese translation (`contentVi`) it is shown by default with a small "Đã dịch tự động" label and a "Xem bản gốc" toggle (which flips to "Xem bản dịch"); reviews without one show the English text and no toggle. Reviews flagged as spoilers sort first and carry a red "Spoiler" label; they are deliberately not blurred or collapsed (product decision).
+TMDB user reviews sit in a block below the cast (hidden when a title has none):
+
+- Heading with the review count.
+- Two-column grid of text cards: author initial in a circle (never an avatar image, so the two-variant image rule holds), rating, date, body clamped to 4 lines with "Đọc tiếp", and a "Xem trên TMDB" link.
+- A "Xem thêm đánh giá" button loads 2 more at a time (`PAGE_SIZE` in `components/ReviewList.tsx`; page 1 arrives with the detail payload).
+- When a review has a Vietnamese translation (`contentVi`) it is shown by default with a small "Đã dịch tự động" label and a "Xem bản gốc" toggle (which flips to "Xem bản dịch"); reviews without one show the English text and no toggle.
+- Reviews flagged as spoilers sort first and carry a red "Spoiler" label; they are deliberately not blurred or collapsed (product decision).
 
 ## Search and lists
 
@@ -115,13 +137,3 @@ Horizontal page gutters are fluid from 16px mobile to 4vw desktop. The content c
 - One eager image maximum per screen.
 - Player iframe mounts only after the explicit second Play interaction; direct video preload remains `metadata`.
 - Target LCP < 2.5s, CLS < 0.1, INP < 200ms on the deployed site, to be measured where the catalog API is reachable.
-
-## Migration plan
-
-1. Replace the HBO-oriented global tokens with root-source Netflix-red semantic aliases.
-2. Remove the 720px shell and bottom navigation; introduce global responsive navigation and footer.
-3. Rebuild media cards and rails, then make the homepage the reference implementation.
-4. Recompose detail/player/episodes without touching playback source selection.
-5. Rebuild list, search, local library, login/signup, and 404 with the same primitives.
-6. Remove old blue-token usage and legacy visual components after route migration.
-7. Build and run visual/interaction QA at the required responsive widths.

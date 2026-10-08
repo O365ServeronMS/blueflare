@@ -241,7 +241,7 @@ test('stray CJK in a translation of a CJK-free source is a content refusal; a CJ
 test('chain config: ordered, single value works, missing key skips openrouter, unknown throws', () => {
   assert.deepEqual(parseProviderChain(' google-gtx , openrouter,google-gtx'), ['google-gtx', 'openrouter']);
   assert.deepEqual(parseProviderChain(''), ['google-gtx']);
-  const base = { ...cfg, openrouterTranslateModels: 'a/one:0', openrouterTimeoutMs: 1000, openrouterCooldownMs: 6000, openrouterTranslateDailyTokens: 0 };
+  const base = { ...cfg, openrouterTranslateModels: 'a/one:0', openrouterTimeoutMs: 1000, openrouterCooldownMs: 6000 };
   assert.deepEqual(buildTranslators({ ...base, translateProvider: 'google-gtx', openrouterApiKeys: [SECRET] }).map((p) => p.name), ['google-gtx']);
   assert.deepEqual(buildTranslators({ ...base, translateProvider: 'google-gtx,openrouter', openrouterApiKeys: [] }).map((p) => p.name), ['google-gtx']);
   const both = buildTranslators({ ...base, translateProvider: 'google-gtx,openrouter', openrouterApiKeys: [SECRET] }, { ledger: createQuotaLedger({ warn: () => {} }) });
@@ -372,7 +372,7 @@ test('chain: provider-level errors still count toward the consecutive breaker', 
 
 const orSettings = (chainName, models = 'm1:0,m2:0') => ({
   ...cfg, translateProvider: chainName, openrouterApiKeys: [SECRET], openrouterTranslateModels: models,
-  openrouterTimeoutMs: 1000, openrouterCooldownMs: 600000, openrouterTranslateDailyTokens: 0
+  openrouterTimeoutMs: 1000, openrouterCooldownMs: 600000
 });
 
 async function runSync(settings, fetchImpl, extra = {}) {

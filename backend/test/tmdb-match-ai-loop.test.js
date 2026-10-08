@@ -6,29 +6,28 @@ import { MatchBlockedError } from '../src/tmdbMatchRotation.js';
 const settings = (over = {}) => ({
   tmdbEnabled: true, tmdbApiKey: 't', tmdbMatchAiEnabled: true, openrouterApiKeys: ['k'], tmdbMatchAiMode: 'dry-run',
   tmdbMatchAiLimit: 100, tmdbMatchAiRetryMs: 1, tmdbMatchAiErrorRetryMs: 1, tmdbMatchAiBatchMax: 3, tmdbMatchConcurrency: 2,
-  tmdbMatchAiLoop: true, tmdbMatchAiLoopMs: 60000, tmdbMatchAiReservePct: 10, tmdbMatchAiFreshMs: 1000, ...over
+  tmdbMatchAiLoop: true, tmdbMatchAiLoopMs: 60000,tmdbMatchAiFreshMs: 1000, ...over
 });
 const movie = (n) => ({ id: 'id' + n, canonical_slug: 's' + n, title: 'Mây Họa Ánh Trăng', original_title: 'Moonlight Drawn By Clouds', year: 2016, media_type: 'tv', countries: [], actors: [], episode_total: '18', duration: '60' });
 const detail = { id: 1, name: 'Moonlight Drawn By Clouds', original_name: 'Moonlight Drawn By Clouds', first_air_date: '2016-08-22', number_of_seasons: 1, number_of_episodes: 18, episode_run_time: [60] };
 const client = (empty = false) => ({ get: async (path) => (path.startsWith('/search/') ? { results: empty ? [] : [{ id: 1, name: detail.name, first_air_date: '2016-08-22', vote_count: 5 }] } : detail) });
 const picks = async () => new Map(Array.from({ length: 10 }, (_, i) => ['m' + i, { chosenId: 'tv:1', confidence: 0.9, reasons: [] }]));
 
-/** Rotation stand-in with a quota that shrinks per request, like the ledger-backed one. */
-function fakeRotation({ total = 60, remaining = 60, resetAt = 10_000_000, fail } = {}) {
-  const q = { total, remaining, resetAt };
-  const rotation = async () => { if (fail) throw fail; q.remaining -= 1; return picks(); };
+/** Rotation stand-in that counts its requests. */
+function fakeRotation({ fail } = {}) {
+  const state = { calls: 0 };
+  const rotation = async () => { if (fail) throw fail; state.calls += 1; return picks(); };
   rotation.ready = async () => {};
-  rotation.quota = () => ({ ...q, pairs: 3 });
-  rotation.state = q;
+  rotation.state = state;
   return rotation;
 }
 
-function harness({ lists = {}, quota = {}, config = {}, rotationFail, empty = false } = {}) {
+function harness({ lists = {}, config = {}, rotationFail, empty = false } = {}) {
   const calls = [];
   const runs = [];
   const logs = [];
   const queues = { priority: [...(lists.priority ?? [])], all: [...(lists.all ?? [])] };
-  const rotation = fakeRotation({ ...quota, fail: rotationFail });
+  const rotation = fakeRotation({ fail: rotationFail });
   const deps = {
     config: settings(config), rotation, client: client(empty), state: {}, log: (m) => logs.push(m), warn: (m) => logs.push(m),
     now: () => 5_000_000,
@@ -52,36 +51,20 @@ test('tick is off without AI, keys or mode', async () => {
   }
 });
 
-test('tick with no requests left skips all database and TMDB work and reports when the quota returns', async () => {
-  const h = harness({ quota: { remaining: 0, resetAt: 5_600_000 }, lists: { priority: [movie(1)] } });
-  const tick = await tmdbMatchAiTick(h.deps);
-  assert.deepEqual([tick.status, tick.retryAfterMs], ['quota', 600_000]);
-  assert.deepEqual(h.calls, []);
-});
-
 test('tick serves new films and retries (priority) before the backlog, one batch per tick', async () => {
   const h = harness({ lists: { priority: [movie(1), movie(2)], all: [movie(3)] } });
   const tick = await tmdbMatchAiTick(h.deps);
   assert.deepEqual([tick.status, tick.requests], ['worked', 1]);
   assert.deepEqual(h.calls, ['priority']);
   assert.deepEqual(h.runs.map((r) => r.movieId), ['id1', 'id2']);
-  assert.equal(h.rotation.state.remaining, 59);
+  assert.equal(h.rotation.state.calls, 1);
 });
 
-test('tick leaves the reserve alone: the backlog runs only while more than 10% of the day is left', async () => {
-  const low = harness({ quota: { total: 60, remaining: 6 }, lists: { all: [movie(1)] } });
-  assert.equal((await tmdbMatchAiTick(low.deps)).status, 'idle');
-  assert.deepEqual(low.calls, ['priority'], 'only the reserved scope may spend the last 6');
-  assert.equal(low.runs.length, 0);
-
-  const ok = harness({ quota: { total: 60, remaining: 7 }, lists: { all: [movie(1)] } });
-  const tick = await tmdbMatchAiTick(ok.deps);
+test('tick falls through to the backlog once the priority scope is empty', async () => {
+  const h = harness({ lists: { all: [movie(1)] } });
+  const tick = await tmdbMatchAiTick(h.deps);
   assert.equal(tick.status, 'worked');
-  assert.deepEqual(ok.calls, ['priority', 'all']);
-
-  const none = harness({ quota: { total: 60, remaining: 7 }, config: { tmdbMatchAiReservePct: 0 } });
-  await tmdbMatchAiTick(none.deps);
-  assert.deepEqual(none.calls, ['priority', 'all']);
+  assert.deepEqual(h.calls, ['priority', 'all']);
 });
 
 test('films that need no model are finished without a request and the tick keeps going until it makes one or the list is empty', async () => {
@@ -90,7 +73,7 @@ test('films that need no model are finished without a request and the tick keeps
   assert.equal(tick.requests, 0);
   assert.equal(noCandidates.runs.length, 5);
   assert.deepEqual(noCandidates.calls.filter((c) => c === 'priority').length, 3, '3 + 2 listed, then an empty listing');
-  assert.equal(noCandidates.rotation.state.remaining, 60, 'no quota spent');
+  assert.equal(noCandidates.rotation.state.calls, 0, 'no request spent');
 });
 
 test('a blocked rotation ends the tick with its retry time and records nothing', async () => {
@@ -112,16 +95,16 @@ test('apply mode: changed slugs reach onChanged', async () => {
   assert.deepEqual(changed.sort(), ['kk', 's1']);
 });
 
-test('loop: wakes at the configured interval, idles slower, backs off after quota/blocked, and logs a state change once', async () => {
-  const h = harness({ quota: { remaining: 0, resetAt: 5_000_000 + 3_600_000 } });
+test('loop: wakes at the configured interval, idles slower, backs off after blocked, and logs a state change once', async () => {
+  const h = harness({ rotationFail: Object.assign(new MatchBlockedError('blocked'), { retryAfterMs: 3_600_000 }), lists: { priority: [movie(1)] } });
   const ctrl = new AbortController();
   const delays = [];
   await runTmdbMatchAiLoop({
     ...h.deps, signal: ctrl.signal,
-    sleep: async (ms) => { delays.push(ms); if (delays.length === 3) ctrl.abort(); }
+    sleep: async (ms) => { delays.push(ms); ctrl.abort(); }
   });
-  assert.deepEqual(delays, [900_000, 900_000, 900_000], 'quota spent: waits (capped at 15 min) instead of every minute');
-  assert.equal(h.logs.filter((m) => /loop: quota/.test(m)).length, 1);
+  assert.deepEqual(delays, [900_000], 'blocked: waits (capped at 15 min) instead of every minute');
+  assert.equal(h.logs.filter((m) => /loop: blocked/.test(m)).length, 1);
 
   const idle = harness();
   const c2 = new AbortController();

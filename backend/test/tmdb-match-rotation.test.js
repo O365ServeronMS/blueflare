@@ -7,8 +7,7 @@ const KEY = 'sk-or-v1-match-secret';
 const settings = {
   tmdbMatchAiEnabled: true, openrouterApiKeys: [KEY], openrouterMatchModels: 'a/one:0,b/two:0',
   openrouterBaseUrl: 'https://openrouter.ai/api/v1', tmdbMatchAiTimeoutMs: 1000, openrouterCooldownMs: 1000,
-  tmdbMatchAiTransientParkMs: 1000, tmdbMatchAiTransientParkMaxMs: 2000, openrouterMatchDailyTokens: 0
-};
+  tmdbMatchAiTransientParkMs: 1000, tmdbMatchAiTransientParkMaxMs: 2000};
 const reply = (status, body) => ({
   ok: status >= 200 && status < 300, status, headers: { get: () => null },
   text: async () => JSON.stringify(body)

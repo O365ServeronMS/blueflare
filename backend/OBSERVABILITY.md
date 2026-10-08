@@ -1,10 +1,20 @@
 # Blueflare observability runbook
 
+## Contents
+
+- [Runtime signals](#runtime-signals)
+- [Background job signals](#background-job-signals)
+- [Postgres diagnostics](#postgres-diagnostics)
+- [Provider reliability](#provider-reliability)
+- [Suggested alerts](#suggested-alerts)
+- [Worker exit and host-stall response](#worker-exit-and-host-stall-response)
+
 ## Runtime signals
 
 - `https://img.bluesia.net/api/health`: PostgreSQL/Valkey latency, provider health, cache version and the sync-worker heartbeat. It is `no-store`. A missing, failed or stale worker heartbeat makes the endpoint return `503`; a fresh `degraded` heartbeat remains live but needs investigation.
 - `https://img.bluesia.net/api/metrics`: in-process request, error, latency and Valkey cache-status counters. Set `METRICS_TOKEN` and send it as `x-blueflare-metrics`; the endpoint stays `no-store` and is disabled when the token is empty.
 - API response header `x-blueflare-cache`: `VALKEY-HIT`, `VALKEY-STALE-SERVED`, `VALKEY-HIT-AFTER-LOCK`, `VALKEY-REFRESH`, or `POSTGRES`.
+- Auth rate limits: if Valkey is unavailable, `[auth] rate-limit store unavailable, using memory counters` is logged (at most once per 5 s backoff) and login/signup limits fall back to per-process memory counters. A 503 `{error:"busy"}` from `/api/auth/*` means the scrypt `HashGate` is saturated (limits and buckets: `backend/ARCHITECTURE.md`).
 - Cloudflare: track `CF-Cache-Status`/`Age` separately for Next static assets, public HTML, catalog JSON and images. Do not blend search, health, metrics or video traffic into cache-hit targets.
 
 ## Background job signals
@@ -17,23 +27,22 @@ alert directly on the Valkey key.
 
 The remaining signals are log lines, so `docker logs` is the whole interface.
 
-- `[worker] duplicate merge ok <drop> => <keep> evidence=… [rename=…]` per merge, then `[worker] duplicate merge merged=… skipped=… remaining=… ambiguous=… evidence=… durationMs=…` per cycle; `[worker] ALERT duplicate merge …` (warn) on failed/stale merges, ambiguous pairs, `remaining` above `MERGE_ALERT_PENDING` (200) or three cycles without progress.
-- `[worker] tmdb ai match mode=… scope=… requests=… checked=… verified=… unverifiable=… none=… error=… merged=… assigned=… tokens=prompt/output/thoughts models=…` per ranked batch (the AI match loop, or the sync cycle when `TMDB_MATCH_AI_LOOP=false`). `[worker] tmdb ai match loop: quota|blocked|idle` is logged only when the loop enters that state (`quota`: the daily token cap is spent until the UTC reset; `idle`: backlog empty); warnings `[worker] tmdb ai match batch failed`, `… assign failed for <slug>`, `… could not record run for <slug>`, `… loop tick failed`, `… invalidation failed`, and `[worker] ai quota ledger save failed|could not load` (the ledger then counts from memory). With the loop off, `[worker] tmdb ai match: AI quota exhausted, resuming next cycle`.
-- `[worker] tmdb identity promote checked=… assigned=… merged=… blocked=… conflict=…` per sync cycle when `TMDB_IDENTITY_MODE=apply` promoted something; `[worker] tmdb identity promotion failed` (warn) otherwise.
-- `[worker] image prewarm selected=… cached=… warmed=… failed=… bytes=… durationMs=…`
-  Steady state is `warmed=0` with everything `cached` in tens of milliseconds — that
-  means the hot set is already on disk and no request was made. A persistently high
-  `warmed` means the catalog is churning; a non-zero `failed` names the reason
-  (`errors=HTTP 404x3`). `declined=` means the run stood down on purpose: either the
-  cache directory was unreadable or free disk was under `IMAGE_PREWARM_MIN_FREE_BYTES`.
-- `[api] image cache sweep files=… bytes=… evicted=… freedBytes=… tmpRemoved=…`
-  Expected to be a no-op with `evicted=0`; it only acts once the cache passes
-  `IMAGE_CACHE_MAX_BYTES`. A non-zero `tmpRemoved` means image builds are crashing
-  between write and rename — worth investigating rather than ignoring.
-- `[backup] dump … / offsite s3://… / prune local … / prune remote …`
-  One cycle per `BACKUP_INTERVAL_SECONDS`. `upload failed` means the dump exists
-  only on the VPS, which is the failure mode that matters: the container exits
-  non-zero so it is visible in `docker ps -a`.
+| Log prefix | Meaning | Alert condition |
+| --- | --- | --- |
+| `[worker] duplicate merge ok <drop> => <keep> evidence=… [rename=…]` | one merge applied | none |
+| `[worker] duplicate merge merged=… skipped=… remaining=… ambiguous=… evidence=… durationMs=…` | per-cycle merge summary | see the ALERT line |
+| `[worker] ALERT duplicate merge …` (warn) | failed/stale merges, ambiguous pairs, `remaining` above `MERGE_ALERT_PENDING` (200), or three cycles without progress | any occurrence |
+| `[worker] tmdb ai match mode=… scope=… requests=… checked=… verified=… unverifiable=… none=… error=… merged=… assigned=… tokens=prompt/output/thoughts models=…` | one ranked batch (the AI match loop, or the sync cycle when `TMDB_MATCH_AI_LOOP=false`) | none; watch `error=` rising |
+| `[worker] tmdb ai match loop: blocked\|idle` | logged only when the loop enters that state. `blocked`: the rotation has no usable key/model right now. `idle`: backlog empty | `blocked` for a long time |
+| `[worker] tmdb ai match batch failed`, `… assign failed for <slug>`, `… could not record run for <slug>`, `… loop tick failed`, `… invalidation failed` (warn) | a batch, assignment, run record, tick or invalidation failed | repeated occurrences |
+| `[worker] ai quota ledger save failed\|could not load` (warn) | the quota ledger is counted from memory until it recovers | persistent |
+| `[worker] tmdb ai match: AI quota exhausted, resuming next cycle` | AI match stopped for the cycle (loop off only) | none |
+| `[worker] tmdb identity promote checked=… assigned=… merged=… blocked=… conflict=…` | per sync cycle when `TMDB_IDENTITY_MODE=apply` promoted something | none; a rising `conflict` needs review |
+| `[worker] tmdb identity promotion failed` (warn) | promotion pass failed | any occurrence |
+| `[worker] image prewarm selected=… cached=… warmed=… failed=… bytes=… durationMs=…` | prewarm pass. Steady state is `warmed=0` with everything `cached` in tens of milliseconds: the hot set is already on disk and no request was made. A persistently high `warmed` means the catalog is churning. `failed` names the reason (`errors=HTTP 404x3`). `declined=` means the run stood down on purpose: the cache directory was unreadable or free disk was under `IMAGE_PREWARM_MIN_FREE_BYTES` | non-zero `failed`, or `declined=` |
+| `[api] image cache sweep files=… bytes=… evicted=… freedBytes=… tmpRemoved=…` | hourly sweep. Expected to be a no-op with `evicted=0`; it only acts once the cache passes `IMAGE_CACHE_MAX_BYTES` | non-zero `tmpRemoved`: image builds are crashing between write and rename |
+| `[backup] dump … / offsite s3://… / prune local … / prune remote …` | one cycle per `BACKUP_INTERVAL_SECONDS` | `upload failed`: the dump exists only on the VPS; the container exits non-zero so it shows in `docker ps -a` |
+| `[auth] rate-limit store unavailable, using memory counters` | Valkey down, login/signup limits are per-process | repeated beyond the 5 s backoff |
 
 `IMAGE-BUILD` versus `IMAGE-DISK-HIT` in `/api/metrics` is not a normal hit-rate:
 Cloudflare holds images for a year, so the origin mostly sees each asset once and
@@ -42,7 +51,7 @@ off a real user, so judge it by the prewarm log rather than by this ratio.
 
 ## Postgres diagnostics
 
-Enable the supplied Phase 4 migration first, then run these read-only checks during a low-traffic window. The pg_stat_statements query is optional and requires the extension to be enabled in PostgreSQL:
+Migration `004_catalog_query_indexes.sql` (catalog read-path indexes plus the `pg_trgm` extension, applied by the API's migration runner at startup) must be in place first; then run these read-only checks during a low-traffic window. The pg_stat_statements query is optional and requires the extension to be enabled in PostgreSQL:
 
 ```sql
 SELECT relname, n_live_tup, n_dead_tup, last_autoanalyze, last_autovacuum
@@ -78,6 +87,7 @@ Use `EXPLAIN (ANALYZE, BUFFERS)` against representative home/list/genre/country/
 - API 5xx rate > 1% over 5 minutes.
 - `POSTGRES` cache builds > 5% of catalog reads after warmup.
 - image cache responses returning 5xx or repeated source fetch failures.
+- repeated `[auth] rate-limit store unavailable` lines (Valkey down) or sustained 503 `busy` from `/api/auth/*` (scrypt `HashGate` saturated).
 - host CPU steal > 10% for 5 minutes, disk await > 100 ms for 5 minutes, or any kernel `soft lockup`/Docker `restartmanger wait error` event. These need host/provider escalation, not an application restart.
 
 ## Worker exit and host-stall response
@@ -117,7 +127,3 @@ Do not restart `containerd` automatically: it disrupts every workload and would
 erase useful evidence. Move the workload to a different physical host only after
 the provider supplies a root-cause statement or the symptoms recur under normal
 load; validate restore and the public health endpoint after the move.
-
-## Auth rate limits
-
-If Valkey is unavailable, `[auth] rate-limit store unavailable, using memory counters` is logged (at most once per 5 s backoff) and login/signup limits fall back to per-process memory counters. A 503 `{error:"busy"}` from `/api/auth/*` means the scrypt `HashGate` is saturated.

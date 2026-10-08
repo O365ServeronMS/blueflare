@@ -12,15 +12,14 @@ export function keyFingerprint(key) {
 /**
  * OpenRouter (OpenAI-compatible /chat/completions) rotation shared by review translation and the
  * TMDB AI match. Call contract: `call({ text, tokens, buildBody(model), parse(json), meta })`,
- * `call.ready()`, `call.quota()`, so both consumers only differ in prompt and parser.
+ * `call.ready()`, so both consumers only differ in prompt and parser.
  *
  *  - Limits belong to the account, not to a (key, model) pair: free models are ~20 req/min and
  *    1000 req/day (after a one-off 10 USD top-up); paid models have no daily cap. A daily 429 on a
  *    `:free` model therefore parks every `:free` model of that key until the reset (00:00 UTC).
  *  - Models are tried in the configured order; the next one answers when a model is parked.
- *  - Spend is bounded by `dailyTokenCap` (prompt + completion tokens per UTC day, summed over this
- *    rotation's models through the persistent ledger). Over the cap the call reports "blocked" until
- *    the reset, so a big backlog can never run up a bill.
+ *  - Spend on paid models is bounded by `paidDailyOutputCap` (completion tokens per UTC day, summed
+ *    over the non-`:free` models through the persistent ledger); `:free` models keep serving after it.
  *  - A provider failure can arrive as HTTP 200 with an `error` object; it is handled like its status.
  *  - Keys travel only in the Authorization header and never reach a URL, error or log.
  */
@@ -123,7 +122,6 @@ export function createOpenRouterRotation(options = {}) {
   const transientBaseMs = options.transientParkMs ?? TRANSIENT_PARK_MS;
   const transientMaxMs = options.transientParkMaxMs ?? TRANSIENT_PARK_MAX_MS;
   const ledger = options.ledger ?? null;
-  const tokenCap = Number(options.dailyTokenCap) > 0 ? Number(options.dailyTokenCap) : null;
   const paidCap = Number(options.paidDailyOutputCap) > 0 ? Number(options.paidDailyOutputCap) : null;
   const state = options.state ?? {};
   state.models ??= {};
@@ -147,13 +145,6 @@ export function createOpenRouterRotation(options = {}) {
     return error;
   };
 
-  const tokensToday = (t) => {
-    if (!ledger) return 0;
-    let used = 0;
-    for (const key of keys) for (const model of models) used += ledger.snapshot(key.ledgerId, model.id, t).tokens;
-    return used;
-  };
-  const capReached = (t) => tokenCap != null && tokensToday(t) >= tokenCap;
   /** Output (completion) tokens produced today by models that are not `:free`, summed over all of them. */
   const paidTokensToday = (t) => {
     if (!ledger) return 0;
@@ -192,7 +183,6 @@ export function createOpenRouterRotation(options = {}) {
     const estTokens = tokens ?? Math.ceil(String(text).length / 3) + 300;
     for (;;) {
       const t = now();
-      if (capReached(t)) throw blocked('openrouter: daily token cap reached', nextUtcMidnight(t) - t);
       const liveKeys = keys.filter((key) => keyUntil(key) <= t);
       if (!liveKeys.length) {
         const earliest = Math.min(...keys.map(keyUntil));
@@ -320,13 +310,6 @@ export function createOpenRouterRotation(options = {}) {
   }
 
   call.ready = async () => { await ledger?.ready(); };
-  /** Only the daily token cap can exhaust this provider's day; `total`/`remaining` stay null otherwise. */
-  call.quota = (t = now()) => {
-    const resetAt = nextUtcMidnight(t);
-    if (tokenCap != null && capReached(t)) return { total: tokenCap, remaining: 0, pairs: 0, resetAt };
-    return { total: null, remaining: null, pairs: 0, resetAt };
-  };
-  call.tokensToday = (t = now()) => tokensToday(t);
   call.paidTokensToday = (t = now()) => paidTokensToday(t);
   return call;
 }

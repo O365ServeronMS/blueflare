@@ -28,7 +28,6 @@ tmp/
 scratch/
 
 # Local visual QA evidence (large binary screenshots)
-docs/assets/
 
 # TypeScript incremental cache
 *.tsbuildinfo

@@ -1,7 +1,45 @@
 # Blueflare Docker backend
 
 This directory owns the VPS origin and the self-hosted Next.js frontend for
-phim.bluesia.net. The runtime path is:
+phim.bluesia.net. Architecture and invariants live in `/CLAUDE.md`; this file
+holds backend internals and the operations runbooks. `backend/.env.example` is the
+catalogue of every environment variable and its default; the tables below only
+explain what the TMDB, translation and OpenRouter variables do.
+
+## Contents
+
+- [Overview](#overview)
+- [Services](#services)
+- [First start](#first-start)
+- [Sync and image jobs](#sync-and-image-jobs)
+  - [Crawl, ordering, and storage](#crawl-ordering-and-storage)
+  - [Image heal](#image-heal)
+  - [Image host check](#image-host-check)
+  - [Image cache](#image-cache)
+- [TMDB](#tmdb)
+  - [Reviews](#reviews)
+  - [Review translation](#review-translation)
+  - [OpenRouter rotation](#openrouter-rotation)
+  - [AI match](#ai-match)
+  - [Identity audit and undo](#identity-audit-and-undo)
+- [Duplicate merge (NguonC + KKPhim)](#duplicate-merge-nguonc--kkphim)
+- [API contract](#api-contract)
+- [Provider identity](#provider-identity)
+- [Operations](#operations)
+  - [Runtime/codebase split](#runtimecodebase-split)
+  - [Verification](#verification)
+  - [Backup and restore](#backup-and-restore)
+  - [Rebuilding this VPS from nothing](#rebuilding-this-vps-from-nothing)
+  - [Caddy](#caddy)
+  - [Cloudflare cache rule](#cloudflare-cache-rule)
+  - [PostgreSQL container upgrades](#postgresql-container-upgrades)
+  - [Valkey upgrades](#valkey-upgrades)
+  - [Host sysctl for Valkey](#host-sysctl-for-valkey)
+  - [PgBouncer decision](#pgbouncer-decision)
+
+## Overview
+
+The runtime path is:
 
     Browser
         -> Cloudflare proxy/CDN
@@ -24,20 +62,17 @@ the browser connects to the selected provider.
 
 ## Services
 
-- api: HTTP API, response cache, image cache origin and its hourly sweep, health endpoint.
-- worker: provider sync, normalization, deterministic deduplication, MDBList
-  rating enrichment, health tracking, home ViewModel precomputation, image
-  cache prewarming, and the TMDB identity work (cast-verified match, promotion
-  to `tmdb_id`, and the separate AI match loop; see "TMDB AI match").
-- postgres: canonical movies and provider provenance.
-- valkey: final JSON responses and cache-version invalidation.
-- image-cache-init: one-shot `mkdir`+`chown` of the image cache directory. It
-  exits 0 and stays exited; `api` waits for that completion because it runs as
-  uid 1000 and cannot write a root-owned bind mount.
-- backup: scheduled dump to an S3-compatible store. Exits 0 and stays exited
-  when `BACKUP_ENABLED=false`.
+| Service | Role |
+| --- | --- |
+| `api` | HTTP API, response cache, image cache origin and its hourly sweep, health endpoint. Published only on 127.0.0.1:3200. |
+| `worker` | Provider sync, normalization, deterministic deduplication, MDBList rating enrichment, health tracking, home ViewModel precomputation, image cache prewarming, and the TMDB identity work (cast-verified match, promotion to `tmdb_id`, and the separate AI match loop; see [AI match](#ai-match)). |
+| `postgres` | Canonical movies and provider provenance. |
+| `valkey` | Final JSON responses and cache-version invalidation. |
+| `image-cache-init` | One-shot `mkdir`+`chown` of the image cache directory. It exits 0 and stays exited; `api` waits for that completion because it runs as uid 1000 and cannot write a root-owned bind mount. |
+| `backup` | Scheduled dump to an S3-compatible store. Exits 0 and stays exited when `BACKUP_ENABLED=false`. |
 
-The API is published only on 127.0.0.1:3200. Caddy is the public TLS boundary.
+The `frontend` service is covered under [Caddy](#caddy). Caddy is the public TLS
+boundary.
 
 ## First start
 
@@ -47,7 +82,9 @@ Create the runtime environment:
     cp .env.example .env
 
 Replace POSTGRES_PASSWORD and IMAGE_SIGNING_SECRET with independent random
-values. DATABASE_URL must contain the same PostgreSQL password.
+values. DATABASE_URL must contain the same PostgreSQL password. `IMAGE_SIGNING_SECRET`
+is still required (at least 32 characters in production) because it backs the
+legacy signed-image form, see [Image cache](#image-cache).
 
 Validate and start:
 
@@ -56,23 +93,19 @@ Validate and start:
     docker compose --env-file .env -f compose.yml ps
     curl -fsS http://127.0.0.1:3200/api/health
 
+Repo-side compose validation (with `BLUEFLARE_ENV_FILE` pointing at
+`backend/.env.example`) is described under Verification in `/CLAUDE.md`.
+
 The worker imports the configured number of newest pages immediately, starting
 with NguonC and then filling gaps from KKPhim.
 
-## Account hardening
+Account hardening (auth rate limits, the scrypt concurrency cap and their
+variables, all of which must also be in the stack `.env`): see
+`backend/ARCHITECTURE.md`.
 
-Auth routes are rate limited (Valkey counters, in-memory fallback) and scrypt is
-capped so it cannot starve the libuv threadpool shared with image I/O and sharp.
-Limits are in `docs/backend-architecture.md`; all vars must also be in the stack `.env`.
+## Sync and image jobs
 
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `AUTH_HASH_CONCURRENCY` | 2 | concurrent scrypt hashes; keep well below `UV_THREADPOOL_SIZE` |
-| `AUTH_HASH_QUEUE` | 16 | waiting hashes before 503 `busy` |
-| `AUTH_REGISTER_GLOBAL_PER_HOUR` | 300 | global signups per hour, then 429 |
-| `UV_THREADPOOL_SIZE` | 8 | set on `api` in `infra/compose.yml` |
-
-## Crawl, ordering, and storage
+### Crawl, ordering, and storage
 
 Each worker cycle first refreshes the newest `SYNC_PAGES_PER_RUN` pages, then
 advances one or more low-priority backfill pages per provider. Backfill starts
@@ -86,42 +119,59 @@ source with streams is left untouched instead of being overwritten by the
 list-item summary. A stored source whose movie has no usable thumb (empty, or on a
 host in `IMAGE_DEAD_HOSTS`) is never skipped.
 
-Image heal: NguonC moved its CDN from `phim.nguonc.com` (now 404) to
-`img.nguonc.com`, and providers keep retaining the old URL when a fresh one is
-empty. Each cycle, `healImageSources` walks NguonC list pages (checkpoint lane
-`image-heal`, `IMAGE_HEAL_PAGES_PER_RUN` pages per cycle) and replaces thumb/poster
-source URLs that are empty or on a dead host with the list item's current ones.
-Once that walk completes it runs one pass copying another provider's stored image
-(e.g. KKPhim) into movies that still have none. Set `IMAGE_HEAL_ENABLED=false` to
-turn it off; delete the `crawl_checkpoints` row (nguonc / `image-heal`) to re-run.
-
-Image host check: once a day (`IMAGE_HOST_CHECK_INTERVAL_MS`) the worker probes
-`IMAGE_HOST_CHECK_SAMPLES` random stored image URLs of every `IMAGE_ALLOWED_HOSTS`
-host (ranged GET, body discarded) and records a verdict in `image_host_health`. A
-host counts as dead only when every sample is 404/410/DNS-gone; 429/5xx/timeouts are
-inconclusive, one live sample clears it, and a simultaneous failure of all hosts is
-treated as our own network problem. After `IMAGE_HOST_DEAD_AFTER_CHECKS` consecutive
-dead checks the host leaves the effective allowlist (api and worker reload it every
-few minutes), and, once image-heal has finished, the worker clears its links from
-`movies` (up to `IMAGE_HOST_PURGE_LIMIT` per run, skipping images still in the disk
-cache) and deletes its unreferenced `image_assets` in batches of 1000 (every column
-referencing `image_assets` needs an index, or each delete triggers sequential scans;
-see migration `022_asset_fk_indexes.sql`). `IMAGE_DEAD_HOSTS` is the static
-override. To reset a host, delete its `image_host_health` row.
-
 Catalog lists only expose `catalog_state=ready` rows. Their order is
 `catalog_sort_at` (the provider's update timestamp), then year and slug; an old
 record discovered during backfill cannot appear as a newly updated movie merely
 because it was inserted today.
 
 PostgreSQL stores canonical metadata, provider provenance, streams, and image
-source URLs only. It does not store image bytes or raw provider payloads. The
-runtime image cache is a disposable SSD cache at
+source URLs only. It does not store image bytes or raw provider payloads.
+
+### Image heal
+
+NguonC moved its CDN from `phim.nguonc.com` (now 404) to `img.nguonc.com`, and
+providers keep retaining the old URL when a fresh one is empty. Each cycle,
+`healImageSources` walks NguonC list pages (checkpoint lane `image-heal`,
+`IMAGE_HEAL_PAGES_PER_RUN` pages per cycle) and replaces thumb/poster source URLs
+that are empty or on a dead host with the list item's current ones. Once that walk
+completes it runs one pass copying another provider's stored image (e.g. KKPhim)
+into movies that still have none. Set `IMAGE_HEAL_ENABLED=false` to turn it off;
+delete the `crawl_checkpoints` row (nguonc / `image-heal`) to re-run.
+
+### Image host check
+
+Once a day (`IMAGE_HOST_CHECK_INTERVAL_MS`) the worker probes
+`IMAGE_HOST_CHECK_SAMPLES` random stored image URLs of every `IMAGE_ALLOWED_HOSTS`
+host (ranged GET, body discarded) and records a verdict in `image_host_health`.
+
+- A host counts as dead only when every sample is 404/410/DNS-gone; 429/5xx/timeouts
+  are inconclusive, one live sample clears it, and a simultaneous failure of all
+  hosts is treated as our own network problem.
+- After `IMAGE_HOST_DEAD_AFTER_CHECKS` consecutive dead checks the host leaves the
+  effective allowlist (api and worker reload it every few minutes).
+- Once image-heal has finished, the worker clears the dead host's links from
+  `movies` (up to `IMAGE_HOST_PURGE_LIMIT` per run, skipping images still in the
+  disk cache) and deletes its unreferenced `image_assets` in batches of 1000. Every
+  column referencing `image_assets` needs an index, or each delete triggers
+  sequential scans; see migration `022_asset_fk_indexes.sql`.
+- `IMAGE_DEAD_HOSTS` is the static override. To reset a host, delete its
+  `image_host_health` row.
+
+### Image cache
+
+The runtime image cache is a disposable SSD cache at
 `/opt/stacks/blueflare/data/images`. The API mounts it read-write at
 `/data/images`; the worker mounts the same path read-only, because prewarming
 only needs to see which entries already exist. Existing flat cache files remain
 readable; new files are sharded by hash prefix. The two image variants remain
-`m` (480 x 720, q75) and `d` (1280 x 720, q75).
+`m` (480 x 720, q75) and `d` (1280 x 720, q75), and nothing else exists.
+
+Public URLs are path-only and keyed by the asset row: `GET /i/{m|d}/<image_assets.id>.webp`
+(built in `viewmodels.js`). The cache identity is `image_assets.id` plus variant;
+requester host and frontend route never participate in the cache key. An older
+HMAC-signed `?url=&sig=` form is still accepted by `images.js` for backward
+compatibility and is why `IMAGE_SIGNING_SECRET` is still required, but nothing
+emits it; do not build new callers on it.
 
 Two background jobs keep that cache healthy. The worker prewarms it: after each
 sync cycle it reads the same home/list viewmodels the API serves, and asks the
@@ -133,26 +183,31 @@ target. Eviction lives in the API because the API is the only writer of this
 directory.
 
 A remote storage backend for the *image cache itself* is still future work. If
-one is added, keep its object keys aligned with the local cache identity,
+one is added, keep its object keys aligned with the local cache layout,
 `images/v2/{variant}/{hash-prefix}/{sha256}.webp`, and do not change the public
 `img.bluesia.net/i/{m|d}/…` URL contract.
 
-## TMDB reviews
+## TMDB
 
-Worker-only pass (`tmdbReviewsSync.js`, after the credits pass in each sync
-cycle); no request path ever calls TMDB. Reviews are re-fetchable, so they are
-not irreplaceable state.
+All TMDB passes are worker-only; no request path calls TMDB or a model. Each
+needs `TMDB_API_KEY` (and `TMDB_ENABLED` for the match passes). Add every new key
+to the stack `.env` as well.
+
+### Reviews
+
+Worker pass (`tmdbReviewsSync.js`, after the credits pass in each sync cycle).
+Reviews are re-fetchable, so they are not irreplaceable state.
 
 - Candidates: ready rows with a verified TMDB identity (`tmdb_id` + media type,
   or a `verified` cast match), oldest `reviews_checked_at` first, at most
   `TMDB_REVIEWS_LIMIT` per cycle.
 - Fetch: up to 2 TMDB pages (`en-US`) per title. Reviews whose plain text is
-  under 40 characters are dropped; bodies are converted from markdown/HTML to
-  plain text, truncated to 4000 characters, and at most
-  `TMDB_REVIEWS_MAX_PER_MOVIE` are kept. No avatars are stored.
+  under 40 characters are dropped. Bodies are converted from markdown/HTML to
+  plain text and truncated to 4000 characters. At most `TMDB_REVIEWS_MAX_PER_MOVIE`
+  are kept. No avatars are stored.
 - Refresh: a successful check (including an empty list or a TMDB 404) is
-  repeated after 7 days (`TMDB_REVIEWS_REFRESH_MS`). Any other failure retries
-  after 6 hours (`TMDB_REVIEWS_RETRY_MS`) and keeps the stored reviews.
+  repeated after `TMDB_REVIEWS_REFRESH_MS`. Any other failure retries after
+  `TMDB_REVIEWS_RETRY_MS` and keeps the stored reviews.
 - Storage: `movie_reviews` (migration `025_tmdb_reviews.sql`), plus
   `movies.reviews_checked_at` / `reviews_next_retry_at`. `score` (0-100, from
   rating, length and recency decay) and `has_spoiler` (English heuristic) are
@@ -160,33 +215,46 @@ not irreplaceable state.
 - Order on the API: `has_spoiler` first, then 10-wide score bands, then a
   shuffle stable per slug and UTC day (`reviewOrder.js`). Spoiler reviews are
   not hidden, only flagged.
-- Env (defaults): `TMDB_REVIEWS_ENABLED=true`, `TMDB_REVIEWS_LIMIT=200`,
-  `TMDB_REVIEWS_CONCURRENCY=3`, `TMDB_REVIEWS_REFRESH_MS=604800000`,
-  `TMDB_REVIEWS_RETRY_MS=21600000`, `TMDB_REVIEWS_MAX_PER_MOVIE=40`. Also
-  requires `TMDB_API_KEY`.
 - Invalidation: changed titles drop `movie:<slug>` and
-  `reviews:<slug>:{1..4}:{5,10}`; deeper pages expire on the 60s TTL.
+  `reviews:<slug>:{1..4}:{2,10}`; deeper pages expire on the 60s TTL.
 
-### Vietnamese translation of reviews
+| Variable | Meaning |
+| --- | --- |
+| `TMDB_REVIEWS_ENABLED` | Run the pass. |
+| `TMDB_REVIEWS_LIMIT` | Titles checked per cycle. |
+| `TMDB_REVIEWS_CONCURRENCY` | Parallel TMDB fetches. |
+| `TMDB_REVIEWS_REFRESH_MS` | Re-check interval after a successful check. |
+| `TMDB_REVIEWS_RETRY_MS` | Retry delay after a failure. |
+| `TMDB_REVIEWS_MAX_PER_MOVIE` | Reviews kept per title. |
+
+### Review translation
 
 Separate worker-only pass (`reviewTranslateSync.js`, right after the reviews
 pass in each sync cycle). It translates the English `content` to Vietnamese
 through an ordered provider chain (`TRANSLATE_PROVIDER`, `translate.js`): by
-default OpenRouter (`openrouter`: `OPENROUTER_API_KEYS`, ordered `OPENROUTER_TRANSLATE_MODELS`,
-free models first, see
-"OpenRouter rotation" below) and the free, unofficial Google gtx endpoint (`google-gtx`) as a fallback;
-no request path calls either. Gemini models, if wanted, are listed in `OPENROUTER_*_MODELS` like any
-other model. Only public TMDB
-review text is sent to a provider. A provider can start refusing us at any time
-(gtx is unofficial, free quotas run out), so everything fails open: the API simply serves English.
+default OpenRouter (see [OpenRouter rotation](#openrouter-rotation)), with the
+free, unofficial Google gtx endpoint (`google-gtx`) as an optional fallback. Gemini
+models, if wanted, are listed in `OPENROUTER_*_MODELS` like any other model. Only
+public TMDB review text is sent to a provider. A provider can start refusing us
+at any time (gtx is unofficial, free quotas run out), so everything fails open:
+the API simply serves English.
 
 - Queue: reviews of ready rows with no fresh translation (`content_vi IS NULL`
-  or `translated_hash` differs from `content_hash`), oldest first, at most
-  `TRANSLATE_REVIEWS_PER_CYCLE` per cycle, skipping rows backing off
-  (`translate_retry_at`). Sequential, spaced per provider: `TRANSLATE_DELAY_MS`
-  for gtx; OpenRouter spaces each model by its own RPM (see "OpenRouter rotation"). Long text is
-  split into chunks of at most 4000 chars on paragraph/sentence boundaries and
-  rejoined keeping line breaks; transient errors retry twice with backoff.
+  or `translated_hash` differs from `content_hash`), skipping rows backing off
+  (`translate_retry_at`), at most `TRANSLATE_REVIEWS_PER_CYCLE` per cycle. Reviews
+  likely on page 1 of their title (spoiler-flagged and best score band first, the
+  display order of `reviewOrder.js` without the daily shuffle) go first, then
+  oldest first. Sequential, spaced
+  per provider: `TRANSLATE_DELAY_MS` for gtx; OpenRouter spaces each model by its
+  own RPM.
+- Chunking: long text is split into chunks of at most 4000 chars on
+  paragraph/sentence boundaries and rejoined keeping line breaks; transient errors
+  retry twice with backoff.
+- Batching (`translateBatch.js`, `TRANSLATE_BATCH_ENABLED`): several reviews go
+  into one nonce-delimited OpenRouter request to save free-tier requests. The
+  answer is validated and split into reviews; on a bad answer the caller splits
+  the batch. A batch missing its end marker is accepted. Limits:
+  `TRANSLATE_BATCH_MAX_CHARS` / `TRANSLATE_BATCH_MAX_ITEMS`.
 - Backlog: after the first deploy every stored review is pending, so the
   backlog drains over many cycles (150 per cycle by default), not at once. A
   review whose translation equals the source is stored as `''` so it leaves the
@@ -198,112 +266,168 @@ review text is sent to a provider. A provider can start refusing us at any time
   pauses for `TRANSLATE_COOLDOWN_MS`). Cooldown state is in memory (a worker
   restart retries once). A single failing review backs off for the same period
   without blocking the rest.
-- Content refusals: a `content_filter`/truncated answer, or one with stray CJK characters for
-  a source without any, from one model is tried on the next model; when all refuse
-  (`TranslateContentError`) it is a per-review failure that does NOT count toward the
-  consecutive-error limit. Per-model state is in memory. Without `OPENROUTER_API_KEYS` the
-  OpenRouter provider is skipped silently (one warning is logged if no provider is usable at
-  all, so a chain with only `openrouter` and no key translates nothing).
-- Keys: `OPENROUTER_API_KEYS` (comma list, secret) is trimmed and deduped, order kept. Logs name
-  keys only as `k<n> (<first 6 hex of sha256(key)>)`; the key is sent only in the
-  `authorization` header and is never logged or put into an error.
+- Content refusals: a `content_filter`/truncated answer, or one with stray CJK
+  characters for a source without any, from one model is tried on the next model;
+  when all refuse (`TranslateContentError`) it is a per-review failure that does
+  NOT count toward the consecutive-error limit. Per-model state is in memory.
+  Without `OPENROUTER_API_KEYS` the OpenRouter provider is skipped silently (one
+  warning is logged if no provider is usable at all, so a chain with only
+  `openrouter` and no key translates nothing).
 - Log line: `[worker] review translate checked= ok= failed= blocked=
-  providers=openrouter:N models=<model id>:A,<model id>:B keys=k1:N,k2:M` (`keys=` only when
-  OpenRouter answered). `translate_provider` stores `openrouter:<model id>` or `google-gtx`
-  (rows written earlier may still say `gemini:<model>`).
+  providers=openrouter:N models=<model id>:A,<model id>:B keys=k1:N,k2:M`
+  (`keys=` only when OpenRouter answered). `translate_provider` stores
+  `openrouter:<model id>` or `google-gtx` (rows written earlier may still say
+  `gemini:<model>`).
 - Storage: migration `026_review_translation.sql` adds `content_vi`,
   `translated_hash`, `translated_at`, `translate_failed_at`,
   `translate_retry_at` to `movie_reviews`; migration
-  `027_review_translation_provider.sql` adds `translate_provider` (which
-  provider produced the translation; internal only, never in the API, NULL for
-  older rows). `content` stays the English source;
+  `027_review_translation_provider.sql` adds `translate_provider` (internal only,
+  never in the API, NULL for older rows). `content` stays the English source;
   `has_spoiler` and `score` are computed on it, not on the translation. A
   translation is only written (and served) while `translated_hash` equals the
   current `content_hash`, so a TMDB refresh that rewrites the text hides the old
   translation until it is retranslated.
 - API: each review has `contentVi` (string, or `null` when there is no fresh
-  translation); see the reviews contract in `docs/backend-architecture.md`.
-  Changed titles are invalidated the same way as a reviews change.
-- Env (defaults): `TRANSLATE_ENABLED=true`, `TRANSLATE_PROVIDER=openrouter`,
-  `TRANSLATE_REVIEWS_PER_CYCLE=150`, `TRANSLATE_DELAY_MS=1000`,
-  `TRANSLATE_MAX_CONSECUTIVE_ERRORS=5`, `TRANSLATE_COOLDOWN_MS=3600000`,
-  `TRANSLATE_TIMEOUT_MS=10000`. `TRANSLATE_PROVIDER` is a comma-separated
-  ordered chain, e.g. `openrouter,google-gtx`. OpenRouter: see `.env.example`
-  (`OPENROUTER_API_KEYS`, `OPENROUTER_TRANSLATE_MODELS`, `OPENROUTER_TIMEOUT_MS`,
-  `OPENROUTER_COOLDOWN_MS`). Remember to add new keys to the stack `.env`.
-- The rotation itself (keys x models, spacing, cooldowns, UTC-day helpers) lives in
-  `openrouter.js` and is shared with the TMDB AI match pass, which owns a separate instance
-  (own scope, own state, own token cap) of it.
+  translation); the contract is in `backend/ARCHITECTURE.md`. Changed titles
+  are invalidated the same way as a reviews change.
 
-## TMDB AI match
+| Variable | Meaning |
+| --- | --- |
+| `TRANSLATE_ENABLED` | Run the pass; off keeps reviews English. |
+| `TRANSLATE_PROVIDER` | Ordered comma-separated chain of `openrouter`, `google-gtx`, e.g. `openrouter,google-gtx`. |
+| `TRANSLATE_REVIEWS_PER_CYCLE` | Reviews translated per cycle. |
+| `TRANSLATE_DELAY_MS` | gtx only: spacing between calls. |
+| `TRANSLATE_TIMEOUT_MS` | gtx only: per-call timeout. |
+| `TRANSLATE_MAX_CONSECUTIVE_ERRORS` | Provider-level failures in a row before the pass pauses. |
+| `TRANSLATE_COOLDOWN_MS` | Pause / cooldown after a block or too many errors. |
+| `TRANSLATE_BATCH_ENABLED` | Pack several reviews per OpenRouter request. |
+| `TRANSLATE_BATCH_MAX_CHARS` | Characters per batch (minimum 500). |
+| `TRANSLATE_BATCH_MAX_ITEMS` | Reviews per batch. |
+| `OPENROUTER_TRANSLATE_MODELS` | Ordered model list, see below. |
+| `OPENROUTER_TRANSLATE_PAID_DAILY_OUTPUT_TOKENS` | Paid completion-token cap per UTC day; `0` = no separate cap. |
 
-Worker-only; no request path calls TMDB or the model. For ready titles with no `tmdb_id`
-the pass fetches real TMDB candidates (`tmdbMatchAi.js`), has an OpenRouter model rank them, and lets an
-independent gate decide. The model never supplies an id, only picks among fetched candidates.
+### OpenRouter rotation
 
-- Keys and models: `OPENROUTER_API_KEYS` (secret, shared with translation) and
-  `OPENROUTER_MATCH_MODELS` (`id[:rpm[:rpd]]`, free first, e.g. paid `deepseek/deepseek-v4-flash`
-  later). The pass runs only with `TMDB_MATCH_AI_ENABLED=true`, a key, `TMDB_MATCH_AI_MODE`
-  other than `off`, and `TMDB_ENABLED` plus a TMDB key.
-- OpenRouter rotation (`openrouter.js`, scope `tmdb-match` or `translate`, so the two jobs keep
-  separate counters): 401 key off; 402 (or 403 "Key limit exceeded") model parked; any other 403 is a content refusal, next model; 429 daily on
-  a `:free` model parks all `:free` models until 00:00 UTC, otherwise parked by `Retry-After` /
-  `X-RateLimit-Reset`; 404 / "no endpoints" model off; 408/5xx transient park (doubles). An
-  error body inside HTTP 200 is treated like its code. Free models default to 20 rpm.
-  `OPENROUTER_*_PAID_DAILY_OUTPUT_TOKENS` cap the completion tokens of all non-`:free` models per
-  UTC day through the ledger; at the cap they are blocked until the UTC reset (`:free` keep serving).
-- Gate (`decideAiMatch`, pure): the model's pick is `verified` only if tier 1 holds (catalog
-  cast >= 2 and >= 2 names overlap the candidate's cast, year and size compatible; TV season
-  not above the candidate's season count) or tier 2 holds (exact name + year + size, no other
-  candidate passes the same test; a row without a year is refused). Otherwise `unverifiable`
-  (a pick the gate refused) or `none` (no candidates, no pick). Every verdict is recorded in
+One module, `openrouter.js`, serves both review translation and the AI match. Each
+job owns a separate instance (scope `translate` or `tmdb-match`, own state, own
+counters, own cap). It also holds the UTC-day helpers.
+
+- Keys: `OPENROUTER_API_KEYS` (comma list, secret) is trimmed and deduped, order
+  kept. Logs name keys only as `k<n> (<first 6 hex of sha256(key)>)`; the key is
+  sent only in the `authorization` header and is never logged or put into an
+  error. Free-tier request limits belong to the account, so extra keys of the same
+  account add nothing.
+- Models: `OPENROUTER_TRANSLATE_MODELS` / `OPENROUTER_MATCH_MODELS`, ordered
+  `id[:rpm[:rpd]]`, best first, free models first and paid ones later (e.g. paid
+  `deepseek/deepseek-v4-flash`). A trailing `:free` is part of the id. Free models
+  default to 20 rpm; paid models are not spaced; rpm 0 = no spacing.
+- Status handling: 401 key off; 402 (or 403 "Key limit exceeded") model parked; any
+  other 403 is a content refusal, next model; 429 daily on a `:free` model parks all
+  `:free` models until 00:00 UTC, otherwise parked by `Retry-After` /
+  `X-RateLimit-Reset`; 404 / "no endpoints" model off; 408/5xx transient park
+  (doubles). An error body inside HTTP 200 is treated like its code.
+- Paid output cap: `OPENROUTER_TRANSLATE_PAID_DAILY_OUTPUT_TOKENS` and
+  `OPENROUTER_MATCH_PAID_DAILY_OUTPUT_TOKENS` cap the completion tokens of all
+  non-`:free` models together per UTC day, recorded in `ai_quota_ledger.output_tokens`
+  (migration 033). At the cap paid models are blocked until the UTC reset; `:free`
+  models keep serving. There is no overall token cap.
+- Quota ledger (`aiQuotaLedger.js` + `aiQuotaStore.js`, table `ai_quota_ledger`,
+  migration 031, renamed by 032, `output_tokens` added by 033): per key+model counts
+  of requests per day (UTC days; the model's own `rpd`), per-day output-token totals
+  for the paid cap, and RPM spacing from the persisted last request. A request counts
+  when it starts and stays counted if it fails or times out. When OpenRouter answers
+  a daily-quota 429 the count is raised to the limit (`exhaust`) even if the ledger
+  thought some requests were left. Keys are stored only as a 12-hex sha256
+  fingerprint. The table is disposable (see [Backup and restore](#backup-and-restore)).
+
+| Variable | Meaning |
+| --- | --- |
+| `OPENROUTER_API_KEYS` | Secret, comma-separated. Empty = OpenRouter provider and the AI match off. |
+| `OPENROUTER_BASE_URL` | API base. |
+| `OPENROUTER_TIMEOUT_MS` | Per-request timeout for translation. |
+| `OPENROUTER_COOLDOWN_MS` | How long a rejected key or unknown model stays off. |
+| `OPENROUTER_TRANSLATE_MODELS` | Translation model list. |
+| `OPENROUTER_MATCH_MODELS` | AI match model list. |
+| `OPENROUTER_*_PAID_DAILY_OUTPUT_TOKENS` | Per-job paid cap (`TRANSLATE` / `MATCH`). |
+
+### AI match
+
+For ready titles with no `tmdb_id` the pass fetches real TMDB candidates
+(`tmdbMatchAi.js`), has an OpenRouter model rank them, and lets an independent gate
+decide. The model never supplies an id, only picks among fetched candidates. It
+runs only with `TMDB_MATCH_AI_ENABLED=true`, an `OPENROUTER_API_KEYS` key,
+`TMDB_MATCH_AI_MODE` other than `off`, and `TMDB_ENABLED` plus a TMDB key.
+
+- Gate (`decideAiMatch`, pure): the model's pick is `verified` only if tier 1 holds
+  (catalog cast >= 2 and >= 2 names overlap the candidate's cast, year and size
+  compatible; TV season not above the candidate's season count) or tier 2 holds
+  (exact name + year + size, no other candidate passes the same test; a row
+  without a year is refused). Otherwise `unverifiable` (a pick the gate refused) or
+  `none` (no candidates, no pick). Every verdict is recorded in
   `tmdb_match_ai_runs` (`status` + `outcome`, migration 029).
-- Dry-run vs apply: `TMDB_MATCH_AI_MODE=dry-run` (default) only writes `tmdb_match_ai_runs`.
-  `apply` also calls `assignTmdbIdentity` (source `inferred`) for verified picks: it writes
-  the id on the row or merges it into the row already holding that identity. Independent of
-  `TMDB_IDENTITY_MODE`, which only governs promotion of the cast-verified `tmdb_match_*`
-  rows. In apply mode a title whose last run was a dry-run `verified` is examined again.
-- Retry windows: `none`, `unverifiable` and verified-but-not-applied results are not
-  re-examined for `TMDB_MATCH_AI_RETRY_MS` (14 days); errors wait
-  `TMDB_MATCH_AI_ERROR_RETRY_MS` (6 h). Rows with a cast of two or more go first.
-- Loop: `tmdbMatchAiLoop.js` wakes every `TMDB_MATCH_AI_LOOP_MS` (60 s) and ranks one
-  token-packed batch per tick; `TMDB_MATCH_AI_LOOP=false` runs the older whole pass inside
-  the sync cycle instead (`TMDB_MATCH_AI_LIMIT` titles per cycle). The scope `priority`
-  (films first seen within `TMDB_MATCH_AI_FRESH_MS`, 3 days, and films whose last run errored)
-  runs first; the old backlog (`all`) only runs while more than `TMDB_MATCH_AI_RESERVE_PCT`
-  (10, max 90) of the day's request budget remains.
-- Batching: films are packed into one request until `TMDB_MATCH_AI_BATCH_TOKENS` (24000,
-  estimated chars/3 and corrected from the prompt token count each response reports) or
-  `TMDB_MATCH_AI_BATCH_MAX` (20) is reached;
-  a batch holds one tier only. A request the model refuses is bisected until the offending
-  film is alone (then `model-refused`). Reasoning tokens: `TMDB_MATCH_AI_THINK_T1=0`
-  (films with a cast, 0 = reasoning off), `TMDB_MATCH_AI_THINK_T2=4096`. Timeout
-  `TMDB_MATCH_AI_TIMEOUT_MS=180000`; transient parking uses
-  `TMDB_MATCH_AI_TRANSIENT_PARK_MS` / `_MAX_MS`; the pause between batches is `TMDB_MATCH_AI_WORKED_MS` (2000).
-- Quota ledger (`aiQuotaLedger.js`, table `ai_quota_ledger`, migration 031, renamed by 032): per
-  key+model counts of requests per day (UTC days; the model's own `rpd`), per-day token
-  totals for the OpenRouter cap, and RPM spacing from the persisted last request. A request counts when it starts and stays counted if it fails
-  or times out. When OpenRouter answers a daily-quota 429 the count is raised to the limit
-  (`exhaust`) even if the ledger thought some requests were left. Keys are stored only as a
-  12-hex sha256 fingerprint. The table is disposable (see Backup and restore).
-- Log lines: `[worker] tmdb ai match mode= scope= requests= checked= verified= unverifiable=
-  none= error= merged= assigned= tokens=prompt/output/thoughts models=`; the loop logs state
-  changes only (`[worker] tmdb ai match loop: quota|blocked|idle`); warnings
-  `tmdb ai match batch failed`, `... assign failed for <slug>`, `... could not record run`,
-  `[worker] ai quota ledger save failed|could not load`. Promotion logs
-  `[worker] tmdb identity promote checked= assigned= merged= blocked= conflict=`.
-- Audit and undo: every assign, merge, blocked and conflict is a row in
-  `tmdb_identity_changes` (migration 030; merges point at the `movie_merges` snapshot).
-  `node scripts/tmdb-identity-report.mjs <out.csv> [--n 200] [--seed 1] [--tmdb]` is the
-  read-only review sample; `node scripts/tmdb-identity-undo.mjs <changeId>` reverses one
-  assign or merge (it refuses if the identity changed since) and prints the result. It
-  writes to the database only, so the affected slugs must be invalidated afterwards
-  (Valkey keys and Next render tags, as the worker does after a sync) or readers keep the
+- Dry-run vs apply: `dry-run` (default) only writes `tmdb_match_ai_runs`. `apply`
+  also calls `assignTmdbIdentity` (source `inferred`) for verified picks: it writes
+  the id on the row or merges it into the row already holding that identity.
+  Independent of `TMDB_IDENTITY_MODE`, which only governs promotion of the
+  cast-verified `tmdb_match_*` rows. In apply mode a title whose last run was a
+  dry-run `verified` is examined again.
+- Retry windows: `none`, `unverifiable` and verified-but-not-applied results are
+  not re-examined for `TMDB_MATCH_AI_RETRY_MS`; errors wait
+  `TMDB_MATCH_AI_ERROR_RETRY_MS`. Rows with a cast of two or more go first.
+- Loop: `tmdbMatchAiLoop.js` wakes every `TMDB_MATCH_AI_LOOP_MS` and ranks one
+  token-packed batch per tick; `TMDB_MATCH_AI_LOOP=false` runs the older whole pass
+  inside the sync cycle instead (`TMDB_MATCH_AI_LIMIT` titles per cycle). The scope
+  `priority` (films first seen within `TMDB_MATCH_AI_FRESH_MS`, and films whose last
+  run errored) runs first; the old backlog (`all`) runs once `priority` is empty.
+- Batching: films are packed into one request until `TMDB_MATCH_AI_BATCH_TOKENS`
+  (estimated chars/3 and corrected from the prompt token count each response
+  reports) or `TMDB_MATCH_AI_BATCH_MAX` is reached; a batch holds one tier only. A
+  request the model refuses is bisected until the offending film is alone (then
+  `model-refused`).
+- Log lines: `[worker] tmdb ai match mode= scope= requests= checked= verified=
+  unverifiable= none= error= merged= assigned= tokens=prompt/output/thoughts
+  models=`; the loop logs state changes only (`[worker] tmdb ai match loop:
+  blocked|idle`); warnings `tmdb ai match batch failed`, `... assign failed
+  for <slug>`, `... could not record run`, `[worker] ai quota ledger save
+  failed|could not load`. Promotion logs `[worker] tmdb identity promote checked=
+  assigned= merged= blocked= conflict=`.
+- Development scripts (read-only against the catalog, they hit TMDB and
+  OpenRouter): `scripts/tmdb-ai-backtest.mjs` (precision against provider-supplied
+  ids), `tmdb-ai-classify.mjs` (breakdown of rows still without identity),
+  `tmdb-ai-dryrun.mjs` (dry run of the pass on real rows).
+
+| Variable | Meaning |
+| --- | --- |
+| `TMDB_MATCH_AI_ENABLED` | Master switch. |
+| `TMDB_MATCH_AI_MODE` | `off` / `dry-run` / `apply`. |
+| `TMDB_MATCH_AI_LOOP` | Own worker loop; `false` folds the pass into the sync cycle. |
+| `TMDB_MATCH_AI_LOOP_MS` | Loop wake interval (minimum 5000). |
+| `TMDB_MATCH_AI_WORKED_MS` | Pause between batches while a backlog remains (loop only). |
+| `TMDB_MATCH_AI_LIMIT` | Titles per cycle (only when the loop is off). |
+| `TMDB_MATCH_AI_RETRY_MS` | Re-examine delay for none / unverifiable / not applied. |
+| `TMDB_MATCH_AI_ERROR_RETRY_MS` | Re-examine delay after an error. |
+| `TMDB_MATCH_AI_FRESH_MS` | "Recently first seen" window for the `priority` scope. |
+| `TMDB_MATCH_AI_BATCH_TOKENS` | Estimated prompt tokens per batch. |
+| `TMDB_MATCH_AI_BATCH_MAX` | Films per batch. |
+| `TMDB_MATCH_AI_THINK_T1` | Reasoning tokens for films with a cast; `0` = off. |
+| `TMDB_MATCH_AI_THINK_T2` | Reasoning tokens for films without a cast. |
+| `TMDB_MATCH_AI_TIMEOUT_MS` | Per-request timeout. |
+| `TMDB_MATCH_AI_TRANSIENT_PARK_MS` | Park time after a 5xx / timeout; doubles on repeats. |
+| `TMDB_MATCH_AI_TRANSIENT_PARK_MAX_MS` | Upper bound of that doubling. |
+| `OPENROUTER_MATCH_MODELS` / `OPENROUTER_MATCH_PAID_DAILY_OUTPUT_TOKENS` | Model list and paid output cap. |
+
+### Identity audit and undo
+
+Every assign, merge, blocked and conflict is a row in `tmdb_identity_changes`
+(migration 030; merges point at the `movie_merges` snapshot).
+
+- `node scripts/tmdb-identity-report.mjs <out.csv> [--n 200] [--seed 1] [--tmdb]`
+  is the read-only review sample.
+- `node scripts/tmdb-identity-undo.mjs <changeId>` reverses one assign or merge
+  (it refuses if the identity changed since) and prints the result. It writes to
+  the database only, so the affected slugs must be invalidated afterwards (Valkey
+  keys and Next render tags, as the worker does after a sync) or readers keep the
   old page.
-- Development scripts (read-only against the catalog, they hit TMDB and OpenRouter):
-  `scripts/tmdb-ai-backtest.mjs` (precision against provider-supplied ids),
-  `tmdb-ai-classify.mjs` (breakdown of rows still without identity), `tmdb-ai-dryrun.mjs`
-  (dry run of the pass on real rows).
 
 ## Duplicate merge (NguonC + KKPhim)
 
@@ -314,7 +438,86 @@ Undo one merge by hand from `movie_merges` (`dropped_row`, `moved_source_ids`, `
 delete the matching `movie_slug_aliases` row. `tools/merge-backtest.mjs` is the read-only precision
 check, `tools/merge-duplicates.mjs --apply` runs the merge against a scratch `DATABASE_URL`.
 
-## Backup and restore
+## API contract
+
+| Endpoint | Notes |
+| --- | --- |
+| `GET /api/health` | Also served at `/healthz`. |
+| `GET /api/home-data` | |
+| `GET /api/list?type=phim-le&page=1` | |
+| `GET /api/genre?slug=chinh-kich&page=1` | |
+| `GET /api/country?slug=trung-quoc&page=1` | |
+| `GET /api/search?keyword=ren%20yu&page=1` | |
+| `GET /api/movie/:canonicalSlug` | |
+| `GET /api/recommendations/:canonicalSlug` | |
+| `GET /api/person/:slug?role=&page=` | Cast/director credits. |
+| `GET /api/movies/:canonicalSlug/reviews?page=1&limit=10` | Public, cached 60s; contract in `backend/ARCHITECTURE.md` (`contentVi` null when untranslated; limit default 10, max 20; 404 for unknown slug). |
+| `GET /api/categories` | |
+| `GET /api/countries` | |
+| `GET /api/cards?slugs=a,b` | Public, cached 60s, key = sorted slug list. |
+| `/api/auth/*`, `/api/me/*` | Accounts, sessions, favorites, history with last episode. Never cached; reachable only via the Next proxy, 404 on img.bluesia.net; 429 `rate_limited` / 503 `busy` with `Retry-After`. |
+| `GET /i/{m\|d}/<image_assets.id>.webp` | Path-only image URL, see [Image cache](#image-cache). |
+
+Only image variants `m` (480 x 720) and `d` (1280 x 720) exist.
+
+## Provider identity
+
+Resolution order:
+
+1. exact TMDB ID plus media family;
+2. exact IMDb ID plus media family;
+3. normalized original title plus year plus media family;
+4. normalized Vietnamese title plus year plus media family;
+5. controlled token similarity at or above 0.96 with the same year/media family.
+
+NguonC wins presentation metadata. KKPhim fills missing fields and remains an
+alternate stream source. Every source retains provider ID, slug, priority,
+availability, raw metadata, streams, and success timestamps.
+
+## Operations
+
+### Runtime/codebase split
+
+Decision (2026-08-18, ADR-001, since folded in here): the Docker stack directory holds
+runtime only, and the source lives elsewhere.
+
+- **Codebase** `/home/ubuntu/blueflare`: full git clone, the only source of the Dockerfiles,
+  `src/`, `backend/src/` and migrations.
+- **Runtime** `/opt/stacks/blueflare` (path chosen so dockhand finds the stack): `compose.yml`,
+  `.env` (chmod 600, secrets, never in git), `deploy/`, `data/images/` (the bind-mounted image
+  cache) and `backups/`.
+- Compose builds from the codebase through `BLUEFLARE_SRC` (build context
+  `${BLUEFLARE_SRC}/backend`, frontend `${BLUEFLARE_SRC}` with `Dockerfile.frontend`), so no
+  registry or CI is needed. `infra/compose.yml` in the repo is the source of truth;
+  `infra/scripts/sync-stack.sh` copies it to the stack directory.
+- Keep `name: blueflare` in compose. Renaming the project makes Compose create new volumes
+  and the Postgres data would appear lost.
+- Rejected alternatives: pushing images to a registry (needs CI and a build/push/pull loop
+  before every deploy, worth it only with a second host) and merely cleaning junk out of the
+  old combined directory (leaves secrets next to the git tree).
+- Consequence: deploys touch two places (`git pull` in the codebase, then build and recreate
+  from the stack directory, which `scripts/deploy.sh` does). The stack cannot rebuild itself
+  without the codebase, which is acceptable because it is one `git clone` away. What cannot
+  be cloned (Postgres volume, image cache, `.env`) sits in the stack directory, which is what
+  gets backed up.
+
+### Verification
+
+Tests run from the repository, not the stack directory: `cd backend && node --test`
+(see Verification in `/CLAUDE.md` for the full checklist). Representative provider
+response fixtures are under `backend/test/fixtures`. Against the running stack:
+
+    cd /opt/stacks/blueflare
+    docker compose --env-file .env -f compose.yml logs --tail=100 worker
+    curl -fsS http://127.0.0.1:3200/api/home-data
+    curl -fsS 'http://127.0.0.1:3200/api/list?type=phim-le&page=1'
+
+Provider documentation verified during implementation:
+
+- NguonC: https://phim.nguonc.com/api-document
+- KKPhim: https://kkphim.com/api-document
+
+### Backup and restore
 
 The `backup` service takes a scheduled offsite backup: `pg_dump -Fc`, verified
 with `pg_restore --list` before it counts as a backup, uploaded to an
@@ -330,12 +533,15 @@ and region for R2, Backblaze B2, Wasabi, AWS S3 and MinIO.
 
 The dump also carries user accounts, sessions and per-title watch history (tables from
 migrations `020_users_sessions.sql` and `021_history_episode.sql`); a restore brings them back with the catalog.
-The TMDB identity audit/undo log `tmdb_identity_changes` (migration `030`) is in the dump too. `ai_quota_ledger`
-(migration `031`) is disposable: after a restore without it the ledger counts from zero until Google answers 429.
+The TMDB identity audit/undo log `tmdb_identity_changes` (migration `030`) is in the dump too.
+`ai_quota_ledger` (migrations `031`/`032`, `output_tokens` from `033`) is disposable: after a
+restore without it the ledger counts from zero until the provider answers 429.
 
 For a backup outside the schedule:
 
     /opt/stacks/blueflare/deploy/backup-postgres.sh
+
+(`infra/scripts/backup-postgres.sh` in the repo, synced there by `sync-stack.sh`.)
 
 ### Rebuilding this VPS from nothing
 
@@ -358,7 +564,7 @@ Skipping the restore is not a shortcut: the site comes up empty and the worker
 re-crawls the providers from scratch, which takes weeks and silently loses
 every title the providers have dropped in the meantime.
 
-## Caddy
+### Caddy
 
 The host `/etc/caddy/Caddyfile` is the only place these two site blocks live;
 the repository does not carry `.caddy` files. `infra/scripts/bootstrap-vps.sh` appends
@@ -375,6 +581,14 @@ writable `/var/log/caddy` owned by the `caddy` user, which turns reload into a
 two-step sudo dance and once caused a silent reload failure. `journalctl -u
 caddy` is enough for this single-VPS setup.
 
+Caddy obtains and serves the origin certificate for img.bluesia.net. Once the
+route is active, Cloudflare Full (strict) can reach the origin without 525. The
+Caddy admin API can load a route immediately, but that does not replace the
+privileged `/etc/caddy/Caddyfile` edit: persist the site block before the next
+Caddy restart.
+
+#### Image site: img.bluesia.net
+
 The image site block proxies to the API port and 404s the account routes
 (`bootstrap-vps.sh` skips an existing block, so add the `@account` rule to an
 already-deployed Caddyfile by hand):
@@ -389,19 +603,7 @@ already-deployed Caddyfile by hand):
         reverse_proxy 127.0.0.1:3200
     }
 
-The `phim.bluesia.net` block also carries an `@authdirect` rule that answers 403 for
-`/api/auth/*` unless the peer is in the Cloudflare ranges. `inject_caddy_block`
-skips an existing block, so add it to a deployed Caddyfile by hand; the snippet and
-ranges are in `docs/CLOUDFLARE_CACHE.md` ("Auth hardening").
-
-Caddy obtains and serves the origin certificate for img.bluesia.net. Once the
-route is active, Cloudflare Full (strict) can reach the origin without 525.
-
-The Caddy admin API can load this route immediately, but that does not replace
-the privileged `/etc/caddy/Caddyfile` edit: persist the site block before the
-next Caddy restart.
-
-### Next.js frontend at phim.bluesia.net
+#### Next.js frontend: phim.bluesia.net
 
 The `frontend` Compose service builds `frontend/Dockerfile`, runs the Next.js
 standalone server on container port 3000, and binds it to
@@ -444,6 +646,9 @@ revalidation path:
         reverse_proxy 127.0.0.1:3100
     }
 
+The `@authdirect` rule (403 for `/api/auth/*` unless the peer is a Cloudflare
+address) also lives in this block: see `infra/CLOUDFLARE.md`.
+
 Format, validate, and reload Caddy using the same host procedure as the image
 site. Verify after reload:
 
@@ -452,13 +657,22 @@ site. Verify after reload:
     curl -fsSI https://phim.bluesia.net/movie/example-slug
     curl -fsS https://phim.bluesia.net/healthz
 
-## Cloudflare cache rule
+### Cloudflare cache rule
 
-Signed `/i/` images are extension-based assets and use a one-year immutable
-origin header. For extensionless JSON endpoints, create one zone Cache Rule from
-`infra/cloudflare/cloudflare-cache-rule.json`. It caches only `img.bluesia.net/api/*`,
-excludes `/api/health`, and respects each response's origin TTL. Do not apply the
-rule to video/embed URLs.
+`/i/` images are extension-based assets (`.webp`, path-only URLs) and use a
+one-year immutable origin header. Two zone Cache Rules are kept in
+`infra/cloudflare/`; neither applies to video/embed URLs.
+
+- `cloudflare-image-cache-rule.json`: `img.bluesia.net` GET/HEAD under `/i/`,
+  one-year edge and browser TTL, overriding the origin.
+- `cloudflare-cache-rule.json`: an allowlist for the extensionless JSON
+  endpoints on `img.bluesia.net` (GET/HEAD), 5 minutes at the edge and 60 s in the
+  browser (overriding the origin TTL). It covers exactly `/api/home-data`,
+  `/api/list`, `/api/genre`, `/api/country`, `/api/categories`, `/api/countries`,
+  `/api/movie/*` and `/api/recommendations/*`. It does not cover
+`/api/movies/*/reviews`, `/api/person/*`, `/api/cards`, `/api/search` or
+`/api/health`; those are not edge-cached (the API's own Valkey cache still applies).
+Rules are applied by hand: re-apply the JSON in Cloudflare after changing it.
 
 Verify edge behavior with two identical requests:
 
@@ -469,58 +683,7 @@ The second response should report `CF-Cache-Status: HIT`. A `DYNAMIC` result
 means the Cache Rule is not active or the token used to create it lacks
 `Zone > Cache Rules > Edit`.
 
-
-## API contract
-
-- GET /api/health
-- GET /api/home-data
-- GET /api/list?type=phim-le&page=1
-- GET /api/genre?slug=chinh-kich&page=1
-- GET /api/country?slug=trung-quoc&page=1
-- GET /api/search?keyword=ren%20yu&page=1
-- GET /api/movie/:canonicalSlug
-- GET /api/recommendations/:canonicalSlug
-- GET /api/movies/:canonicalSlug/reviews?page=1&limit=10 (each review has `contentVi`, null when untranslated; public, cached 60s, key = `reviews:<slug>:<page>:<limit>`; limit default 10, max 20; 404 for unknown slug)
-- GET /api/categories
-- GET /api/countries
-- GET /api/cards?slugs=a,b (public, cached 60s, key = sorted slug list)
-- /api/auth/* and /api/me/* (accounts, sessions, favorites, history with last episode; never cached; reachable only via the Next proxy, 404 on img.bluesia.net; 429 rate_limited / 503 busy with Retry-After)
-- GET /i/:variant/:sha256.webp?url=...&sig=...
-
-Only image variants m (480 x 720) and d (1280 x 720) exist. Their identity is
-sha256(normalized upstream URL) plus variant; requester host and frontend route
-never participate in the cache key.
-
-## Provider identity
-
-Resolution order:
-
-1. exact TMDB ID plus media family;
-2. exact IMDb ID plus media family;
-3. normalized original title plus year plus media family;
-4. normalized Vietnamese title plus year plus media family;
-5. controlled token similarity at or above 0.96 with the same year/media family.
-
-NguonC wins presentation metadata. KKPhim fills missing fields and remains an
-alternate stream source. Every source retains provider ID, slug, priority,
-availability, raw metadata, streams, and success timestamps.
-
-## Verification
-
-    cd /opt/stacks/blueflare
-    npm test
-    docker compose --env-file .env -f compose.yml logs --tail=100 worker
-    curl -fsS http://127.0.0.1:3200/api/home-data
-    curl -fsS http://127.0.0.1:3200/api/list?type=phim-le&page=1
-
-Provider documentation verified during implementation:
-
-- NguonC: https://phim.nguonc.com/api-document
-- KKPhim: https://kkphim.com/api-document
-
-Representative response fixtures are stored under test/fixtures.
-
-## PostgreSQL container upgrades
+### PostgreSQL container upgrades
 
 `POSTGRES_MOUNT` is the parent directory, not `.../data`, because PostgreSQL
 18+ keeps `PGDATA` one level below it at `/var/lib/postgresql/<major>/docker`.
@@ -548,7 +711,7 @@ To roll back before accepting new writes, point `POSTGRES_IMAGE` and
 `POSTGRES_VOLUME` back at the previous pair and recreate PostgreSQL, API and
 worker. Do not delete the old volume during the upgrade window.
 
-## Valkey upgrades
+### Valkey upgrades
 
 Valkey is a rebuildable response cache, but AOF is retained for stale-response
 availability. The Compose default caps it at `512mb` so `allkeys-lru` has an
@@ -556,10 +719,6 @@ effective bound. Upgrade Valkey separately from PostgreSQL, verify AOF load,
 `PING`, key count and API cache hit/miss behavior, then observe logs and memory
 for at least 15 minutes. If the existing AOF cannot be loaded, start Valkey on
 an empty cache volume; the API will repopulate it from PostgreSQL.
-
-## PgBouncer decision
-
-PgBouncer is intentionally not part of this stack. The API and worker each use one `pg.Pool` capped at 12 connections, while the current PostgreSQL runtime has a limit of 100 and only a few active clients. Transaction pooling would also conflict with the migration's session-level advisory lock. Reconsider it only after measured connection pressure or additional API/worker replicas; any future transaction-pooled deployment must keep migrations on a direct PostgreSQL connection or use transaction-scoped advisory locking.
 
 ### Host sysctl for Valkey
 
@@ -570,3 +729,7 @@ PgBouncer is intentionally not part of this stack. The API and worker each use o
     sysctl --system
 
 Verify with `sysctl vm.overcommit_memory` returning `1`, then restart Valkey once if the warning was emitted during startup.
+
+### PgBouncer decision
+
+PgBouncer is intentionally not part of this stack. The API and worker each use one `pg.Pool` capped at 12 connections, while the current PostgreSQL runtime has a limit of 100 and only a few active clients. Transaction pooling would also conflict with the migration's session-level advisory lock. Reconsider it only after measured connection pressure or additional API/worker replicas; any future transaction-pooled deployment must keep migrations on a direct PostgreSQL connection or use transaction-scoped advisory locking.

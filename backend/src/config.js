@@ -23,7 +23,6 @@ function boolean(name, fallback = false) {
 }
 
 // Free models first (20 req/min, 1000 req/day after a 10 USD top-up); switching to paid models is an env change.
-const DEFAULT_OPENROUTER_TRANSLATE_MODELS = 'nvidia/nemotron-3-super-120b-a12b:free';
 const DEFAULT_OPENROUTER_MATCH_MODELS = 'nvidia/nemotron-3-super-120b-a12b:free';
 const nodeEnv = process.env.NODE_ENV || 'development';
 const syncIntervalMs = integer('SYNC_INTERVAL_MS', 15 * 60 * 1000, 1000);
@@ -110,7 +109,7 @@ export const config = Object.freeze({
   openrouterBaseUrl: String(process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').trim(),
   openrouterTimeoutMs: integer('OPENROUTER_TIMEOUT_MS', 60000, 1000),
   openrouterCooldownMs: integer('OPENROUTER_COOLDOWN_MS', 60 * 60 * 1000, 1000),
-  openrouterTranslateModels: String(process.env.OPENROUTER_TRANSLATE_MODELS || DEFAULT_OPENROUTER_TRANSLATE_MODELS).trim(),
+  openrouterTranslateModels: String(process.env.OPENROUTER_TRANSLATE_MODELS || '').trim(),
   // Output (completion) tokens per UTC day, summed over all paid (non-`:free`) models; 0 = no separate cap.
   openrouterTranslatePaidDailyOutputTokens: integer('OPENROUTER_TRANSLATE_PAID_DAILY_OUTPUT_TOKENS', 0, 0),
   // Several reviews per request (one free-tier request instead of one per review).

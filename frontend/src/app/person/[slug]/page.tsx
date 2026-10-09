@@ -1,11 +1,10 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
-import { ArrowLeft } from "lucide-react";
 import { MovieCard } from "@/components/MovieCard";
 import { Pagination } from "@/components/Pagination";
 import { getPersonServer } from "@/lib/catalog-server";
-import { createReturnToPath, getBackHref, hrefWithPage, normalizePage, returnToFromSearchParams } from "@/lib/navigation";
+import { createReturnToPath, hrefWithPage, normalizePage, returnToFromSearchParams } from "@/lib/navigation";
 
 type Params = Promise<{ slug: string }>;
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
@@ -47,10 +46,9 @@ export default async function PersonPage({ params, searchParams }: { params: Par
   for (const [key, value] of Object.entries(query)) {
     if (value !== undefined) urlParams.set(key, first(value));
   }
-  // Where this page was opened from. Kept across pagination so paging through a
-  // filmography does not strand the visitor with no way back to the list.
+  // Where this page was opened from. Kept across pagination so the nav tab
+  // highlight survives paging through a filmography.
   const inboundReturnTo = returnToFromSearchParams(urlParams);
-  const backHref = getBackHref(urlParams, { fallbackPath: "/" });
 
   const currentSearch = new URLSearchParams();
   if (role !== "all") currentSearch.set("role", role);
@@ -66,17 +64,6 @@ export default async function PersonPage({ params, searchParams }: { params: Par
 
   return (
     <div className="bf-content-width pb-10 pt-24 md:pt-28">
-      <div className="bf-page-gutter mb-5">
-        <a
-          href={backHref}
-          data-nav-back
-          aria-label="Quay lại"
-          className="grid h-11 w-11 place-items-center rounded bg-graphite text-white transition hover:bg-charcoal"
-        >
-          <ArrowLeft className="h-5 w-5" />
-        </a>
-      </div>
-
       <header className="bf-page-gutter flex items-center gap-5">
         {data.person.photo ? (
           <img

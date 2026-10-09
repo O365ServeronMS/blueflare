@@ -365,7 +365,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
      otherwise apply full desktop typography inside a 360px-tall viewport and
      push the Play CTA below the fold. The hero shrinks to its content instead
      of forcing a viewport-height block, and the top padding clears the
-     floating back button so the two never collide.
+     fixed nav.
 
      The shell and its content column are nested, so only the min-height reset
      belongs to both. The padding belongs to the content column alone —
@@ -378,14 +378,6 @@ button, a { -webkit-tap-highlight-color: transparent; }
     padding-top: calc(var(--bf-nav-height) + 0.5rem);
     padding-bottom: 1rem;
   }
-
-  /* Only the inner content column carries the page gutter. The back button is
-     absolutely positioned against the padding box, so it stays at the gutter
-     while the text column moves right — landscape trades plentiful horizontal
-     space for the scarce vertical kind instead of stacking the two. */
-  .bf-detail-content.bf-page-gutter { padding-left: calc(var(--bf-page-gutter) + 3.5rem); }
-
-  .bf-detail-shell [data-nav-back] { top: calc(var(--bf-nav-height) + 0.5rem); }
 
   .bf-detail-shell h1 {
     font-size: 28px;

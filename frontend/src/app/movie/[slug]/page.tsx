@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { Suspense } from "react";
-import { ArrowLeft, Play } from "lucide-react";
+import { Play } from "lucide-react";
 import { CastStrip } from "@/components/CastStrip";
 import { ExpandableSynopsis } from "@/components/ExpandableSynopsis";
 import { MovieActions } from "@/components/LocalMovieActions";
@@ -12,7 +12,7 @@ import { ReviewsSection } from "@/components/ReviewsSection";
 import { RecommendationRail } from "@/components/RecommendationRail";
 import { getMovieServer } from "@/lib/catalog-server";
 import { episodeWatchKey, findEpisodeByWatchKey, resolveServerIndex } from "@/lib/episodes";
-import { fallbackReturnToForSource, getBackHref, hrefWithReturnTo, inferNavSourceFromMovie, returnToFromSearchParams } from "@/lib/navigation";
+import { fallbackReturnToForSource, hrefWithReturnTo, inferNavSourceFromMovie, returnToFromSearchParams } from "@/lib/navigation";
 import { getDisplayRating, stripHtml } from "@/lib/utils";
 import { ScoreBadges } from "@/components/ScoreBadges";
 import type { MovieCard } from "@/lib/types";
@@ -93,7 +93,6 @@ export default async function MoviePage({ params, searchParams }: { params: Para
   const activeEpisodeKey = episode ? episodeWatchKey(episode, server?.serverData.indexOf(episode) ?? 0) : "";
   const navSource = returnToFromSearchParams(urlParams) ? undefined : inferNavSourceFromMovie(movie);
   const returnTo = returnToFromSearchParams(urlParams) || fallbackReturnToForSource(navSource);
-  const backHref = getBackHref(urlParams, { source: navSource, fallbackPath: "/" });
   const movieCard = toMovieCard(movie);
   const displayRating = getDisplayRating(movie);
   const playerHref = hrefWithReturnTo(`/movie/${movie.slug}?server=${serverIndex}&ep=${encodeURIComponent(activeEpisodeKey)}&play=1#player`, returnTo, navSource);
@@ -105,7 +104,6 @@ export default async function MoviePage({ params, searchParams }: { params: Para
         {movie.poster || movie.thumb ? <img src={movie.poster || movie.thumb} alt="" width={1280} height={720} loading="eager" fetchPriority="high" decoding="async" className="absolute inset-0 h-full w-full object-cover" /> : null}
         <div className="bf-detail-overlay absolute inset-0" />
         <div className="bf-detail-content bf-content-width bf-page-gutter relative z-10 flex min-h-[74vh] flex-col justify-end pb-16 pt-24 md:min-h-[78vh] md:pb-24">
-          <a href={backHref} data-nav-back aria-label="Quay lại danh sách phim" className="absolute left-[var(--bf-page-gutter)] top-20 grid h-11 w-11 place-items-center rounded bg-black/55 text-white transition hover:bg-graphite md:top-24"><ArrowLeft className="h-5 w-5" /></a>
           <div className="max-w-[42rem]">
             <h1 className="max-w-[13ch] text-[34px] font-black leading-[0.98] tracking-[-0.035em] text-white sm:text-[46px] md:text-[56px] lg:text-[64px]">{movie.name}</h1>
             {movie.originName && movie.originName !== movie.name ? <p className="mt-3 text-body font-medium text-silver">{movie.originName}</p> : null}

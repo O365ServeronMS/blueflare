@@ -22,14 +22,6 @@ export function normalizePage(value?: string | number | null) {
   return Math.floor(parsed);
 }
 
-export function pageFromSearchParams(searchParams?: URLSearchParams | string | null) {
-  if (!searchParams) return 1;
-  const params = typeof searchParams === "string"
-    ? new URLSearchParams(searchParams.replace(/^\?/, ""))
-    : searchParams;
-  return normalizePage(params.get("page"));
-}
-
 export function hrefWithPage(pathname: string, search: string, page: number) {
   const url = new URL(`${normalizeNavPath(pathname)}${search ? (search.startsWith("?") ? search : `?${search}`) : ""}`, SITE_ORIGIN);
   const normalizedPage = normalizePage(page);
@@ -67,10 +59,6 @@ export function safeInternalPath(value?: string | null) {
   }
 }
 
-export function isSafeInternalPath(value?: string | null) {
-  return Boolean(safeInternalPath(value));
-}
-
 export function createReturnToPath(pathname: string, search = "") {
   const cleanSearch = search ? (search.startsWith("?") ? search : `?${search}`) : "";
   return safeInternalPath(`${normalizeNavPath(pathname)}${cleanSearch}`);
@@ -80,10 +68,6 @@ export function returnToFromSearchParams(searchParams?: URLSearchParams | string
   if (!searchParams) return "";
   const params = typeof searchParams === "string" ? new URLSearchParams(searchParams.replace(/^\?/, "")) : searchParams;
   return safeInternalPath(params.get("returnTo"));
-}
-
-export function getSafeReturnTo(searchParams?: URLSearchParams | string | null) {
-  return returnToFromSearchParams(searchParams) || null;
 }
 
 export function fallbackReturnToForSource(source?: string | null) {
@@ -101,43 +85,6 @@ export function fallbackReturnToForSource(source?: string | null) {
     default:
       return "";
   }
-}
-
-export function getFallbackListPath({
-  source,
-  fallbackPath = "/"
-}: {
-  source?: string | null;
-  fallbackPath?: string | null;
-} = {}) {
-  return fallbackReturnToForSource(source) || safeInternalPath(fallbackPath) || "/";
-}
-
-export function getFallbackListHref(context?: {
-  source?: string | null;
-  fallbackPath?: string | null;
-}) {
-  return getFallbackListPath(context);
-}
-
-export function getMovieBackHref(
-  searchParams?: URLSearchParams | string | null,
-  context?: {
-    source?: string | null;
-    fallbackPath?: string | null;
-  }
-) {
-  return getSafeReturnTo(searchParams) || getFallbackListHref(context);
-}
-
-export function getBackHref(
-  searchParams?: URLSearchParams | string | null,
-  context?: {
-    source?: string | null;
-    fallbackPath?: string | null;
-  }
-) {
-  return getMovieBackHref(searchParams, context);
 }
 
 export function navSourceFromReturnTo(returnTo?: string | null) {

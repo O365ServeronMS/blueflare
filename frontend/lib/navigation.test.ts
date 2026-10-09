@@ -2,19 +2,13 @@ import { describe, test, expect } from "vitest";
 import {
   normalizeNavPath,
   normalizePage,
-  pageFromSearchParams,
   hrefWithPage,
   validNavSourceKey,
   navSourceFromSearchParams,
   safeInternalPath,
-  isSafeInternalPath,
   createReturnToPath,
   returnToFromSearchParams,
-  getSafeReturnTo,
   fallbackReturnToForSource,
-  getFallbackListPath,
-  getMovieBackHref,
-  getBackHref,
   navSourceFromReturnTo,
   hrefWithReturnTo,
   navSourceFromPath,
@@ -83,29 +77,6 @@ describe("normalizePage", () => {
 
   test("returns 1 for empty string", () => {
     expect(normalizePage("")).toBe(1);
-  });
-});
-
-describe("pageFromSearchParams", () => {
-  test("returns 1 when no params", () => {
-    expect(pageFromSearchParams(null)).toBe(1);
-    expect(pageFromSearchParams(undefined)).toBe(1);
-  });
-
-  test("extracts page from URLSearchParams", () => {
-    expect(pageFromSearchParams(new URLSearchParams("page=3"))).toBe(3);
-  });
-
-  test("extracts page from string", () => {
-    expect(pageFromSearchParams("page=5")).toBe(5);
-  });
-
-  test("handles leading ? in string", () => {
-    expect(pageFromSearchParams("?page=2")).toBe(2);
-  });
-
-  test("returns 1 when page param missing", () => {
-    expect(pageFromSearchParams("type=phim-le")).toBe(1);
   });
 });
 
@@ -217,16 +188,6 @@ describe("safeInternalPath", () => {
   });
 });
 
-describe("isSafeInternalPath", () => {
-  test("returns true for valid paths", () => {
-    expect(isSafeInternalPath("/")).toBe(true);
-  });
-
-  test("returns false for dangerous paths", () => {
-    expect(isSafeInternalPath("//evil.com")).toBe(false);
-  });
-});
-
 describe("createReturnToPath", () => {
   test("creates path with search", () => {
     const result = createReturnToPath("/list/phim-le", "page=2");
@@ -252,7 +213,7 @@ describe("createReturnToPath", () => {
   });
 });
 
-describe("returnToFromSearchParams / getSafeReturnTo", () => {
+describe("returnToFromSearchParams", () => {
   test("extracts returnTo param", () => {
     const params = new URLSearchParams("returnTo=/list/phim-le?page=2");
     const result = returnToFromSearchParams(params);
@@ -262,16 +223,6 @@ describe("returnToFromSearchParams / getSafeReturnTo", () => {
   test("rejects unsafe returnTo", () => {
     const params = new URLSearchParams("returnTo=//evil.com");
     expect(returnToFromSearchParams(params)).toBe("");
-  });
-
-  test("getSafeReturnTo returns null when missing", () => {
-    expect(getSafeReturnTo(null)).toBeNull();
-    expect(getSafeReturnTo(new URLSearchParams(""))).toBeNull();
-  });
-
-  test("getSafeReturnTo returns path when valid", () => {
-    const params = new URLSearchParams("returnTo=/list/phim-bo");
-    expect(getSafeReturnTo(params)).toBe("/list/phim-bo");
   });
 });
 
@@ -287,43 +238,6 @@ describe("fallbackReturnToForSource", () => {
   test("returns empty for unknown source", () => {
     expect(fallbackReturnToForSource("unknown")).toBe("");
     expect(fallbackReturnToForSource(null)).toBe("");
-  });
-});
-
-describe("getFallbackListPath", () => {
-  test("uses source when valid", () => {
-    expect(getFallbackListPath({ source: "phim-le" })).toBe("/list/phim-le");
-  });
-
-  test("falls back to fallbackPath", () => {
-    expect(getFallbackListPath({ fallbackPath: "/search" })).toBe("/search");
-  });
-
-  test("defaults to /", () => {
-    expect(getFallbackListPath()).toBe("/");
-    expect(getFallbackListPath({})).toBe("/");
-  });
-
-  test("rejects unsafe fallbackPath", () => {
-    expect(getFallbackListPath({ fallbackPath: "//evil.com" })).toBe("/");
-  });
-});
-
-describe("getMovieBackHref / getBackHref", () => {
-  test("prefers returnTo from search params", () => {
-    const params = new URLSearchParams("returnTo=/list/phim-le?page=3");
-    const result = getMovieBackHref(params);
-    expect(result).toContain("/list/phim-le");
-  });
-
-  test("falls back to source context", () => {
-    const result = getMovieBackHref(new URLSearchParams(""), { source: "phim-bo" });
-    expect(result).toBe("/list/phim-bo");
-  });
-
-  test("getBackHref delegates to getMovieBackHref", () => {
-    const params = new URLSearchParams("returnTo=/");
-    expect(getBackHref(params)).toBe("/");
   });
 });
 

@@ -51,15 +51,20 @@ export function validateIdentity({ tmdbId, mediaType } = {}) {
 /**
  * Season of the page this row represents. Movies have none. A series needs one that is
  * evident: already stored on the row, a "(Phần N)" marker in title/slug, or TMDB reporting
- * a single season. Anything else is reported, never guessed.
+ * a single season. Anything else is reported, never guessed. `explicitSeason` (the season
+ * inference pass) is the last resort: it never overrides a stored season or a title marker.
  */
-export function resolveSeason(row, mediaType, numberOfSeasons = null) {
+export function resolveSeason(row, mediaType, numberOfSeasons = null, explicitSeason = null) {
   if (mediaType === 'movie') return { season: null };
   const total = Number(numberOfSeasons);
   const known = Number.isInteger(total) && total > 0 ? total : null;
   let season = null;
   if (Number.isInteger(row.tmdb_season_number) && row.tmdb_season_number >= 0) season = row.tmdb_season_number;
   else season = nguoncSeason(row);
+  if (season === null && explicitSeason !== null && explicitSeason !== undefined) {
+    if (!Number.isInteger(explicitSeason) || explicitSeason < 1) return { season: null, blocked: 'season-invalid' };
+    season = explicitSeason;
+  }
   if (season === null && known === 1) season = 1;
   if (season === null) return { season: null, blocked: 'season-unknown' };
   if (season < 1 || (known && season > known)) return { season, blocked: 'season-out-of-range' };
@@ -127,7 +132,7 @@ async function planWith(db, movieId, input, { source = 'inferred', lock = false 
   const target = (await db.query('SELECT * FROM movies WHERE id=$1' + suffix, [movieId])).rows[0];
   if (!target) return { action: 'blocked', reason: 'row-missing', season: null };
   const base = { survivorId: target.id, survivorSlug: target.canonical_slug };
-  const resolved = resolveSeason(target, identity.mediaType, input.numberOfSeasons);
+  const resolved = resolveSeason(target, identity.mediaType, input.numberOfSeasons, input.season ?? null);
   const season = resolved.season;
   if (resolved.blocked) return { ...base, action: 'blocked', reason: resolved.blocked, season };
   if (target.catalog_state !== 'ready') return { ...base, action: 'blocked', reason: 'not-ready', season };
@@ -200,6 +205,11 @@ async function logDeclined(kind, movieId, input, season, reason, source, evidenc
       [movieId, kind, source, Number(input.tmdbId) || null, input.mediaType ?? null, season ?? null, reason, JSON.stringify(evidence ?? null)]
     );
   } catch { /* log table not migrated yet; the decision itself is still returned */ }
+}
+
+/** Public handle on logDeclined for passes that decide not to assign before reaching the planner. */
+export function recordDeclinedIdentity(movieId, input, reason, { source = 'inferred', evidence = null, kind = 'blocked' } = {}) {
+  return logDeclined(kind, movieId, input, null, reason, source, evidence);
 }
 
 async function tableExists(db, name) {

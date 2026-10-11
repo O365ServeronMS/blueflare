@@ -76,6 +76,7 @@ import { findCastVerifiedMatch } from './tmdbMatch.js';
 import { refreshTmdbAiMatches } from './tmdbMatchAiSync.js';
 import { aiLoopEnabled, runTmdbMatchAiLoop } from './tmdbMatchAiLoop.js';
 import { promoteVerifiedMatches } from './tmdbIdentity.js';
+import { refreshSeasonInference } from './tmdbSeasonInferSync.js';
 import { backfillMdblistRatings, formatMdblistStats, syncMdblistRatings } from './mdblistRatingsSync.js';
 import {
   fetchTmdbCredits,
@@ -845,6 +846,18 @@ async function syncCycle() {
       console.log('[worker] tmdb identity promote checked=' + promoted.checked + ' assigned=' + promoted.assigned +
         ' merged=' + promoted.merged + ' blocked=' + promoted.blocked + ' conflict=' + promoted.conflict);
       ratingChangedSlugs.push(...promoted.slugs);
+    }
+  }
+  if (!stopping && config.tmdbSeasonInferMode !== 'off') {
+    const inferred = await refreshSeasonInference().catch((error) => {
+      console.warn('[worker] tmdb season infer failed', error.message);
+      return null;
+    });
+    if (inferred?.checked) {
+      console.log('[worker] tmdb season infer mode=' + inferred.mode + ' checked=' + inferred.checked + ' assigned=' + inferred.assigned +
+        ' merged=' + inferred.merged + ' blocked=' + inferred.blocked + ' reasons=' + JSON.stringify(inferred.reasons) +
+        ' planned=' + inferred.planned);
+      ratingChangedSlugs.push(...inferred.slugs);
     }
   }
   if (!stopping && config.tmdbMatchEnabled) {

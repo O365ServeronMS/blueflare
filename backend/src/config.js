@@ -140,6 +140,11 @@ export const config = Object.freeze({
     ? process.env.TMDB_IDENTITY_MODE
     : 'off',
   tmdbIdentityPromoteBatch: integer('TMDB_IDENTITY_PROMOTE_BATCH', 200, 1),
+  // Season of tv rows whose TMDB identity is known but whose season is not (tmdbSeasonInfer.js): off | dry-run | apply.
+  tmdbSeasonInferMode: ['off', 'dry-run', 'apply'].includes(process.env.TMDB_SEASON_INFER_MODE)
+    ? process.env.TMDB_SEASON_INFER_MODE
+    : 'off',
+  tmdbSeasonInferBatch: integer('TMDB_SEASON_INFER_BATCH', 100, 1),
   tmdbMatchEnabled: boolean('TMDB_MATCH_ENABLED', false),
   tmdbMatchLimit: integer('TMDB_MATCH_LIMIT', 60, 1),
   tmdbMatchConcurrency: integer('TMDB_MATCH_CONCURRENCY', 2, 1),

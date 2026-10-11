@@ -56,6 +56,7 @@ Four loops run outside the request path. None of them may be moved into the requ
   - Batching: `TRANSLATE_BATCH_ENABLED` (default `false`) packs several reviews into one nonce-delimited request, validated and split on a bad answer (`translateBatch.js`).
 - **Duplicate merge:** `reconcileDuplicates` (`MERGE_DUPLICATES_MODE=off|dry-run|apply`, default `apply` in `config.js` and `.env.example`; `MERGE_BATCH_LIMIT`) runs inside the same cycle, before invalidation, and folds a NguonC-only row into the KKPhim-only row of the same work (`backend/src/duplicateMerge.js` plans, `duplicateMergeRepository.js` applies in one transaction). The KKPhim row survives; the dropped canonical slug is kept in `movie_slug_aliases` and `findMovie`/`listReadyBySlugs` resolve it; `movie_merges` snapshots the dropped row and its moved user rows for manual undo.
 - **TMDB identity chain:** separate from the AI match below. `TMDB_MATCH_ENABLED` runs the deterministic cast-verified match (`tmdbMatch.js`, writes `tmdb_match_*` only), and `promoteVerifiedMatches` (`TMDB_IDENTITY_MODE=off|dry-run|apply`, default `off`) turns those verified rows into a real `tmdb_id` through `tmdbIdentity.js`.
+- **TMDB season inference:** `refreshSeasonInference` (`TMDB_SEASON_INFER_MODE=off|dry-run|apply`, default `off`; `TMDB_SEASON_INFER_BATCH`) runs after the identity promotion. For tv rows with a verified TMDB tv id (AI run blocked `season-unknown`, or `tmdb_match_*`) but no `(Phần N)` marker and several TMDB seasons, it fetches `/tv/{id}` and picks the one season whose first-air year (+-1) and episode count agree (`inferSeasonFromTmdb`, rejects on conflicting title numbers, <3 episodes, gaps). Writes go through `assignTmdbIdentity` (source `inferred`, evidence `pass:'season-infer'`), so they are logged in `tmdb_identity_changes` and undoable; declines are logged and not retried for `BLOCK_RETRY_DAYS`.
 - **Cache invalidation:** last, invalidates Valkey keys and Next render tags for exactly what changed (reviews: the `movie:<slug>` tag plus `reviews:<slug>:*` keys).
 
 ### TMDB AI match
@@ -140,6 +141,7 @@ The Cloudflare IP ranges in `lib/account-proxy.ts` are hardcoded; refresh them f
 | `translateBatch.js` | batched translation requests |
 | `tmdbMatch.js` | cast-verified match |
 | `tmdbMatchAi.js`, `tmdbMatchRotation.js`, `tmdbMatchAiSync.js`, `tmdbMatchAiLoop.js` | AI match: candidates, prompt, two-tier gate; rotation; pass engine (`tmdb_match_ai_runs`); fourth worker loop |
+| `tmdbSeasonInfer.js`, `tmdbSeasonInferSync.js` | pure TMDB season inference for tv rows with a known id; worker pass `refreshSeasonInference` |
 | `tmdbIdentity.js` | assign/merge/promote/undo of TMDB identity (`tmdb_identity_changes`); `backend/scripts/tmdb-identity-report.mjs` read-only review CSV, `tmdb-identity-undo.mjs <changeId>` |
 | `duplicateMerge.js`, `duplicateMergeRepository.js` | duplicate merge plan / apply |
 | `aiQuotaLedger.js`, `aiQuotaStore.js` | per key+model daily quota in `ai_quota_ledger` |

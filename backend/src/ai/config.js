@@ -67,7 +67,7 @@ export function getRole(name) {
 
 export const roleNames = () => [...roles.keys()];
 
-registerRole('MATCH', { defaultOr: 'nvidia/nemotron-3-super-120b-a12b:free', timeoutMs: 180000, ledgerScope: 'tmdb-match' });
+registerRole('MATCH', { defaultOr: 'openrouter/free', timeoutMs: 180000, ledgerScope: 'tmdb-match' });
 registerRole('TRANSLATE', { ledgerScope: 'translate' });
 registerRole('DEDUPE', { modelsFrom: 'MATCH', timeoutMs: 180000, ledgerScope: 'catalog-audit' });
 

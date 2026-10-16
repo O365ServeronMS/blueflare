@@ -6,7 +6,8 @@ export { utcDay, nextUtcMidnight };
 const FREE_RPM = 20; // OpenRouter free tier: ~20 requests/minute per account
 const DAILY_RETRY_DELAY_MS = 10 * 60 * 1000;
 
-export const isFree = (id) => /:free$/.test(id);
+/** `:free` variants and OpenRouter's free router `openrouter/free`, which picks a free model per request. */
+export const isFree = (id) => /:free$/.test(id) || id === 'openrouter/free';
 
 /** Key list from a comma string (or array): trimmed, empties dropped, deduped, order kept. */
 export function parseKeys(value) {

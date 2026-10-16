@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAi, AiError, AiConfigError, imagePart, readAiConfig, registerRole, fakeTransport } from '../src/ai/index.js';
 import { createQuotaLedger } from '../src/aiQuotaLedger.js';
-import { checkSchema, extractJson, parseModels } from '../src/ai/util.js';
+import { checkSchema, extractJson, isFree, parseModels } from '../src/ai/util.js';
 
 const PRIMARY = 'https://llm.example/v1';
 const OR = 'https://openrouter.ai/api/v1';
@@ -442,4 +442,11 @@ test('DEDUPE borrows the MATCH models and keys unless it names its own, with its
   const capped = readAiConfig({ OPENROUTER_API_KEY: 'or', AI_PAID_DAILY_OUTPUT_TOKENS_MATCH: '100', AI_PAID_DAILY_OUTPUT_TOKENS_DEDUPE: '7' });
   assert.equal(rolePaidCap(capped, 'DEDUPE'), 7);
   assert.equal(rolePaidCap(capped, 'MATCH'), 100);
+});
+
+test('openrouter/free counts as a free model', () => {
+  assert.equal(isFree('openrouter/free'), true);
+  assert.equal(isFree('vendor/model:free'), true);
+  assert.equal(isFree('openai/gpt-6-luna'), false);
+  assert.deepEqual(parseModels('openrouter/free:20:300'), [{ id: 'openrouter/free', rpm: 20, rpd: 300 }]);
 });

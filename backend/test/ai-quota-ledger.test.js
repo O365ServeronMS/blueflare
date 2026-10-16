@@ -9,7 +9,7 @@ const dbTest = TEST_DB && /test/i.test(new URL(TEST_DB).pathname) ? test : test.
 
 const { createMemoryQuotaStore, createQuotaLedger } = await import('../src/aiQuotaLedger.js');
 const { createPgQuotaStore } = await import('../src/aiQuotaStore.js');
-const { utcDay, nextUtcMidnight, scopedFingerprint, parseOpenRouterModels } = await import('../src/openrouter.js');
+const { utcDay, nextUtcMidnight, scopedFingerprint, parseModels } = await import('../src/ai/util.js');
 
 const T0 = Date.UTC(2026, 9, 7, 12, 0, 0); 
 const clock = (start = T0) => { const c = { t: start }; c.now = () => c.t; return c; };
@@ -29,7 +29,7 @@ test('scopedFingerprint is 12 hex of a hash, differs per scope, and is not the k
 });
 
 test('models accept id:rpm:rpd, rpd only when given', () => {
-  assert.deepEqual(parseOpenRouterModels('a/x:free:5:20,b/y:7'), [{ id: 'a/x:free', rpm: 5, rpd: 20 }, { id: 'b/y', rpm: 7 }]);
+  assert.deepEqual(parseModels('a/x:free:5:20,b/y:7'), [{ id: 'a/x:free', rpm: 5, rpd: 20 }, { id: 'b/y', rpm: 7 }]);
 });
 
 test('RPD: every started request counts, failures included; the pair closes at the limit until UTC midnight', async () => {

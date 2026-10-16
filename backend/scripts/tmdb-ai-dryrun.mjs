@@ -5,8 +5,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { config } from '../src/config.js';
-import { parseOpenRouterModels } from '../src/openrouter.js';
-import { createTmdbMatchRotation } from '../src/tmdbMatchRotation.js';
+import { getAi } from '../src/ai/index.js';
 import { exactNameMatch, catalogFacts, decideAiMatch, DEFAULT_AI_POLICY, isAsianRow, matchInput } from '../src/tmdbMatchAi.js';
 import { connectReadOnly, INPUT_COLUMNS, jsonlCache, OUT, shuffle, csvCell } from './lib/aiTools.mjs';
 import { collectAll, openTmdbClient, rankAll } from './lib/pipeline.mjs';
@@ -45,10 +44,10 @@ if (args.includes('--no-ai')) {
     choices.set(e.row.id, { chosenId: pick ? pick.key : null, confidence: 0.5, reasons: ['stand-in: exact-name candidate'] });
   }
 } else {
-  const rotations = parseOpenRouterModels(config.openrouterMatchModels).map((m) => ({
-    model: m.id, call: createTmdbMatchRotation({ ...config, openrouterMatchModels: m.id + ':' + (m.rpm ?? 0) }, { warn: () => {} })
-  }));
-  assert.ok(rotations.every((r) => r.call));
+  // One entry per provider+model so a 503 ("high demand") on the best model falls through to the next one.
+  const ai = getAi();
+  const rotations = ai.modelsFor('MATCH').map(({ provider, model }) => ({ model: provider + '/' + model, ai, only: { provider, model } }));
+  assert.ok(rotations.length, 'no AI route for MATCH: set LLM_BASE_URL+LLM_API_KEY or OPENROUTER_API_KEY');
   const cache = await jsonlCache(OUT + '/ai-rank-cache.jsonl');
   const ranked = await rankAll(evidence, rotations, { batch: config.tmdbMatchAiBatchMax, cache, log, onProgress: (d, n) => log(`rank ${d}/${n}`) });
   choices = ranked.choices;

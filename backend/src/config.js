@@ -10,20 +10,12 @@ function csv(name, fallback = '') {
     .filter(Boolean);
 }
 
-/** Key list from a comma string (or array): trimmed, empties dropped, deduped, order kept. */
-export function parseApiKeys(value) {
-  const items = Array.isArray(value) ? value : String(value ?? '').split(',');
-  return [...new Set(items.map((item) => String(item ?? '').trim()).filter(Boolean))];
-}
-
 function boolean(name, fallback = false) {
   const value = process.env[name];
   if (value === undefined) return fallback;
   return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
 }
 
-// Free models first (20 req/min, 1000 req/day after a 10 USD top-up); switching to paid models is an env change.
-const DEFAULT_OPENROUTER_MATCH_MODELS = 'nvidia/nemotron-3-super-120b-a12b:free';
 const nodeEnv = process.env.NODE_ENV || 'development';
 const syncIntervalMs = integer('SYNC_INTERVAL_MS', 15 * 60 * 1000, 1000);
 const imageSigningSecret = process.env.IMAGE_SIGNING_SECRET || (
@@ -96,28 +88,19 @@ export const config = Object.freeze({
   tmdbReviewsRefreshMs: integer('TMDB_REVIEWS_REFRESH_MS', 7 * 24 * 60 * 60 * 1000, 60 * 60 * 1000),
   tmdbReviewsRetryMs: integer('TMDB_REVIEWS_RETRY_MS', 6 * 60 * 60 * 1000, 60 * 1000),
   tmdbReviewsMaxPerMovie: integer('TMDB_REVIEWS_MAX_PER_MOVIE', 40, 1),
-  // English -> Vietnamese machine translation of stored reviews (worker only).
-  translateEnabled: boolean('TRANSLATE_ENABLED', true),
-  translateProvider: String(process.env.TRANSLATE_PROVIDER || 'openrouter'),
+  // English -> Vietnamese machine translation of stored reviews (worker only). Models, keys and
+  // timeouts of the `ai` provider live in src/ai/config.js (role TRANSLATE).
+  translateEnabled: boolean('TRANSLATE_ENABLED', false),
+  translateProvider: String(process.env.TRANSLATE_PROVIDER || 'ai'),
   translateReviewsPerCycle: integer('TRANSLATE_REVIEWS_PER_CYCLE', 150, 1),
   translateDelayMs: integer('TRANSLATE_DELAY_MS', 1000, 0),
   translateMaxConsecutiveErrors: integer('TRANSLATE_MAX_CONSECUTIVE_ERRORS', 5, 1),
   translateCooldownMs: integer('TRANSLATE_COOLDOWN_MS', 60 * 60 * 1000, 1000),
   translateTimeoutMs: integer('TRANSLATE_TIMEOUT_MS', 10000, 1000),
-  // OpenRouter serves review translation and the TMDB AI match (ordered `id[:rpm[:rpd]]` model lists).
-  openrouterApiKeys: parseApiKeys(process.env.OPENROUTER_API_KEYS || process.env.OPENROUTER_API_KEY),
-  openrouterBaseUrl: String(process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').trim(),
-  openrouterTimeoutMs: integer('OPENROUTER_TIMEOUT_MS', 60000, 1000),
-  openrouterCooldownMs: integer('OPENROUTER_COOLDOWN_MS', 60 * 60 * 1000, 1000),
-  openrouterTranslateModels: String(process.env.OPENROUTER_TRANSLATE_MODELS || '').trim(),
-  // Output (completion) tokens per UTC day, summed over all paid (non-`:free`) models; 0 = no separate cap.
-  openrouterTranslatePaidDailyOutputTokens: integer('OPENROUTER_TRANSLATE_PAID_DAILY_OUTPUT_TOKENS', 0, 0),
   // Several reviews per request (one free-tier request instead of one per review).
   translateBatchEnabled: boolean('TRANSLATE_BATCH_ENABLED', false),
   translateBatchMaxChars: integer('TRANSLATE_BATCH_MAX_CHARS', 8000, 500),
   translateBatchMaxItems: integer('TRANSLATE_BATCH_MAX_ITEMS', 12, 1),
-  openrouterMatchModels: String(process.env.OPENROUTER_MATCH_MODELS || DEFAULT_OPENROUTER_MATCH_MODELS).trim(),
-  openrouterMatchPaidDailyOutputTokens: integer('OPENROUTER_MATCH_PAID_DAILY_OUTPUT_TOKENS', 0, 0),
   // Score 0-100 = rating*10 (neutral 50 when unrated), length and recency parts.
   reviewScore: Object.freeze({
     ratingWeight: 0.6,
@@ -152,17 +135,14 @@ export const config = Object.freeze({
   tmdbMatchRetryMs: integer('TMDB_MATCH_RETRY_MS', 6 * 60 * 60 * 1000, 60 * 1000),
   // Primary-country slugs left unmatched on purpose (cast names do not transliterate).
   tmdbMatchSkipCountries: csv('TMDB_MATCH_SKIP_COUNTRIES', 'trung-quoc,hong-kong,nhat-ban,han-quoc,thai-lan'),
-  // AI candidate ranking for TMDB matching (OpenRouter; keys and models above).
+  // AI candidate ranking for TMDB matching (role MATCH of src/ai: models, keys, timeout).
   tmdbMatchAiEnabled: boolean('TMDB_MATCH_AI_ENABLED', false),
   // Films are packed into one request until either limit.
   tmdbMatchAiBatchTokens: integer('TMDB_MATCH_AI_BATCH_TOKENS', 24000, 1000),
   tmdbMatchAiBatchMax: integer('TMDB_MATCH_AI_BATCH_MAX', 20, 1),
-  tmdbMatchAiTimeoutMs: integer('TMDB_MATCH_AI_TIMEOUT_MS', 180000, 1000),
   // Reasoning tokens per request: batches of rows with a cast (tier 1) and without (tier 2, name+year only). 0 = reasoning off.
   tmdbMatchAiThinkT1: integer('TMDB_MATCH_AI_THINK_T1', 0, 0),
   tmdbMatchAiThinkT2: integer('TMDB_MATCH_AI_THINK_T2', 4096, 0),
-  tmdbMatchAiTransientParkMs: integer('TMDB_MATCH_AI_TRANSIENT_PARK_MS', 45000, 1000),
-  tmdbMatchAiTransientParkMaxMs: integer('TMDB_MATCH_AI_TRANSIENT_PARK_MAX_MS', 5 * 60 * 1000, 1000),
   // Worker pass that applies the ranking: off | dry-run (audit rows only) | apply (assigns tmdb_id).
   tmdbMatchAiMode: ['off', 'dry-run', 'apply'].includes(process.env.TMDB_MATCH_AI_MODE) ? process.env.TMDB_MATCH_AI_MODE : 'dry-run',
   tmdbMatchAiLimit: integer('TMDB_MATCH_AI_LIMIT', 100, 1),

@@ -45,11 +45,11 @@ export async function syncReviewTranslations(deps = {}) {
     ?? (deps.translate
       ? [{ name: String(settings.translateProvider).split(',')[0].trim() || 'google-gtx', translate: deps.translate, delayMs: settings.translateDelayMs, cooldownMs: settings.translateCooldownMs }]
       : null);
-  const chain = providers ?? buildTranslators(settings, { state: (state.translators ??= {}), now, sleep });
+  const chain = providers ?? buildTranslators(settings, { ai: deps.ai });
   if (!chain.length) {
     if (!state.warnedNoProvider) {
       state.warnedNoProvider = true;
-      console.warn('[worker] review translate: no usable provider (is OPENROUTER_API_KEYS set?)');
+      console.warn('[worker] review translate: no usable provider (set LLM_BASE_URL+LLM_API_KEY or OPENROUTER_API_KEY, or add google-gtx to TRANSLATE_PROVIDER)');
     }
     return [];
   }
@@ -107,7 +107,7 @@ export async function syncReviewTranslations(deps = {}) {
           const review = group[i];
           const value = normalized(items[i]) === normalized(review.content) ? '' : items[i];
           counts.checked += 1;
-          if (await record(review.id, review.contentHash, value, meta.model ? batcher.name + ':' + meta.model : batcher.name)) {
+          if (await record(review.id, review.contentHash, value, meta.model ? (meta.provider ?? batcher.name) + ':' + meta.model : batcher.name)) {
             counts.ok += 1;
             used[label(batcher.name)] += 1;
             if (meta.model) modelUsed[meta.model] = (modelUsed[meta.model] ?? 0) + 1;
@@ -152,7 +152,7 @@ export async function syncReviewTranslations(deps = {}) {
         if (!translated) throw new Error('empty translation');
         // Echoing the source (names, already Vietnamese) is stored as '' so the row leaves the queue.
         const value = normalized(translated) === normalized(review.content) ? '' : translated;
-        if (await record(review.id, review.contentHash, value, meta.model ? provider.name + ':' + meta.model : provider.name)) {
+        if (await record(review.id, review.contentHash, value, meta.model ? (meta.provider ?? provider.name) + ':' + meta.model : provider.name)) {
           counts.ok += 1;
           used[label(provider.name)] += 1;
           if (meta.key) keyUsed[meta.key] = (keyUsed[meta.key] ?? 0) + 1;

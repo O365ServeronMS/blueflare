@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { packBatches, batchUserMessage, parseBatchResponse } from '../src/translateBatch.js';
-import { createOpenRouterRotation } from '../src/openrouter.js';
+import { createAi } from '../src/ai/index.js';
 
 const rev = (n, len) => ({ id: 'r' + n, content: 'x'.repeat(len) });
 
@@ -56,10 +56,13 @@ test('paid output cap: paid models sit out once spent, the free one still serves
     seen.push(JSON.parse(init.body).model);
     return { ok: true, status: 200, headers: new Headers(), text: async () => JSON.stringify({ choices: [{ message: { content: 'xin chào' }, finish_reason: 'stop' }], usage: { prompt_tokens: 5, completion_tokens: 5, total_tokens: 10 } }) };
   };
-  const mk = (cap) => createOpenRouterRotation({ apiKeys: ['k'], models: 'p/paid,f/free:free:0', ledger, fetchImpl, paidDailyOutputCap: cap, sleep: async () => {} });
-  await mk(1000)({ text: 'hi', buildBody: () => ({ messages: [] }), parse: (j) => j });
+  const mk = (cap) => createAi({
+    env: { OPENROUTER_API_KEY: 'k', OPENROUTER_MODEL_TRANSLATE: 'p/paid,f/free:free:0', AI_PAID_DAILY_OUTPUT_TOKENS_TRANSLATE: String(cap) },
+    ledger, transport: fetchImpl, sleep: async () => {}, warn: () => {}
+  });
+  await mk(1000).chat('TRANSLATE', [{ role: 'user', content: 'hi' }]);
   assert.deepEqual(seen, ['f/free:free']);
   seen.length = 0;
-  await mk(0)({ text: 'hi', buildBody: () => ({ messages: [] }), parse: (j) => j });
+  await mk(0).chat('TRANSLATE', [{ role: 'user', content: 'hi' }]);
   assert.deepEqual(seen, ['p/paid']);
 });

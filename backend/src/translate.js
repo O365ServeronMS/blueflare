@@ -1,8 +1,6 @@
-import { config, parseApiKeys } from './config.js';
+import { config } from './config.js';
 import { newNonce, batchSystemPrompt, batchUserMessage, parseBatchResponse } from './translateBatch.js';
-import { createOpenRouterRotation, chatText } from './openrouter.js';
-import { createQuotaLedger } from './aiQuotaLedger.js';
-import { createPgQuotaStore } from './aiQuotaStore.js';
+import { getAi } from './ai/index.js';
 
 /** Provider-side limit per request; stays well under URL/body caps for gtx. */
 export const TRANSLATE_CHUNK_MAX = 4000;
@@ -157,72 +155,47 @@ export function assertNoStrayCjk(source, translated) {
 }
 
 /**
- * OpenRouter chat completions (free `:free` models first, paid ones by changing
- * OPENROUTER_TRANSLATE_MODELS). Same rotation, spend cap and error contract as the TMDB match; the
- * translation prompt and the stray-CJK guard live in this file.
+ * The shared AI module, role TRANSLATE (backend/AI.md): primary provider first, OpenRouter after,
+ * with rotation, parks and the paid-output cap inside the module. The translation prompt and the
+ * stray-CJK guard live here; `meta` gets the model, provider, key label and usage that answered.
  */
-export function openrouterProvider(options = {}) {
-  const call = createOpenRouterRotation({
-    ...options,
-    scope: 'translate',
-    apiKeys: options.apiKeys ?? config.openrouterApiKeys,
-    models: options.models ?? config.openrouterTranslateModels,
-    modelsName: 'OPENROUTER_TRANSLATE_MODELS',
-    baseUrl: options.baseUrl ?? config.openrouterBaseUrl,
-    timeoutMs: options.timeoutMs ?? config.openrouterTimeoutMs,
-    cooldownMs: options.cooldownMs ?? config.openrouterCooldownMs,
-    paidDailyOutputCap: options.paidDailyOutputCap ?? config.openrouterTranslatePaidDailyOutputTokens,
-    blockedError: (message) => new TranslateBlockedError(message),
-    contentError: (message) => new TranslateContentError(message),
-    isContentError: (error) => error instanceof TranslateContentError
-  });
-  const single = (text, meta = {}) => call({
-    text,
-    meta,
-    parse: (json) => assertNoStrayCjk(text, chatText(json, (message) => new TranslateContentError(message))),
-    buildBody: () => ({
-      messages: [
-        { role: 'system', content: TRANSLATE_SYSTEM_PROMPT },
-        { role: 'user', content: text }
-      ],
-      temperature: 0.2,
-      max_tokens: 8192,
-      reasoning: { enabled: false }
-    })
-  });
+export function aiProvider(options = {}) {
+  const ai = options.ai ?? getAi();
+  const ask = async (messages, maxTokens, accept, meta) => {
+    const result = await ai.chat('TRANSLATE', messages, { temperature: 0.2, maxTokens, reasoning: 'off', accept });
+    Object.assign(meta, { model: result.model, provider: result.provider, key: result.provider + ' ' + result.key, usage: result.usage });
+    return result.value;
+  };
+  const single = (text, meta = {}) => ask(
+    [{ role: 'system', content: TRANSLATE_SYSTEM_PROMPT }, { role: 'user', content: text }],
+    8192,
+    (answer) => assertNoStrayCjk(text, answer),
+    meta
+  );
   /** Several texts in one request -> array of translations; a malformed answer is a content error (the caller splits the batch). */
-  single.batch = async (texts, meta = {}) => {
+  single.batch = (texts, meta = {}) => {
     const nonce = newNonce();
-    const user = batchUserMessage(texts, nonce);
-    return call({
-      text: user,
-      meta,
-      parse: (json) => {
-        const out = chatText(json, (message) => new TranslateContentError(message));
-        const parsed = parseBatchResponse(out, texts, nonce);
+    return ask(
+      [{ role: 'system', content: batchSystemPrompt(nonce) }, { role: 'user', content: batchUserMessage(texts, nonce) }],
+      16384,
+      (answer) => {
+        const parsed = parseBatchResponse(answer, texts, nonce);
         if (!parsed.ok) throw new TranslateContentError('batch answer rejected: ' + parsed.reason);
         return parsed.items;
       },
-      buildBody: () => ({
-        messages: [{ role: 'system', content: batchSystemPrompt(nonce) }, { role: 'user', content: user }],
-        temperature: 0.2,
-        max_tokens: 16384,
-        reasoning: { enabled: false }
-      })
-    });
+      meta
+    );
   };
   return single;
 }
 
-const PROVIDERS = { 'google-gtx': googleGtxProvider, openrouter: openrouterProvider };
-
-let sharedLedger = null;
-/** Process-wide quota ledger of the translation pass (PostgreSQL backed, UTC days). */
-const translateLedger = () => (sharedLedger ??= createQuotaLedger({ store: createPgQuotaStore() }));
+const PROVIDERS = { 'google-gtx': googleGtxProvider, ai: aiProvider };
+/** Old chain names, still accepted. */
+const PROVIDER_ALIASES = { openrouter: 'ai' };
 
 /** TRANSLATE_PROVIDER is an ordered, comma-separated chain; a single name still works. */
 export function parseProviderChain(value) {
-  const names = String(value ?? '').split(',').map((name) => name.trim()).filter(Boolean);
+  const names = String(value ?? '').split(',').map((name) => name.trim()).filter(Boolean).map((name) => PROVIDER_ALIASES[name] ?? name);
   return [...new Set(names.length ? names : ['google-gtx'])];
 }
 
@@ -232,7 +205,8 @@ export function parseProviderChain(value) {
  * errors are never retried.
  */
 export function createTranslator(options = {}) {
-  const name = options.provider ?? config.translateProvider;
+  const raw = options.provider ?? config.translateProvider;
+  const name = PROVIDER_ALIASES[raw] ?? raw;
   const factory = options.providerFactory ?? PROVIDERS[name];
   if (!factory) throw new Error('unknown TRANSLATE_PROVIDER: ' + name);
   const chunkFn = options.chunkFn ?? factory(options);
@@ -267,27 +241,22 @@ export function createTranslator(options = {}) {
 }
 
 /**
- * The usable providers of the chain, in order: `{ name, translate, delayMs,
- * cooldownMs }`. A key-based provider without a key is left out (disabled), so a deploy
- * without OPENROUTER_API_KEYS behaves exactly like the remaining providers.
+ * The usable providers of the chain, in order: `{ name, translate, delayMs, cooldownMs }`.
+ * `ai` is left out when role TRANSLATE has no provider with a key and a model, so a deploy
+ * without AI keys behaves exactly like the remaining providers.
  */
 export function buildTranslators(settings = config, options = {}) {
   const out = [];
   for (const name of parseProviderChain(settings.translateProvider)) {
     if (!PROVIDERS[name]) throw new Error('unknown TRANSLATE_PROVIDER: ' + name);
-    if (name === 'openrouter') {
-      const apiKeys = parseApiKeys(settings.openrouterApiKeys);
-      if (!apiKeys.length) continue;
+    if (name === 'ai') {
+      const ai = options.ai ?? getAi();
+      if (!ai.available('TRANSLATE')) continue;
       out.push({
         name,
-        translate: createTranslator({
-          provider: name, apiKeys, models: settings.openrouterTranslateModels, baseUrl: settings.openrouterBaseUrl,
-          timeoutMs: settings.openrouterTimeoutMs, cooldownMs: settings.openrouterCooldownMs,
-          paidDailyOutputCap: settings.openrouterTranslatePaidDailyOutputTokens, ledger: options.ledger ?? translateLedger(),
-          fetchImpl: options.fetchImpl, state: options.state, now: options.now, sleep: options.sleep
-        }),
-        delayMs: 0, // spacing is per model inside the rotation
-        cooldownMs: settings.openrouterCooldownMs
+        translate: createTranslator({ provider: name, ai, retries: 0 }), // the AI module retries and falls back itself
+        delayMs: 0, // spacing is per model inside the AI module
+        cooldownMs: ai.config.cooldownMs
       });
     } else {
       out.push({

@@ -2,10 +2,27 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { pool } from '../src/db.js';
 import { listAiMatchCandidates, recordAiRun, refreshTmdbAiMatches } from '../src/tmdbMatchAiSync.js';
-import { MatchBlockedError, MatchContentError } from '../src/tmdbMatchRotation.js';
+import { AiError } from '../src/ai/index.js';
+
+const refused = (message) => new AiError(message, { kind: 'content' });
+const blockedFor = (message, retryAfterMs) => new AiError(message, { kind: 'unavailable', retryAfterMs });
+
+/**
+ * Stand-in for the AI module: `rank(req)` answers one MATCH call with the choices Map.
+ * req = { text (system + user prompt), tokens (estimate), opts (call options), meta }.
+ */
+const fakeAi = (getRank, available = () => true) => ({
+  available, ready: async () => {},
+  json: async (role, messages, opts) => {
+    assert.equal(role, 'MATCH');
+    const req = { text: messages.map((m) => m.content).join('\n'), tokens: opts.estTokens, opts, meta: {} };
+    const value = await getRank()(req);
+    return { value, model: req.meta.model ?? 'fake', provider: 'fake', key: req.meta.key ?? 'k1', usage: req.meta.usage ?? null };
+  }
+});
 
 const settings = (over = {}) => ({
-  tmdbEnabled: true, tmdbApiKey: 'tmdb-test', tmdbMatchAiEnabled: true, openrouterApiKeys: ['k'],
+  tmdbEnabled: true, tmdbApiKey: 'tmdb-test', tmdbMatchAiEnabled: true,
   tmdbMatchAiMode: 'dry-run', tmdbMatchAiLimit: 100, tmdbMatchAiRetryMs: 1000, tmdbMatchAiErrorRetryMs: 10,
   tmdbMatchAiBatchMax: 2, tmdbMatchConcurrency: 2, ...over
 });
@@ -31,15 +48,15 @@ function harness(rows, extra = {}) {
   const logs = [];
   const deps = {
     config: settings(extra.config), list: async (args) => { deps.listArgs = args; return rows.slice(0, args.limit); }, record: async (run) => { runs.push(run); },
-    client: client(extra.client), rotation: extra.rotation ?? pickAll, state: { blockedUntil: 0 }, log: (m) => logs.push(m), warn: (m) => logs.push(m),
+    client: client(extra.client), rotation: extra.rotation ?? pickAll, ai: fakeAi(() => deps.rotation, () => deps.aiAvailable !== false), state: { blockedUntil: 0 }, log: (m) => logs.push(m), warn: (m) => logs.push(m),
     now: () => 1000, ...extra.deps
   };
   return { deps, runs, logs };
 }
 
 test('pass is off when mode off, AI unavailable, or TMDB disabled', async () => {
-  for (const config of [{ tmdbMatchAiMode: 'off' }, { tmdbMatchAiEnabled: false }, { openrouterApiKeys: [] }, { tmdbEnabled: false }, { tmdbApiKey: '' }]) {
-    const h = harness([movie(1)], { config });
+  for (const config of [{ tmdbMatchAiMode: 'off' }, { tmdbMatchAiEnabled: false }, { aiAvailable: false }, { tmdbEnabled: false }, { tmdbApiKey: '' }]) {
+    const h = harness([movie(1)], { config, deps: { aiAvailable: config.aiAvailable } });
     assert.deepEqual(await refreshTmdbAiMatches(h.deps), []);
     assert.equal(h.runs.length, 0);
     assert.equal(h.deps.listArgs, undefined, JSON.stringify(config));
@@ -102,7 +119,7 @@ test('assign throwing is isolated to that title', async () => {
 
 test('blocked rotation stops cleanly: nothing recorded for unranked titles, next cycles wait', async () => {
   let calls = 0;
-  const rotation = async () => { calls += 1; throw Object.assign(new MatchBlockedError('openrouter: every model is cooling down or exhausted'), { retryAfterMs: 5000 }); };
+  const rotation = async () => { calls += 1; throw blockedFor('every model is cooling down or exhausted', 5000); };
   const h = harness([movie(1), movie(2), movie(3), movie(4)], { rotation });
   assert.deepEqual(await refreshTmdbAiMatches(h.deps), []);
   assert.equal(calls, 1, 'no further requests after blocked');
@@ -134,7 +151,7 @@ test('a content refusal of a batch is isolated per title and does not stop the r
   let n = 0;
   const rotation = async (req) => {
     n += 1;
-    if (req.text.includes('Poison') || req.text.match(/"movieKey"/g).length > 1) throw new MatchContentError('refused');
+    if (req.text.includes('Poison') || req.text.match(/"movieKey"/g).length > 1) throw refused('refused');
     return pickAll();
   };
   const h = harness([movie(1), movie(2, { original_title: 'Poison', title: 'Poison' })], { rotation, client: { } });
@@ -237,7 +254,7 @@ test('calibration: the prompt token count a response reports corrects the next p
     config: { tmdbMatchAiBatchTokens: budget, tmdbMatchAiBatchMax: 40 },
     rotation: async (req) => {
       sizes.push(countKeys(req));
-      req.meta.usage = { promptTokens: Math.round(req.text.length / 6), outputTokens: 10, thoughtTokens: 0, totalTokens: 0 }; // twice as dense as assumed
+      req.meta.usage = { promptTokens: Math.round(req.text.length / 6), completionTokens: 10, thoughtTokens: 0, totalTokens: 0 }; // twice as dense as assumed
       req.meta.model = 'm'; req.meta.key = 'k1';
       return manyChoices();
     }
@@ -254,7 +271,7 @@ test('bisection: a refused batch is halved until the offending film is alone (ab
   const rows = Array.from({ length: 8 }, (_, i) => movie(i + 1, i === 5 ? { original_title: 'Poison', title: 'Poison' } : {}));
   const h = harness(rows, {
     config: { tmdbMatchAiBatchMax: 40 },
-    rotation: async (req) => { requests.push(countKeys(req)); if (req.text.includes('Poison')) throw new MatchContentError('refused'); return manyChoices(); }
+    rotation: async (req) => { requests.push(countKeys(req)); if (req.text.includes('Poison')) throw refused('refused'); return manyChoices(); }
   });
   await refreshTmdbAiMatches(h.deps);
   assert.deepEqual(requests, [8, 4, 4, 2, 1, 1, 2]);
@@ -269,8 +286,8 @@ test('bisection: a provider outage in the middle stops the pass without recordin
     config: { tmdbMatchAiBatchMax: 40 },
     rotation: async (req) => {
       calls += 1;
-      if (calls === 1) throw new MatchContentError('refused');
-      if (calls === 3) throw Object.assign(new MatchBlockedError('quota'), { retryAfterMs: 5000 });
+      if (calls === 1) throw refused('refused');
+      if (calls === 3) throw blockedFor('quota', 5000);
       return manyChoices();
     }
   });
@@ -281,15 +298,15 @@ test('bisection: a provider outage in the middle stops the pass without recordin
 
 test('thinking budget: larger for films without a cast (tier 2), omitted for tier 1 when 0', async () => {
   const bodies = [];
-  const rotation = async (req) => { bodies.push(req.buildBody({ id: 'm' })); return manyChoices(); };
+  const rotation = async (req) => { bodies.push(req.opts); return manyChoices(); };
   const h = harness([movie(1, { actors: cast }), movie(2)], {
     config: { tmdbMatchAiThinkT1: 0, tmdbMatchAiThinkT2: 4096 }, rotation
   });
   await refreshTmdbAiMatches(h.deps);
   assert.equal(bodies.length, 2);
-  assert.deepEqual(bodies[0].reasoning, { enabled: false });
-  assert.deepEqual(bodies[1].reasoning, { max_tokens: 4096 });
-  assert.ok(bodies[1].max_tokens >= 4096 + 1500);
+  assert.equal(bodies[0].reasoning, 'off');
+  assert.deepEqual(bodies[1].reasoning, { maxTokens: 4096 });
+  assert.ok(bodies[1].maxTokens >= 4096 + 1500);
 });
 
 test('scope priority and fresh window reach the listing; legacy pass lists scope all', async () => {

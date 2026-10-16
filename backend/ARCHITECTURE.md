@@ -130,7 +130,7 @@ TMDB reviews.
 Notes:
 
 - `hasSpoiler` and the ordering score are computed on the English `content`, never on the translation.
-- The worker fills `contentVi` asynchronously (OpenRouter model rotation from `openrouter.js`, gtx fallback; any provider can be blocked), so clients must treat it as optional and fall back to `content`.
+- The worker fills `contentVi` asynchronously (AI module `src/ai/`, role `TRANSLATE`: primary provider then OpenRouter, gtx fallback; any provider can be blocked), so clients must treat it as optional and fall back to `content`.
 - `content` and `contentVi` are plain text; clients must render them as text, not HTML.
 
 ## Deployment boundary

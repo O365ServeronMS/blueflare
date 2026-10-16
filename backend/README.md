@@ -19,7 +19,7 @@ explain what the TMDB, translation and OpenRouter variables do.
 - [TMDB](#tmdb)
   - [Reviews](#reviews)
   - [Review translation](#review-translation)
-  - [OpenRouter rotation](#openrouter-rotation)
+  - [AI module](#ai-module)
   - [AI match](#ai-match)
   - [Identity audit and undo](#identity-audit-and-undo)
 - [Duplicate merge (NguonC + KKPhim)](#duplicate-merge-nguonc--kkphim)
@@ -232,9 +232,8 @@ Reviews are re-fetchable, so they are not irreplaceable state.
 Separate worker-only pass (`reviewTranslateSync.js`, right after the reviews
 pass in each sync cycle). It translates the English `content` to Vietnamese
 through an ordered provider chain (`TRANSLATE_PROVIDER`, `translate.js`): by
-default OpenRouter (see [OpenRouter rotation](#openrouter-rotation)), with the
-free, unofficial Google gtx endpoint (`google-gtx`) as an optional fallback. Gemini
-models, if wanted, are listed in `OPENROUTER_*_MODELS` like any other model. Only
+default `ai`, the AI module's role `TRANSLATE` (see [AI module](#ai-module)), with the
+free, unofficial Google gtx endpoint (`google-gtx`) as an optional fallback. Only
 public TMDB review text is sent to a provider. A provider can start refusing us
 at any time (gtx is unofficial, free quotas run out), so everything fails open:
 the API simply serves English.
@@ -245,13 +244,13 @@ the API simply serves English.
   likely on page 1 of their title (spoiler-flagged and best score band first, the
   display order of `reviewOrder.js` without the daily shuffle) go first, then
   oldest first. Sequential, spaced
-  per provider: `TRANSLATE_DELAY_MS` for gtx; OpenRouter spaces each model by its
+  per provider: `TRANSLATE_DELAY_MS` for gtx; the AI module spaces each model by its
   own RPM.
 - Chunking: long text is split into chunks of at most 4000 chars on
   paragraph/sentence boundaries and rejoined keeping line breaks; transient errors
   retry twice with backoff.
 - Batching (`translateBatch.js`, `TRANSLATE_BATCH_ENABLED`): several reviews go
-  into one nonce-delimited OpenRouter request to save free-tier requests. The
+  into one nonce-delimited AI request to save free-tier requests. The
   answer is validated and split into reviews; on a bad answer the caller splits
   the batch. A batch missing its end marker is accepted. Limits:
   `TRANSLATE_BATCH_MAX_CHARS` / `TRANSLATE_BATCH_MAX_ITEMS`.
@@ -270,14 +269,14 @@ the API simply serves English.
   characters for a source without any, from one model is tried on the next model;
   when all refuse (`TranslateContentError`) it is a per-review failure that does
   NOT count toward the consecutive-error limit. Per-model state is in memory.
-  Without `OPENROUTER_API_KEYS` the OpenRouter provider is skipped silently (one
-  warning is logged if no provider is usable at all, so a chain with only
-  `openrouter` and no key translates nothing).
+  Without any AI key the `ai` provider is skipped silently (one warning is logged
+  if no provider is usable at all, so a chain with only `ai` and no key translates
+  nothing).
 - Log line: `[worker] review translate checked= ok= failed= blocked=
-  providers=openrouter:N models=<model id>:A,<model id>:B keys=k1:N,k2:M`
-  (`keys=` only when OpenRouter answered). `translate_provider` stores
-  `openrouter:<model id>` or `google-gtx` (rows written earlier may still say
-  `gemini:<model>`).
+  providers=ai:N models=<model id>:A,<model id>:B keys=<provider> k1:N`
+  (`keys=` only when the AI module answered). `translate_provider` stores
+  `<provider>:<model id>` (`tokenharbor.ai:<model>`, `openrouter:<model>`) or
+  `google-gtx` (rows written earlier may still say `gemini:<model>`).
 - Storage: migration `026_review_translation.sql` adds `content_vi`,
   `translated_hash`, `translated_at`, `translate_failed_at`,
   `translate_retry_at` to `movie_reviews`; migration
@@ -294,43 +293,38 @@ the API simply serves English.
 | Variable | Meaning |
 | --- | --- |
 | `TRANSLATE_ENABLED` | Run the pass; off keeps reviews English. |
-| `TRANSLATE_PROVIDER` | Ordered comma-separated chain of `openrouter`, `google-gtx`, e.g. `openrouter,google-gtx`. |
+| `TRANSLATE_PROVIDER` | Ordered comma-separated chain of `ai`, `google-gtx`, e.g. `ai,google-gtx` (`openrouter` = old alias of `ai`). |
 | `TRANSLATE_REVIEWS_PER_CYCLE` | Reviews translated per cycle. |
 | `TRANSLATE_DELAY_MS` | gtx only: spacing between calls. |
 | `TRANSLATE_TIMEOUT_MS` | gtx only: per-call timeout. |
 | `TRANSLATE_MAX_CONSECUTIVE_ERRORS` | Provider-level failures in a row before the pass pauses. |
 | `TRANSLATE_COOLDOWN_MS` | Pause / cooldown after a block or too many errors. |
-| `TRANSLATE_BATCH_ENABLED` | Pack several reviews per OpenRouter request. |
+| `TRANSLATE_BATCH_ENABLED` | Pack several reviews per AI request. |
 | `TRANSLATE_BATCH_MAX_CHARS` | Characters per batch (minimum 500). |
 | `TRANSLATE_BATCH_MAX_ITEMS` | Reviews per batch. |
-| `OPENROUTER_TRANSLATE_MODELS` | Ordered model list, see below. |
-| `OPENROUTER_TRANSLATE_PAID_DAILY_OUTPUT_TOKENS` | Paid completion-token cap per UTC day; `0` = no separate cap. |
 
-### OpenRouter rotation
+Models, keys, timeout and paid cap of the `ai` provider: role `TRANSLATE` in
+[AI module](#ai-module).
 
-One module, `openrouter.js`, serves both review translation and the AI match. Each
-job owns a separate instance (scope `translate` or `tmdb-match`, own state, own
-counters, own cap). It also holds the UTC-day helpers.
+### AI module
 
-- Keys: `OPENROUTER_API_KEYS` (comma list, secret) is trimmed and deduped, order
-  kept. Logs name keys only as `k<n> (<first 6 hex of sha256(key)>)`; the key is
-  sent only in the `authorization` header and is never logged or put into an
-  error. Free-tier request limits belong to the account, so extra keys of the same
-  account add nothing.
-- Models: `OPENROUTER_TRANSLATE_MODELS` / `OPENROUTER_MATCH_MODELS`, ordered
-  `id[:rpm[:rpd]]`, best first, free models first and paid ones later (e.g. paid
-  `deepseek/deepseek-v4-flash`). A trailing `:free` is part of the id. Free models
-  default to 20 rpm; paid models are not spaced; rpm 0 = no spacing.
-- Status handling: 401 key off; 402 (or 403 "Key limit exceeded") model parked; any
-  other 403 is a content refusal, next model; 429 daily on a `:free` model parks all
-  `:free` models until 00:00 UTC, otherwise parked by `Retry-After` /
-  `X-RateLimit-Reset`; 404 / "no endpoints" model off; 408/5xx transient park
-  (doubles). An error body inside HTTP 200 is treated like its code.
-- Paid output cap: `OPENROUTER_TRANSLATE_PAID_DAILY_OUTPUT_TOKENS` and
-  `OPENROUTER_MATCH_PAID_DAILY_OUTPUT_TOKENS` cap the completion tokens of all
-  non-`:free` models together per UTC day, recorded in `ai_quota_ledger.output_tokens`
-  (migration 033). At the cap paid models are blocked until the UTC reset; `:free`
-  models keep serving. There is no overall token cap.
+`src/ai/` is the only code that calls a model; the call API, roles, routing, fallback
+rules and the full env table are in [`AI.md`](AI.md). In short: a primary
+OpenAI-compatible provider (`LLM_BASE_URL`, `LLM_API_KEY`, `MODEL_<ROLE>` or
+`MODEL_PRIMARY`/`MODEL_FALLBACK`) is tried first, then OpenRouter
+(`OPENROUTER_API_KEY`, `OPENROUTER_MODEL_<ROLE>`), moving on at a 401/402/408/429/5xx,
+network error, timeout or bad answer. Roles: `TRANSLATE` (review translation) and
+`MATCH` (TMDB AI match). The worker reads the AI env at start; `LLM_BASE_URL` without
+`LLM_API_KEY` stops it with a clear error, and old variable names log a deprecation
+warning.
+
+- Keys: comma lists, trimmed and deduped. Logs name keys only as
+  `<provider> k<n> (<first 6 hex of sha256(key)>)`; a key is sent only in the
+  `authorization` header and never logged or put into an error.
+- Paid output cap: `AI_PAID_DAILY_OUTPUT_TOKENS_<ROLE>` caps the completion tokens of
+  all non-`:free` models of a role per UTC day, recorded in
+  `ai_quota_ledger.output_tokens` (migration 033). At the cap paid models are blocked
+  until the UTC reset; `:free` models keep serving. There is no overall token cap.
 - Quota ledger (`aiQuotaLedger.js` + `aiQuotaStore.js`, table `ai_quota_ledger`,
   migration 031, renamed by 032, `output_tokens` added by 033): per key+model counts
   of requests per day (UTC days; the model's own `rpd`), per-day output-token totals
@@ -338,24 +332,14 @@ counters, own cap). It also holds the UTC-day helpers.
   when it starts and stays counted if it fails or times out. When OpenRouter answers
   a daily-quota 429 the count is raised to the limit (`exhaust`) even if the ledger
   thought some requests were left. Keys are stored only as a 12-hex sha256
-  fingerprint. The table is disposable (see [Backup and restore](#backup-and-restore)).
-
-| Variable | Meaning |
-| --- | --- |
-| `OPENROUTER_API_KEYS` | Secret, comma-separated. Empty = OpenRouter provider and the AI match off. |
-| `OPENROUTER_BASE_URL` | API base. |
-| `OPENROUTER_TIMEOUT_MS` | Per-request timeout for translation. |
-| `OPENROUTER_COOLDOWN_MS` | How long a rejected key or unknown model stays off. |
-| `OPENROUTER_TRANSLATE_MODELS` | Translation model list. |
-| `OPENROUTER_MATCH_MODELS` | AI match model list. |
-| `OPENROUTER_*_PAID_DAILY_OUTPUT_TOKENS` | Per-job paid cap (`TRANSLATE` / `MATCH`). |
+  fingerprint, scoped per role. The table is disposable (see [Backup and restore](#backup-and-restore)).
 
 ### AI match
 
 For ready titles with no `tmdb_id` the pass fetches real TMDB candidates
-(`tmdbMatchAi.js`), has an OpenRouter model rank them, and lets an independent gate
+(`tmdbMatchAi.js`), has a model rank them (AI module, role `MATCH`), and lets an independent gate
 decide. The model never supplies an id, only picks among fetched candidates. It
-runs only with `TMDB_MATCH_AI_ENABLED=true`, an `OPENROUTER_API_KEYS` key,
+runs only with `TMDB_MATCH_AI_ENABLED=true`, a usable `MATCH` route (AI keys + models),
 `TMDB_MATCH_AI_MODE` other than `off`, and `TMDB_ENABLED` plus a TMDB key.
 
 - Gate (`decideAiMatch`, pure): the model's pick is `verified` only if tier 1 holds
@@ -392,7 +376,7 @@ runs only with `TMDB_MATCH_AI_ENABLED=true`, an `OPENROUTER_API_KEYS` key,
   failed|could not load`. Promotion logs `[worker] tmdb identity promote checked=
   assigned= merged= blocked= conflict=`.
 - Development scripts (read-only against the catalog, they hit TMDB and
-  OpenRouter): `scripts/tmdb-ai-backtest.mjs` (precision against provider-supplied
+  the AI module, one entry per provider+model): `scripts/tmdb-ai-backtest.mjs` (precision against provider-supplied
   ids), `tmdb-ai-classify.mjs` (breakdown of rows still without identity),
   `tmdb-ai-dryrun.mjs` (dry run of the pass on real rows).
 
@@ -411,10 +395,9 @@ runs only with `TMDB_MATCH_AI_ENABLED=true`, an `OPENROUTER_API_KEYS` key,
 | `TMDB_MATCH_AI_BATCH_MAX` | Films per batch. |
 | `TMDB_MATCH_AI_THINK_T1` | Reasoning tokens for films with a cast; `0` = off. |
 | `TMDB_MATCH_AI_THINK_T2` | Reasoning tokens for films without a cast. |
-| `TMDB_MATCH_AI_TIMEOUT_MS` | Per-request timeout. |
-| `TMDB_MATCH_AI_TRANSIENT_PARK_MS` | Park time after a 5xx / timeout; doubles on repeats. |
-| `TMDB_MATCH_AI_TRANSIENT_PARK_MAX_MS` | Upper bound of that doubling. |
-| `OPENROUTER_MATCH_MODELS` / `OPENROUTER_MATCH_PAID_DAILY_OUTPUT_TOKENS` | Model list and paid output cap. |
+
+Models, keys, timeout (`AI_TIMEOUT_MS_MATCH`, default 180000) and paid cap: role
+`MATCH` in [AI module](#ai-module).
 
 ### Identity audit and undo
 

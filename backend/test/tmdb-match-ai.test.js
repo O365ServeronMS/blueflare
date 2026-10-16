@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   catalogFacts, catalogNames, collectAiCandidates, compactCandidate, createTmdbClient, decideAiMatch,
-  matchInput, nameKey, parseRankResponse, promptEntry, buildRankPrompt, rankRequestBody, searchQueries, yearOk, sizeOk,
+  matchInput, nameKey, parseRankChoices, promptEntry, buildRankPrompt, rankBatch, rankRequest, searchQueries, yearOk, sizeOk,
   DEFAULT_AI_POLICY, calibrateTokens, createTokenCalibration, estimateTokens
 } from '../src/tmdbMatchAi.js';
+import { createAi } from '../src/ai/index.js';
 
 const cand = (over = {}) => ({
   key: 'tv:1', id: 1, type: 'tv', title: 'Moonlight Drawn by Clouds', originalTitle: '구르미 그린 달빛', viTitle: null,
@@ -35,7 +36,7 @@ test('matchInput drops every identity and match column', () => {
   const dirty = { ...row(), tmdb_id: 5, imdb_id: 'tt1', tmdb_match_id: 9, tmdb_match_status: 'verified', tmdb_media_type: 'tv', tmdb_season_number: 2, tmdb_lookup_id: '7', omdb_imdb_id: 'tt2' };
   const clean = matchInput(dirty);
   for (const key of Object.keys(clean)) assert.ok(!/tmdb|imdb/.test(key), key);
-  const prompt = buildRankPrompt([promptEntry('m1', clean, [cand()])]) + JSON.stringify(rankRequestBody([]));
+  const prompt = buildRankPrompt([promptEntry('m1', clean, [cand()])]) + JSON.stringify(rankRequest([]));
   assert.ok(!/tt1|tt2/.test(prompt));
 });
 
@@ -102,21 +103,41 @@ test('year and size rules per media type', () => {
   assert.equal(sizeOk(series, { episodes: null, season: null }), null);
 });
 
-test('parseRankResponse: a chosenId outside the candidates becomes null, skipped rows are absent', () => {
+test('parseRankChoices: a chosenId outside the candidates becomes null, skipped rows are absent', () => {
   const entries = [{ movieKey: 'a', candidates: [{ id: 'tv:1' }, { id: 'movie:2' }] }, { movieKey: 'b', candidates: [{ id: 'tv:3' }] }];
-  const text = JSON.stringify([
+  const out = parseRankChoices([
     { movieKey: 'a', chosenId: 'tv:3', confidence: 2, reasons: ['x'] },
     { movieKey: 'z', chosenId: 'tv:1', confidence: 1, reasons: [] }
-  ]);
-  const chat = (content, finish = 'stop') => ({ choices: [{ finish_reason: finish, message: { content } }] });
-  const out = parseRankResponse(chat(text), entries);
+  ], entries);
   assert.equal(out.size, 1);
   assert.deepEqual(out.get('a'), { chosenId: null, confidence: 1, reasons: ['x', 'not-a-candidate'] });
-  assert.throws(() => parseRankResponse(chat('nope'), entries), /invalid JSON/);
-  assert.throws(() => parseRankResponse(chat('[]', 'length'), entries), /truncated/);
-  // {results:[...]} wrapper, code fences and a leading <think> block are accepted
-  const wrapped = '<think>hmm</think>\n```json\n' + JSON.stringify({ results: [{ movieKey: 'b', chosenId: 'tv:3', confidence: 0.9, reasons: [] }] }) + '\n```';
-  assert.equal(parseRankResponse(chat(wrapped), entries).get('b').chosenId, 'tv:3');
+  assert.equal(parseRankChoices({ results: [{ movieKey: 'b', chosenId: 'tv:3' }] }, entries).get('b').chosenId, 'tv:3');
+  assert.throws(() => parseRankChoices({ answer: 1 }, entries), (e) => e.permanent === true);
+});
+
+test('rankBatch: one MATCH call; fences, <think> and {results} are accepted, a bad answer moves to the next model', async () => {
+  const entries = [{ movieKey: 'b', candidates: [{ id: 'tv:3' }] }];
+  const answers = { 'm/bad': 'nope', 'm/good': '<think>hmm</think>\n```json\n' + JSON.stringify({ results: [{ movieKey: 'b', chosenId: 'tv:3', confidence: 0.9, reasons: [] }] }) + '\n```' };
+  const bodies = [];
+  const ai = createAi({
+    env: { OPENROUTER_API_KEY: 'k', OPENROUTER_MODEL_MATCH: 'm/bad,m/good' }, warn: () => {}, sleep: async () => {},
+    transport: async (url, init) => {
+      const body = JSON.parse(init.body);
+      bodies.push(body);
+      const usage = { prompt_tokens: 100, completion_tokens: 20 };
+      return { ok: true, status: 200, headers: new Headers(), text: async () => JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: answers[body.model] } }], usage }) };
+    }
+  });
+  const meta = {};
+  const out = await rankBatch(ai, entries, meta, { thinkingBudget: 0 });
+  assert.equal(out.get('b').chosenId, 'tv:3');
+  assert.equal(meta.model, 'm/good');
+  assert.equal(meta.provider, 'openrouter');
+  assert.equal(meta.usage.completionTokens, 20);
+  assert.ok(meta.promptChars > 100);
+  assert.deepEqual(bodies.map((b) => b.model), ['m/bad', 'm/good']);
+  assert.deepEqual(bodies[0].response_format, { type: 'json_object' });
+  assert.deepEqual(bodies[0].reasoning, { enabled: false });
 });
 
 test('compactCandidate flattens names, translations and the top cast', () => {
@@ -215,15 +236,15 @@ test('prompt levels: rich carries more alt names and overview than standard, com
   assert.deepEqual(promptEntry('m1', { ...matchInput(row()), overview: long }, [c]), at('standard'), 'default level');
 });
 
-test('rankRequestBody: reasoning only when asked, output ceiling grows with it and with the entries', () => {
-  assert.deepEqual(rankRequestBody([]).reasoning, { enabled: false });
-  assert.deepEqual(rankRequestBody([], { thinkingBudget: 0 }).reasoning, { enabled: false });
-  const body = rankRequestBody(Array.from({ length: 40 }, (_, i) => ({ movieKey: 'm' + i })), { thinkingBudget: 4096 });
-  assert.deepEqual(body.reasoning, { max_tokens: 4096 });
-  assert.equal(body.max_tokens, 1500 + 150 * 40 + 4096);
-  assert.equal(rankRequestBody([]).max_tokens, 8192);
-  assert.deepEqual(body.response_format, { type: 'json_object' });
-  assert.equal(body.messages[0].role, 'system');
+test('rankRequest: reasoning only when asked, output ceiling grows with it and with the entries', () => {
+  assert.equal(rankRequest([]).reasoning, 'off');
+  assert.equal(rankRequest([], { thinkingBudget: 0 }).reasoning, 'off');
+  const req = rankRequest(Array.from({ length: 40 }, (_, i) => ({ movieKey: 'm' + i })), { thinkingBudget: 4096 });
+  assert.deepEqual(req.reasoning, { maxTokens: 4096 });
+  assert.equal(req.maxTokens, 1500 + 150 * 40 + 4096);
+  assert.equal(rankRequest([]).maxTokens, 8192);
+  assert.equal(req.temperature, 0);
+  assert.equal(req.messages[0].role, 'system');
 });
 
 test('token calibration follows the reported prompt tokens and ignores nonsense', () => {

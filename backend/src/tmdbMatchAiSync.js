@@ -2,9 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { config } from './config.js';
 import { pool } from './db.js';
 import { mapLimit } from './concurrency.js';
-import { createTmdbMatchRotation, tmdbMatchAiAvailable, MatchBlockedError, MatchContentError } from './tmdbMatchRotation.js';
-import { createQuotaLedger } from './aiQuotaLedger.js';
-import { createPgQuotaStore } from './aiQuotaStore.js';
+import { getAi } from './ai/index.js';
 import {
   RANK_PROMPT_OVERHEAD_CHARS, calibrateTokens, catalogFacts, collectAiCandidates, createTmdbClient, createTokenCalibration,
   decideAiMatch, DEFAULT_AI_POLICY, estimateTokens, matchInput, promptEntry, rankBatch
@@ -16,9 +14,9 @@ import {
  * `apply` mode hand verified picks to assignTmdbIdentity. Never on a request path.
  *
  * `runAiMatchPass` is the engine. Films are packed into requests by estimated prompt
- * tokens (not a fixed count), a request the model refuses is bisected, and the quota
- * ledger inside the rotation decides which key+model may answer. A pass stops cleanly
- * when the rotation reports blocked; untouched titles are picked up next time.
+ * tokens (not a fixed count), a request the model refuses is bisected, and the AI module
+ * (role MATCH, backend/AI.md) decides which provider+model may answer. A pass stops cleanly
+ * when the module reports blocked; untouched titles are picked up next time.
  * The background loop (tmdbMatchAiLoop.js) calls it once per tick; `refreshTmdbAiMatches`
  * is the older whole-pass-in-the-sync-cycle entry, used only with TMDB_MATCH_AI_LOOP=false.
  */
@@ -28,7 +26,7 @@ const MAX_CONSECUTIVE_BATCH_FAILURES = 3;
 const DEFAULT_BATCH_TOKENS = 40000;
 const DEFAULT_BATCH_MAX = 40;
 
-const shared = { rotation: null, blockedUntil: 0, calibration: createTokenCalibration(), state: {} };
+const shared = { blockedUntil: 0, calibration: createTokenCalibration(), state: {} };
 
 /**
  * Titles still without an identity that have no recent AI run. A recent run is one
@@ -85,18 +83,10 @@ async function resolveAssign(deps) {
   return module.assignTmdbIdentity;
 }
 
-/** The pass can run at all: mode, OpenRouter key, TMDB. */
-export function aiPassAvailable(settings = config) {
-  return settings.tmdbMatchAiMode !== 'off' && tmdbMatchAiAvailable(settings) && Boolean(settings.tmdbEnabled) && Boolean(settings.tmdbApiKey);
-}
-
-/** The process-wide rotation (own state, ledger backed by PostgreSQL). Tests inject `deps.rotation` instead. */
-export function sharedAiRotation(settings = config, deps = {}) {
-  const state = deps.state ?? shared;
-  return state.rotation ??= createTmdbMatchRotation(settings, {
-    now: deps.rotationNow, warn: deps.rotationWarn, signal: deps.signal,
-    ledger: deps.ledger ?? createQuotaLedger({ store: createPgQuotaStore(), now: deps.rotationNow, warn: deps.rotationWarn })
-  });
+/** The pass can run at all: mode, TMDB_MATCH_AI_ENABLED, an AI provider for role MATCH, TMDB. */
+export function aiPassAvailable(settings = config, ai = getAi()) {
+  return settings.tmdbMatchAiMode !== 'off' && Boolean(settings.tmdbMatchAiEnabled) && ai.available('MATCH') &&
+    Boolean(settings.tmdbEnabled) && Boolean(settings.tmdbApiKey);
 }
 
 const tierOf = (input) => (catalogFacts(input).actorCount >= DEFAULT_AI_POLICY.minCatalogActors ? 1 : 2);
@@ -110,7 +100,8 @@ export async function runAiMatchPass(deps = {}, options = {}) {
   const settings = deps.config ?? config;
   const mode = settings.tmdbMatchAiMode;
   const out = { changed: [], listed: 0, requests: 0, blocked: null, skipped: null, counts: { checked: 0, verified: 0, unverifiable: 0, none: 0, error: 0, merged: 0, assigned: 0 } };
-  if (!aiPassAvailable(settings)) { out.skipped = 'unavailable'; return out; }
+  const ai = deps.ai ?? getAi();
+  if (!aiPassAvailable(settings, ai)) { out.skipped = 'unavailable'; return out; }
   const state = deps.state ?? shared;
   const log = deps.log ?? ((message) => console.log(message));
   const warn = deps.warn ?? ((message) => console.warn(message));
@@ -137,7 +128,6 @@ export async function runAiMatchPass(deps = {}, options = {}) {
   out.listed = rows.length;
   if (!rows.length) return out;
 
-  const rotation = deps.rotation ?? sharedAiRotation(settings, { ...deps, state });
   const client = deps.client ?? createTmdbClient({ concurrency: conc });
   const calibration = state.calibration ??= createTokenCalibration();
   const runId = (deps.randomUUID ?? randomUUID)();
@@ -235,7 +225,7 @@ export async function runAiMatchPass(deps = {}, options = {}) {
   };
 
   // ---- ranking with bisection --------------------------------------------------------------
-  const isBlocked = (error) => error instanceof MatchBlockedError || error?.blocked === true;
+  const isBlocked = (error) => error?.blocked === true;
   let blocked = null;
   let consecutiveFailures = 0;
 
@@ -246,13 +236,13 @@ export async function runAiMatchPass(deps = {}, options = {}) {
     out.requests += 1;
     const think = group[0].tier === 2 ? settings.tmdbMatchAiThinkT2 : settings.tmdbMatchAiThinkT1;
     try {
-      const choices = await rankBatch(rotation, entries, undefined, meta, { tokens: tokensFor(chars), thinkingBudget: think });
+      const choices = await rankBatch(ai, entries, meta, { tokens: tokensFor(chars), thinkingBudget: think, signal: deps.signal });
       return { choices, meta };
     } finally {
       if (meta.usage) {
         calibrateTokens(calibration, meta.promptChars, meta.usage.promptTokens);
         usage.prompt += meta.usage.promptTokens ?? 0;
-        usage.output += meta.usage.outputTokens ?? 0;
+        usage.output += meta.usage.completionTokens ?? 0;
         usage.thoughts += meta.usage.thoughtTokens ?? 0;
       }
     }
@@ -265,7 +255,7 @@ export async function runAiMatchPass(deps = {}, options = {}) {
       result = await rankGroup(group);
     } catch (error) {
       if (isBlocked(error)) { blocked = error; return; }
-      if (error instanceof MatchContentError) {
+      if (error?.permanent === true) {
         // Something in the request was refused: halve until the offending film is alone.
         if (group.length > 1) {
           const mid = Math.ceil(group.length / 2);
@@ -313,7 +303,7 @@ export async function runAiMatchPass(deps = {}, options = {}) {
 /** Legacy whole pass for the sync cycle (TMDB_MATCH_AI_LOOP=false). Returns changed canonical slugs. */
 export async function refreshTmdbAiMatches(deps = {}) {
   const settings = deps.config ?? config;
-  if (!aiPassAvailable(settings)) return [];
+  if (!aiPassAvailable(settings, deps.ai ?? getAi())) return [];
   const now = deps.now ?? (() => Date.now());
   const state = deps.state ?? shared;
   if (now() < (state.blockedUntil ?? 0)) return [];

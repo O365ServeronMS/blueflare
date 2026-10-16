@@ -1,7 +1,5 @@
 import { castOverlap, actorKeys, seasonOf, tmdbEndpointFor } from './tmdbMatch.js';
 import { fetchTmdb } from './tmdb.js';
-import { MatchContentError } from './tmdbMatchRotation.js';
-import { chatText } from './openrouter.js';
 
 /**
  * "An LLM (OpenRouter) ranks real TMDB candidates, an independent gate decides".
@@ -362,11 +360,11 @@ export function buildRankPrompt(entries) {
 }
 
 /**
- * Chat-completions body (the rotation adds `model`). `thinkingBudget` (tokens, > 0) lets the model
+ * Messages and call options of one ranking request. `thinkingBudget` (tokens, > 0) lets the model
  * reason before answering; those tokens count as output, so the ceiling grows with it and with the
- * number of entries. 0 asks the provider to skip reasoning (models that cannot ignore it).
+ * number of entries. 0 asks the provider to skip reasoning (OpenRouter only; see backend/AI.md).
  */
-export function rankRequestBody(entries, options = {}) {
+export function rankRequest(entries, options = {}) {
   const thinking = Number(options.thinkingBudget) > 0 ? Math.floor(Number(options.thinkingBudget)) : 0;
   return {
     messages: [
@@ -374,9 +372,8 @@ export function rankRequestBody(entries, options = {}) {
       { role: 'user', content: buildRankPrompt(entries) }
     ],
     temperature: 0,
-    max_tokens: Math.min(65536, Math.max(8192, 1500 + 150 * entries.length + thinking)),
-    response_format: { type: 'json_object' },
-    reasoning: thinking ? { max_tokens: thinking } : { enabled: false }
+    maxTokens: Math.min(65536, Math.max(8192, 1500 + 150 * entries.length + thinking)),
+    reasoning: thinking ? { maxTokens: thinking } : 'off'
   };
 }
 
@@ -398,29 +395,18 @@ export function calibrateTokens(calibration, chars, promptTokens) {
 
 export const estimateTokens = (calibration, chars) => Math.ceil(chars / (calibration?.charsPerToken || 3));
 
-/** The model's JSON: a bare array, or {results:[...]} (also found inside prose or a code fence). */
-export function parseRankJson(text) {
-  const clean = String(text).replace(/<think>[\s\S]*?<\/think>/gi, '').trim().replace(/^```(?:json)?\s*|\s*```$/g, '');
-  const attempts = [clean, clean.slice(clean.indexOf('{'), clean.lastIndexOf('}') + 1), clean.slice(clean.indexOf('['), clean.lastIndexOf(']') + 1)];
-  for (const attempt of attempts) {
-    if (!attempt) continue;
-    let value;
-    try { value = JSON.parse(attempt); } catch { continue; }
-    if (Array.isArray(value)) return value;
-    if (Array.isArray(value?.results)) return value.results;
-  }
-  return null;
-}
+/** A ranking answer the model got wrong as a whole: the AI module tries the next model. */
+const refusal = (message) => Object.assign(new Error(message), { permanent: true });
 
 /**
- * Turn a chat completion into { movieKey -> {chosenId, confidence, reasons} }.
+ * Turn the model's JSON (a bare array, or {results:[...]}) into { movieKey -> {chosenId, confidence, reasons} }.
  * A chosenId outside that movie's candidate list becomes null (reason 'not-a-candidate'):
  * the model cannot invent an id. Entries the model skipped are simply absent.
- * Throws `makeError(message)` for refusals / unparsable output so the rotation tries the next model.
+ * Any other shape throws a permanent error, so the AI module moves to the next model.
  */
-export function parseRankResponse(json, entries, makeError = (m) => new Error(m)) {
-  const list = parseRankJson(chatText(json, makeError));
-  if (!list) throw makeError('model returned invalid JSON');
+export function parseRankChoices(data, entries) {
+  const list = Array.isArray(data) ? data : Array.isArray(data?.results) ? data.results : null;
+  if (!list) throw refusal('model returned no results list');
   const allowed = new Map(entries.map((e) => [e.movieKey, new Set(e.candidates.map((c) => c.id))]));
   const out = new Map();
   for (const item of list) {
@@ -438,17 +424,20 @@ export function parseRankResponse(json, entries, makeError = (m) => new Error(m)
   return out;
 }
 
-/** One model call for a batch of prompt entries via a `createTmdbMatchRotation` function. */
-export async function rankBatch(rotation, entries, makeError = (m) => new MatchContentError(m), meta = {}, options = {}) {
-  const prompt = buildRankPrompt(entries);
-  meta.promptChars = prompt.length + RANK_SYSTEM_PROMPT.length;
-  return rotation({
-    text: prompt + RANK_SYSTEM_PROMPT,
-    tokens: options.tokens,
-    buildBody: () => rankRequestBody(entries, options),
-    parse: (json) => parseRankResponse(json, entries, makeError),
-    meta
+/**
+ * One AI call (role MATCH) for a batch of prompt entries. `meta` gets promptChars, model, provider,
+ * key and usage. Options: tokens (prompt estimate), thinkingBudget, only {provider, model}, signal.
+ * Errors are AiError: kind 'unavailable' (blocked) or 'content' (refused, bisect the batch).
+ */
+export async function rankBatch(ai, entries, meta = {}, options = {}) {
+  const { messages, ...call } = rankRequest(entries, options);
+  meta.promptChars = messages.reduce((sum, m) => sum + m.content.length, 0);
+  const result = await ai.json('MATCH', messages, {
+    ...call, estTokens: options.tokens, only: options.only, signal: options.signal,
+    accept: (data) => parseRankChoices(data, entries)
   });
+  Object.assign(meta, { model: result.model, provider: result.provider, key: result.key, usage: result.usage });
+  return result.value;
 }
 
 // ---- independent gate ------------------------------------------------------------

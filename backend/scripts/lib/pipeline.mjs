@@ -46,20 +46,20 @@ export async function rankAll(evidence, rotations, { batch = 10, parallel = 3, c
     // Best model first; a 503 / timeout / cooldown moves on to the next model, a full lap waits and starts again.
     for (let lap = 0; lap < 5 && !answer && !stats.blocked; lap += 1) {
       let allDaily = true;
-      for (const { model, call } of rotations) {
+      for (const { model, ai, only } of rotations) {
         if (answer) break;
         const meta = {};
         const started = Date.now();
         try {
           stats.requests += 1;
-          const map = await rankBatch(call, entries, undefined, meta);
+          const map = await rankBatch(ai, entries, meta, { only });
           stats.latencyMs.push(Date.now() - started);
           stats.models[meta.model + '/' + meta.key] = (stats.models[meta.model + '/' + meta.key] || 0) + 1;
           answer = Object.fromEntries(map);
           cache.set(key, answer);
         } catch (error) {
           stats.failed += 1;
-          const tag = model + ' ' + (error.blocked ? 'blocked' : error.status || error.name);
+          const tag = model + ' ' + (error.blocked ? 'blocked' : error.kind || error.name);
           stats.failures[tag] = (stats.failures[tag] || 0) + 1;
           if (!(error.blocked && (error.retryAfterMs ?? 0) > 20 * 60 * 1000)) allDaily = false;
           if (error.blocked && error.retryAfterMs && error.retryAfterMs <= 30000) await sleep(error.retryAfterMs);

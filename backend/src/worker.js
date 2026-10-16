@@ -75,6 +75,7 @@ import { runImageHostCheck } from './imageHostCheck.js';
 import { findCastVerifiedMatch } from './tmdbMatch.js';
 import { refreshTmdbAiMatches } from './tmdbMatchAiSync.js';
 import { aiLoopEnabled, runTmdbMatchAiLoop } from './tmdbMatchAiLoop.js';
+import { getAi } from './ai/index.js';
 import { promoteVerifiedMatches } from './tmdbIdentity.js';
 import { refreshSeasonInference } from './tmdbSeasonInferSync.js';
 import { backfillMdblistRatings, formatMdblistStats, syncMdblistRatings } from './mdblistRatingsSync.js';
@@ -1029,6 +1030,10 @@ function stop(signal) {
 
 process.on('SIGTERM', () => stop('SIGTERM'));
 process.on('SIGINT', () => stop('SIGINT'));
+
+// Read the AI env once at startup: a broken setting (LLM_BASE_URL without LLM_API_KEY) fails here, loudly,
+// and deprecated names print their warning once instead of on the first AI call.
+getAi();
 
 let aiLoop = null;
 function startTmdbMatchAiLoop() {

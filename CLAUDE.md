@@ -50,9 +50,9 @@ Four loops run outside the request path. None of them may be moved into the requ
 - **Ratings:** enriches approved visible rows with MDBList Rotten Tomatoes critic/audience scores under a per-key daily budget.
 - **TMDB recommendations and credits:** refreshes TMDB recommendation/similar id lists for the detail-page rail, and TMDB cast/director credits for rows with a verified TMDB identity.
 - **Reviews:** refreshes TMDB user reviews (`TMDB_REVIEWS_*`, table `movie_reviews`, verified identity only; the worker is the only caller, never a request path) and stores them as plain text. Reviews are re-fetchable from TMDB, not irreplaceable state.
-- **Translation:** a separate worker-only pass right after the reviews pass machine-translates stored English reviews to Vietnamese (`TRANSLATE_*`, columns `content_vi`/`translated_hash` on `movie_reviews`). It is sequential and never a request path; only public TMDB review text is sent; column `translate_provider` = `openrouter:<model>`/`google-gtx`.
-  - Ordered provider chain `TRANSLATE_PROVIDER`, default OpenRouter (`OPENROUTER_API_KEYS`, ordered `OPENROUTER_TRANSLATE_MODELS`, free models first and paid ones later), with the free unofficial Google gtx endpoint as an optional fallback. Gemini models are reached only through OpenRouter, by listing them in `OPENROUTER_*_MODELS`.
-  - Paid cap: `OPENROUTER_TRANSLATE_PAID_DAILY_OUTPUT_TOKENS` / `OPENROUTER_MATCH_PAID_DAILY_OUTPUT_TOKENS` cap the completion tokens of all non-`:free` models together per UTC day (column `output_tokens` of `ai_quota_ledger`, 033); `:free` models keep serving after it. There is deliberately no total daily token cap (`OPENROUTER_*_DAILY_TOKENS` were removed on purpose; do not reintroduce them).
+- **Translation:** a separate worker-only pass right after the reviews pass machine-translates stored English reviews to Vietnamese (`TRANSLATE_*`, columns `content_vi`/`translated_hash` on `movie_reviews`). It is sequential and never a request path; only public TMDB review text is sent; column `translate_provider` = `<provider>:<model>` (e.g. `openrouter:<model>`)/`google-gtx`.
+  - Ordered provider chain `TRANSLATE_PROVIDER`, default `ai` (the AI module, role `TRANSLATE`; `openrouter` is an old alias), with the free unofficial Google gtx endpoint as an optional fallback.
+  - Paid cap: `AI_PAID_DAILY_OUTPUT_TOKENS_TRANSLATE` / `AI_PAID_DAILY_OUTPUT_TOKENS_MATCH` cap the completion tokens of all non-`:free` models of a role together per UTC day (column `output_tokens` of `ai_quota_ledger`, 033); `:free` models keep serving after it. There is deliberately no total daily token cap (`OPENROUTER_*_DAILY_TOKENS` were removed on purpose; do not reintroduce them).
   - Batching: `TRANSLATE_BATCH_ENABLED` (default `false`) packs several reviews into one nonce-delimited request, validated and split on a bad answer (`translateBatch.js`).
 - **Duplicate merge:** `reconcileDuplicates` (`MERGE_DUPLICATES_MODE=off|dry-run|apply`, default `apply` in `config.js` and `.env.example`; `MERGE_BATCH_LIMIT`) runs inside the same cycle, before invalidation, and folds a NguonC-only row into the KKPhim-only row of the same work (`backend/src/duplicateMerge.js` plans, `duplicateMergeRepository.js` applies in one transaction). The KKPhim row survives; the dropped canonical slug is kept in `movie_slug_aliases` and `findMovie`/`listReadyBySlugs` resolve it; `movie_merges` snapshots the dropped row and its moved user rows for manual undo.
 - **TMDB identity chain:** separate from the AI match below. `TMDB_MATCH_ENABLED` runs the deterministic cast-verified match (`tmdbMatch.js`, writes `tmdb_match_*` only), and `promoteVerifiedMatches` (`TMDB_IDENTITY_MODE=off|dry-run|apply`, default `off`) turns those verified rows into a real `tmdb_id` through `tmdbIdentity.js`.
@@ -61,7 +61,7 @@ Four loops run outside the request path. None of them may be moved into the requ
 
 ### TMDB AI match
 
-`worker`, its own loop every `TMDB_MATCH_AI_LOOP_MS` (`tmdbMatchAiLoop.js`; `TMDB_MATCH_AI_LOOP=false` folds it back into the sync cycle). For titles without a `tmdb_id`, it fetches real TMDB candidates and has an OpenRouter model rank them, when `TMDB_MATCH_AI_ENABLED=true`, using `OPENROUTER_API_KEYS` and the ordered `OPENROUTER_MATCH_MODELS` (empty key = pass off; translation and match keep separate ledger scopes and separate paid output caps). Never a request path.
+`worker`, its own loop every `TMDB_MATCH_AI_LOOP_MS` (`tmdbMatchAiLoop.js`; `TMDB_MATCH_AI_LOOP=false` folds it back into the sync cycle). For titles without a `tmdb_id`, it fetches real TMDB candidates and has a model rank them through the AI module (role `MATCH`), when `TMDB_MATCH_AI_ENABLED=true` and the role has keys and models (none = pass off; translation and match keep separate ledger scopes and separate paid output caps). Never a request path.
 
 - The model never supplies an id; an independent two-tier gate (`decideAiMatch`: T1 cast overlap + year, T2 exact name + year + size, no rival candidate) decides.
 - `TMDB_MATCH_AI_MODE=off|dry-run|apply`, default `dry-run` (verified in `backend/src/config.js`): dry-run only writes `tmdb_match_ai_runs`; apply writes `tmdb_id` with source `inferred` through `tmdbIdentity.js` (assign, or merge into the row already holding it).
@@ -137,10 +137,11 @@ The Cloudflare IP ranges in `lib/account-proxy.ts` are hardcoded; refresh them f
 | `people.js` | cast/director slug + identity |
 | `tmdbReviews.js`, `tmdbReviewsSync.js` | plain-text normalising, score, spoiler flag; worker pass |
 | `reviewSpoiler.js`, `reviewOrder.js` | spoiler detection; display order + cache keys |
-| `translate.js`, `openrouter.js`, `reviewTranslateSync.js` | chunking + OpenRouter and gtx providers + provider chain; OpenRouter key/model rotation, status handling, paid-output cap, UTC-day helpers (used by translation and the TMDB AI match); worker translation pass |
+| `ai/` (`index.js`, `config.js`, `client.js`, `util.js`) | the only AI client: roles, env + defaults, primary→OpenRouter fallback, retries, response_format downgrade, quota/paid cap via the ledger, UTC-day helpers (doc `backend/AI.md`) |
+| `translate.js`, `reviewTranslateSync.js` | chunking + `ai` and gtx providers + provider chain; worker translation pass |
 | `translateBatch.js` | batched translation requests |
 | `tmdbMatch.js` | cast-verified match |
-| `tmdbMatchAi.js`, `tmdbMatchRotation.js`, `tmdbMatchAiSync.js`, `tmdbMatchAiLoop.js` | AI match: candidates, prompt, two-tier gate; rotation; pass engine (`tmdb_match_ai_runs`); fourth worker loop |
+| `tmdbMatchAi.js`, `tmdbMatchAiSync.js`, `tmdbMatchAiLoop.js` | AI match: candidates, prompt, two-tier gate; pass engine (`tmdb_match_ai_runs`); fourth worker loop |
 | `tmdbSeasonInfer.js`, `tmdbSeasonInferSync.js` | pure TMDB season inference for tv rows with a known id; worker pass `refreshSeasonInference` |
 | `tmdbIdentity.js` | assign/merge/promote/undo of TMDB identity (`tmdb_identity_changes`); `backend/scripts/tmdb-identity-report.mjs` read-only review CSV, `tmdb-identity-undo.mjs <changeId>` |
 | `duplicateMerge.js`, `duplicateMergeRepository.js` | duplicate merge plan / apply |
@@ -186,11 +187,15 @@ The two Caddy site blocks live inline in `bootstrap-vps.sh`, not as separate fil
 - `GET /api/cards?slugs=` is public, cached 60s, keyed by the sorted slug list only.
 - scrypt shares the libuv threadpool with image I/O and sharp, so `AUTH_HASH_CONCURRENCY` (2) must stay well below `UV_THREADPOOL_SIZE` (8, set on `api` in `infra/compose.yml`). `AUTH_HASH_QUEUE` and `AUTH_REGISTER_GLOBAL_PER_HOUR` live in `backend/.env.example` and must also be in the stack `.env`.
 
+### AI calls
+
+- Every model call goes through `backend/src/ai/` (`getAi().chat(role, …)` / `.json(role, …)`, doc `backend/AI.md`); no other file may call an LLM over HTTP, read AI env or implement fallback. Order: primary OpenAI-compatible provider (`LLM_BASE_URL`, `LLM_API_KEY`, `MODEL_<ROLE>` or `MODEL_PRIMARY`/`MODEL_FALLBACK`), then OpenRouter (`OPENROUTER_API_KEY`, `OPENROUTER_MODEL_<ROLE>`), next pair on 401/402/408/429/5xx, network error, timeout or a bad answer. Roles are registered in `src/ai/config.js` (`TRANSLATE`, `MATCH`); defaults live only there and `.env.example` mirrors them. Old `OPENROUTER_*` names still work with a deprecation warning.
+
 ### Reviews and translation
 
 - `GET /api/movies/:slug/reviews` is public and cached 60s, keyed `reviews:<slug>:<page>:<limit>` only (never cookies, user agent or `returnTo`); the browser "Xem thêm" button calls it on `img.bluesia.net` like other client catalog calls. Page 1 (2 reviews) rides along in `GET /api/movie/:slug`.
 - Each review carries `contentVi` (null unless a translation of the current English text exists).
-- A provider can be blocked at any time (gtx is unofficial); it then goes into its own cooldown (`TRANSLATE_COOLDOWN_MS` / `OPENROUTER_COOLDOWN_MS`), the next provider in the chain continues the same review, and the API fails open to English when none is left.
+- A provider can be blocked at any time (gtx is unofficial); it then goes into its own cooldown (`TRANSLATE_COOLDOWN_MS` / `AI_COOLDOWN_MS`), the next provider in the chain continues the same review, and the API fails open to English when none is left.
 - `hasSpoiler` and `score` are computed on the English text, never on the translation.
 
 ### Caching and revalidation
@@ -219,7 +224,7 @@ S3-compatible store and prunes both ends. It is optional: it only runs when
 changing provider is an env change (`BACKUP_S3_*`), not a code change. The full
 rebuild-from-nothing runbook is in `backend/README.md`.
 
-Third-party credentials such as `TMDB_API_KEY`, `MDBLIST_API_KEY`, `OPENROUTER_API_KEYS`, and
+Third-party credentials such as `TMDB_API_KEY`, `MDBLIST_API_KEY`, `LLM_API_KEY`, `OPENROUTER_API_KEY`, and
 `MDBLIST_API_KEYS` cannot be regenerated by `infra/scripts/bootstrap-vps.sh`; keep a
 secure copy off the machine.
 
@@ -270,6 +275,7 @@ documents.
 | `backend/README.md` | live | backend internals, runtime/codebase split, backup/restore runbook, PostgreSQL major upgrades, Caddy |
 | `backend/ARCHITECTURE.md` | live | backend architecture, cache, accounts, API contracts |
 | `backend/OBSERVABILITY.md` | live | observability runbook |
+| `backend/AI.md` | live | AI module: call API, roles, fallback, AI env |
 | `infra/CLOUDFLARE.md` | live | Cloudflare cache rules, auth hardening, Caddy `@authdirect` |
 | `frontend/PAGINATION.md` | live | pagination algorithm, load-bearing |
 | `frontend/DESIGN.md` | live | UI direction |

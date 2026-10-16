@@ -1,5 +1,6 @@
 import { config } from './config.js';
-import { aiPassAvailable, runAiMatchPass, sharedAiRotation } from './tmdbMatchAiSync.js';
+import { aiPassAvailable, runAiMatchPass } from './tmdbMatchAiSync.js';
+import { getAi } from './ai/index.js';
 import { retryDelayMs, waitFor } from './workerLoop.js';
 
 /**
@@ -23,15 +24,15 @@ export const aiLoopEnabled = (settings = config) => settings.tmdbMatchAiLoop !==
 export async function tmdbMatchAiTick(deps = {}) {
   const settings = deps.config ?? config;
   const result = { status: 'off', changed: [], requests: 0 };
-  if (!aiPassAvailable(settings)) return result;
-  const rotation = deps.rotation ?? sharedAiRotation(settings, deps);
-  await rotation.ready?.();
+  const ai = deps.ai ?? getAi();
+  if (!aiPassAvailable(settings, ai)) return result;
+  await ai.ready();
   const rowLimit = Math.max(1, settings.tmdbMatchAiBatchMax ?? 40);
 
   const run = async (scope) => {
     let last;
     for (let sweep = 0; sweep < MAX_FREE_SWEEPS; sweep += 1) {
-      last = await runAiMatchPass({ ...deps, rotation }, { scope, rowLimit, maxPacks: 1 });
+      last = await runAiMatchPass({ ...deps, ai }, { scope, rowLimit, maxPacks: 1 });
       result.changed.push(...last.changed);
       result.requests += last.requests;
       if (last.blocked || last.skipped || last.requests > 0 || last.listed === 0 || deps.isStopping?.()) break;

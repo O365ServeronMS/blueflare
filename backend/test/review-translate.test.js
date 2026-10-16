@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseApiKeys } from '../src/config.js';
-import { createQuotaLedger } from '../src/aiQuotaLedger.js';
+import { createAi } from '../src/ai/index.js';
 import { pool } from '../src/db.js';
 import { reviewCard } from '../src/reviewOrder.js';
 import {
@@ -238,16 +237,19 @@ test('stray CJK in a translation of a CJK-free source is a content refusal; a CJ
   assert.equal(assertNoStrayCjk('我的未婚妻', 'Vị hôn thê 我的未婚妻'), 'Vị hôn thê 我的未婚妻');
 });
 
-test('chain config: ordered, single value works, missing key skips openrouter, unknown throws', () => {
-  assert.deepEqual(parseProviderChain(' google-gtx , openrouter,google-gtx'), ['google-gtx', 'openrouter']);
+const aiFor = (vars = {}, extra = {}) => createAi({ env: { OPENROUTER_API_KEY: SECRET, OPENROUTER_MODEL_TRANSLATE: 'a/one:0', AI_COOLDOWN_MS: '6000', ...vars }, warn: () => {}, ...extra });
+
+test('chain config: ordered, single value works, no AI provider skips ai, unknown throws', () => {
+  assert.deepEqual(parseProviderChain(' google-gtx , ai,google-gtx'), ['google-gtx', 'ai']);
+  assert.deepEqual(parseProviderChain('openrouter,google-gtx'), ['ai', 'google-gtx'], 'old name still accepted');
   assert.deepEqual(parseProviderChain(''), ['google-gtx']);
-  const base = { ...cfg, openrouterTranslateModels: 'a/one:0', openrouterTimeoutMs: 1000, openrouterCooldownMs: 6000 };
-  assert.deepEqual(buildTranslators({ ...base, translateProvider: 'google-gtx', openrouterApiKeys: [SECRET] }).map((p) => p.name), ['google-gtx']);
-  assert.deepEqual(buildTranslators({ ...base, translateProvider: 'google-gtx,openrouter', openrouterApiKeys: [] }).map((p) => p.name), ['google-gtx']);
-  const both = buildTranslators({ ...base, translateProvider: 'google-gtx,openrouter', openrouterApiKeys: [SECRET] }, { ledger: createQuotaLedger({ warn: () => {} }) });
-  assert.deepEqual(both.map((p) => [p.name, p.delayMs]), [['google-gtx', 5], ['openrouter', 0]]);
-  assert.deepEqual(buildTranslators({ ...base, translateProvider: 'openrouter', openrouterApiKeys: [] }), []);
-  assert.throws(() => buildTranslators({ ...base, translateProvider: 'nope' }), /unknown/);
+  assert.deepEqual(buildTranslators({ ...cfg, translateProvider: 'google-gtx' }, { ai: aiFor() }).map((p) => p.name), ['google-gtx']);
+  const noKeys = createAi({ env: {}, warn: () => {} });
+  assert.deepEqual(buildTranslators({ ...cfg, translateProvider: 'google-gtx,ai' }, { ai: noKeys }).map((p) => p.name), ['google-gtx']);
+  const both = buildTranslators({ ...cfg, translateProvider: 'google-gtx,openrouter' }, { ai: aiFor() });
+  assert.deepEqual(both.map((p) => [p.name, p.delayMs, p.cooldownMs]), [['google-gtx', 5, cfg.translateCooldownMs], ['ai', 0, 6000]]);
+  assert.deepEqual(buildTranslators({ ...cfg, translateProvider: 'ai' }, { ai: noKeys }), []);
+  assert.throws(() => buildTranslators({ ...cfg, translateProvider: 'nope' }, { ai: noKeys }), /unknown/);
 });
 
 function chain(behaviour = {}) {
@@ -368,11 +370,11 @@ test('chain: provider-level errors still count toward the consecutive breaker', 
   assert.equal(deps.state.cooldownUntil, 2000);
 });
 
-// ---- Sync over the real OpenRouter provider ----
+// ---- Sync over the real AI module (OpenRouter only, HTTP through globalThis.fetch) ----
 
 const orSettings = (chainName, models = 'm1:0,m2:0') => ({
-  ...cfg, translateProvider: chainName, openrouterApiKeys: [SECRET], openrouterTranslateModels: models,
-  openrouterTimeoutMs: 1000, openrouterCooldownMs: 600000
+  ...cfg, translateProvider: chainName,
+  aiEnv: { OPENROUTER_API_KEY: SECRET, OPENROUTER_MODEL_TRANSLATE: models, AI_COOLDOWN_MS: '600000', AI_TIMEOUT_MS: '1000' }
 });
 
 async function runSync(settings, fetchImpl, extra = {}) {
@@ -382,8 +384,10 @@ async function runSync(settings, fetchImpl, extra = {}) {
   const orig = console.log, warn = console.warn;
   console.log = (m) => log.logs.push(m); console.warn = (m) => log.logs.push(m);
   try {
+    const sleep = async (ms) => { log.time += ms; };
     await syncReviewTranslations({
-      config: settings, state: extra.state ?? { cooldownUntil: 0 }, now: () => log.time, sleep: async (ms) => { log.time += ms; },
+      config: settings, state: extra.state ?? { cooldownUntil: 0 }, now: () => log.time, sleep,
+      ai: createAi({ env: settings.aiEnv, now: () => log.time, sleep }),
       listPending: async () => pend(extra.count ?? 2), recordFailure: async () => {},
       record: async (id, h, v, p) => { log.recorded.push([v, p]); return true; }
     });
@@ -393,22 +397,22 @@ async function runSync(settings, fetchImpl, extra = {}) {
 
 test('sync: records openrouter:<model>, logs per-model counts, never logs the key', async () => {
   const models = [];
-  const log = await runSync(orSettings('openrouter'), async (url, init) => { models.push(JSON.parse(init.body).model); return or(200, ok('vi')); });
+  const log = await runSync(orSettings('ai'), async (url, init) => { models.push(JSON.parse(init.body).model); return or(200, ok('vi')); });
   assert.deepEqual(log.recorded, [['vi', 'openrouter:m1'], ['vi', 'openrouter:m1']]);
-  assert.ok(log.logs.some((m) => /providers=openrouter:2 models=m1:2/.test(m)), log.logs.join('\n'));
+  assert.ok(log.logs.some((m) => /providers=ai:2 models=m1:2/.test(m)), log.logs.join('\n'));
   assert.ok(log.logs.every((m) => !String(m).includes(SECRET)));
 });
 
-test('sync chain: openrouter rejecting the key continues the same review on gtx', async () => {
+test('sync chain: the AI key rejected continues the same review on gtx continues the same review on gtx', async () => {
   const state = { cooldownUntil: 0 };
-  const log = await runSync(orSettings('openrouter,google-gtx'), async (url) => (
+  const log = await runSync(orSettings('ai,google-gtx'), async (url) => (
     /translate_a\/single/.test(String(url)) ? res(200, JSON.stringify([[['gtx vi', 'x']]])) : or(401, { error: { message: 'no auth' } })
   ), { state });
   assert.deepEqual(log.recorded, [['gtx vi', 'google-gtx'], ['gtx vi', 'google-gtx']]);
-  assert.ok(state.providers.openrouter.cooldownUntil > 1000);
+  assert.ok(state.providers.ai.cooldownUntil > 1000);
 });
 
-test('sync: with only openrouter and the key rejected the pass ends without failing reviews', async () => {
+test('sync: with only ai and the key rejected the pass ends without failing reviews', async () => {
   const state = { cooldownUntil: 0 };
   const failed = [];
   const realFetch = globalThis.fetch;
@@ -416,7 +420,7 @@ test('sync: with only openrouter and the key rejected the pass ends without fail
   const orig = console.log, warn = console.warn; console.warn = () => {}; console.log = () => {};
   try {
     await syncReviewTranslations({
-      config: orSettings('openrouter'), state, now: () => 1000, sleep: async () => {}, listPending: async () => pend(3),
+      config: orSettings('ai'), state, now: () => 1000, sleep: async () => {}, ai: createAi({ env: orSettings('ai').aiEnv, now: () => 1000, sleep: async () => {} }), listPending: async () => pend(3),
       recordFailure: async (id) => { failed.push(id); }, record: async () => true
     });
   } finally { globalThis.fetch = realFetch; console.log = orig; console.warn = warn; }
@@ -437,7 +441,7 @@ const batchEcho = (mutate = (items) => items) => async (url, init) => {
 test('sync batch: one request records every review of the group', async () => {
   let requests = 0;
   const echo = batchEcho();
-  const log = await runSync({ ...orSettings('openrouter'), translateBatchEnabled: true, translateBatchMaxChars: 8000, translateBatchMaxItems: 12 },
+  const log = await runSync({ ...orSettings('ai'), translateBatchEnabled: true, translateBatchMaxChars: 8000, translateBatchMaxItems: 12 },
     async (...a) => { requests += 1; return echo(...a); }, { count: 5 });
   assert.equal(requests, 1);
   assert.equal(log.recorded.length, 5);
@@ -448,7 +452,7 @@ test('sync batch: one request records every review of the group', async () => {
 test('sync batch: a rejected answer splits the group, every review still ends translated', async () => {
   let requests = 0;
   const echo = batchEcho((items) => (items.length > 2 ? items.slice(1) : items)); // groups over 2 drop an item
-  const log = await runSync({ ...orSettings('openrouter'), translateBatchEnabled: true, translateBatchMaxChars: 8000, translateBatchMaxItems: 12 },
+  const log = await runSync({ ...orSettings('ai'), translateBatchEnabled: true, translateBatchMaxChars: 8000, translateBatchMaxItems: 12 },
     async (...a) => { requests += 1; return echo(...a); }, { count: 5 });
   assert.equal(log.recorded.length, 5);
   assert.ok(requests > 1);
@@ -456,7 +460,7 @@ test('sync batch: a rejected answer splits the group, every review still ends tr
 });
 
 test('sync batch: blocked batch leaves the reviews to the per-review path of the next provider', async () => {
-  const log = await runSync({ ...orSettings('openrouter,google-gtx'), translateBatchEnabled: true, translateBatchMaxChars: 8000, translateBatchMaxItems: 12 },
+  const log = await runSync({ ...orSettings('ai,google-gtx'), translateBatchEnabled: true, translateBatchMaxChars: 8000, translateBatchMaxItems: 12 },
     async (url) => (/translate_a\/single/.test(String(url)) ? res(200, JSON.stringify([[['gtx vi', 'x']]])) : or(401, { error: { message: 'no auth' } })),
     { count: 3 });
   assert.deepEqual(log.recorded.map((r) => r[1]), ['google-gtx', 'google-gtx', 'google-gtx']);

@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { aiLoopEnabled, runTmdbMatchAiLoop, tmdbMatchAiTick } from '../src/tmdbMatchAiLoop.js';
-import { MatchBlockedError } from '../src/tmdbMatchRotation.js';
+import { AiError } from '../src/ai/index.js';
+
+const blockedFor = (message, retryAfterMs) => new AiError(message, { kind: 'unavailable', retryAfterMs });
 
 const settings = (over = {}) => ({
-  tmdbEnabled: true, tmdbApiKey: 't', tmdbMatchAiEnabled: true, openrouterApiKeys: ['k'], tmdbMatchAiMode: 'dry-run',
+  tmdbEnabled: true, tmdbApiKey: 't', tmdbMatchAiEnabled: true, tmdbMatchAiMode: 'dry-run',
   tmdbMatchAiLimit: 100, tmdbMatchAiRetryMs: 1, tmdbMatchAiErrorRetryMs: 1, tmdbMatchAiBatchMax: 3, tmdbMatchConcurrency: 2,
   tmdbMatchAiLoop: true, tmdbMatchAiLoopMs: 60000,tmdbMatchAiFreshMs: 1000, ...over
 });
@@ -13,23 +15,23 @@ const detail = { id: 1, name: 'Moonlight Drawn By Clouds', original_name: 'Moonl
 const client = (empty = false) => ({ get: async (path) => (path.startsWith('/search/') ? { results: empty ? [] : [{ id: 1, name: detail.name, first_air_date: '2016-08-22', vote_count: 5 }] } : detail) });
 const picks = async () => new Map(Array.from({ length: 10 }, (_, i) => ['m' + i, { chosenId: 'tv:1', confidence: 0.9, reasons: [] }]));
 
-/** Rotation stand-in that counts its requests. */
-function fakeRotation({ fail } = {}) {
+/** AI module stand-in (role MATCH) that counts its requests. */
+function fakeAi({ fail, available = true } = {}) {
   const state = { calls: 0 };
-  const rotation = async () => { if (fail) throw fail; state.calls += 1; return picks(); };
-  rotation.ready = async () => {};
-  rotation.state = state;
-  return rotation;
+  return {
+    state, available: () => available, ready: async () => {},
+    json: async () => { if (fail) throw fail; state.calls += 1; return { value: await picks(), model: 'm', provider: 'fake', key: 'k1', usage: null }; }
+  };
 }
 
-function harness({ lists = {}, config = {}, rotationFail, empty = false } = {}) {
+function harness({ lists = {}, config = {}, rotationFail, empty = false, aiAvailable = true } = {}) {
   const calls = [];
   const runs = [];
   const logs = [];
   const queues = { priority: [...(lists.priority ?? [])], all: [...(lists.all ?? [])] };
-  const rotation = fakeRotation({ fail: rotationFail });
+  const rotation = fakeAi({ fail: rotationFail, available: aiAvailable });
   const deps = {
-    config: settings(config), rotation, client: client(empty), state: {}, log: (m) => logs.push(m), warn: (m) => logs.push(m),
+    config: settings(config), ai: rotation, client: client(empty), state: {}, log: (m) => logs.push(m), warn: (m) => logs.push(m),
     now: () => 5_000_000,
     list: async (args) => { calls.push(args.scope); return (queues[args.scope] ?? []).splice(0, args.limit); },
     record: async (run) => { runs.push(run); }
@@ -44,8 +46,8 @@ test('the loop flag defaults on and only an explicit false hands the pass back t
 });
 
 test('tick is off without AI, keys or mode', async () => {
-  for (const config of [{ tmdbMatchAiMode: 'off' }, { openrouterApiKeys: [] }, { tmdbMatchAiEnabled: false }]) {
-    const h = harness({ config, lists: { priority: [movie(1)] } });
+  for (const config of [{ tmdbMatchAiMode: 'off' }, { noAi: true }, { tmdbMatchAiEnabled: false }]) {
+    const h = harness({ config, aiAvailable: !config.noAi, lists: { priority: [movie(1)] } });
     assert.equal((await tmdbMatchAiTick(h.deps)).status, 'off');
     assert.deepEqual(h.calls, []);
   }
@@ -76,8 +78,8 @@ test('films that need no model are finished without a request and the tick keeps
   assert.equal(noCandidates.rotation.state.calls, 0, 'no request spent');
 });
 
-test('a blocked rotation ends the tick with its retry time and records nothing', async () => {
-  const h = harness({ rotationFail: Object.assign(new MatchBlockedError('quota'), { retryAfterMs: 90_000 }), lists: { priority: [movie(1)] } });
+test('a blocked AI module ends the tick with its retry time and records nothing', async () => {
+  const h = harness({ rotationFail: blockedFor('quota', 90_000), lists: { priority: [movie(1)] } });
   const tick = await tmdbMatchAiTick(h.deps);
   assert.deepEqual([tick.status, tick.retryAfterMs], ['blocked', 90_000]);
   assert.equal(h.runs.length, 0);
@@ -96,7 +98,7 @@ test('apply mode: changed slugs reach onChanged', async () => {
 });
 
 test('loop: wakes at the configured interval, idles slower, backs off after blocked, and logs a state change once', async () => {
-  const h = harness({ rotationFail: Object.assign(new MatchBlockedError('blocked'), { retryAfterMs: 3_600_000 }), lists: { priority: [movie(1)] } });
+  const h = harness({ rotationFail: blockedFor('blocked', 3_600_000), lists: { priority: [movie(1)] } });
   const ctrl = new AbortController();
   const delays = [];
   await runTmdbMatchAiLoop({
@@ -116,7 +118,7 @@ test('loop: wakes at the configured interval, idles slower, backs off after bloc
   const c3 = new AbortController();
   const d3 = [];
   await runTmdbMatchAiLoop({ ...busy.deps, signal: c3.signal, sleep: async (ms) => { d3.push(ms); c3.abort(); } });
-  assert.deepEqual(d3, [2_000], 'backlog left: short pause, the rotation spaces the requests');
+  assert.deepEqual(d3, [2_000], 'backlog left: short pause, the AI module spaces the requests');
 });
 
 test('loop: a failing tick is logged and retried with growing delay, never thrown', async () => {

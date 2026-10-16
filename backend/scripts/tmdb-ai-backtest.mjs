@@ -5,8 +5,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { config } from '../src/config.js';
-import { createTmdbMatchRotation } from '../src/tmdbMatchRotation.js';
-import { parseOpenRouterModels } from '../src/openrouter.js';
+import { getAi } from '../src/ai/index.js';
 import { catalogFacts, decideAiMatch, DEFAULT_AI_POLICY, isAsianRow, matchInput, MATCH_INPUT_FIELDS, wilsonLower } from '../src/tmdbMatchAi.js';
 import { connectReadOnly, INPUT_COLUMNS, jsonlCache, OUT, shuffle, csvCell } from './lib/aiTools.mjs';
 import { entriesHash } from './lib/pipeline.mjs';
@@ -66,12 +65,10 @@ async function run() {
   let choices = new Map();
   let stats = { skipped: true };
   if (!rest.includes('--collect-only')) {
-    // One rotation per model so a 503 ("high demand") on the best model falls through to the next one.
-    const rotations = parseOpenRouterModels(config.openrouterMatchModels).map((m) => ({
-      model: m.id,
-      call: createTmdbMatchRotation({ ...config, openrouterMatchModels: m.id + ':' + (m.rpm ?? 0) }, { warn: (msg) => log(msg.replace(/sk-or-\S+/g, '[key]')) })
-    }));
-    assert.ok(rotations.every((r) => r.call), 'rotation unavailable: OPENROUTER_API_KEYS missing');
+    // One entry per provider+model so a 503 ("high demand") on the best model falls through to the next one.
+    const ai = getAi();
+    const rotations = ai.modelsFor('MATCH').map(({ provider, model }) => ({ model: provider + '/' + model, ai, only: { provider, model } }));
+    assert.ok(rotations.length, 'no AI route for MATCH: set LLM_BASE_URL+LLM_API_KEY or OPENROUTER_API_KEY');
     const cache = await jsonlCache(OUT + '/ai-rank-cache.jsonl');
     ({ choices, stats } = await rankAll(evidence, rotations, {
       batch: Number(arg('batch', config.tmdbMatchAiBatchMax)), cache, log, parallel: Number(arg('parallel', 3)),

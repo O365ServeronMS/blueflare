@@ -81,7 +81,7 @@ Defaults live in `src/ai/config.js` (`AI_DEFAULTS`, roles); `.env.example` mirro
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `LLM_BASE_URL` | empty | primary OpenAI-compatible base (`…/v1`); empty = OpenRouter only |
-| `LLM_API_KEY` | empty | secret; required when `LLM_BASE_URL` is set (startup error otherwise) |
+| `LLM_API_KEY` | empty | secret, comma list (keys are tried in order; a rejected or spent key is parked, the next takes over); required when `LLM_BASE_URL` is set (startup error otherwise) |
 | `MODEL_PRIMARY`, `MODEL_FALLBACK` | empty | primary models of every role without `MODEL_<ROLE>` |
 | `MODEL_<ROLE>` | empty | primary models of one role, in order |
 | `OPENROUTER_API_KEY` | empty | secret, comma list; empty = no OpenRouter |

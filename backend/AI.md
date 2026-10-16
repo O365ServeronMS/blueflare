@@ -2,8 +2,8 @@
 
 Every model call in the backend goes through `backend/src/ai/`. No other file talks to
 an LLM over HTTP, reads AI env variables or implements fallback. Callers today: review
-translation (role `TRANSLATE`, `translate.js`) and the TMDB AI match (role `MATCH`,
-`tmdbMatchAi.js`).
+translation (role `TRANSLATE`, `translate.js`), the TMDB AI match (role `MATCH`,
+`tmdbMatchAi.js`) and the weekly catalog audit (role `DEDUPE`, `catalogAudit.js`).
 
 ## Calling it
 
@@ -58,6 +58,10 @@ It then reads `MODEL_POSTER`, `OPENROUTER_MODEL_POSTER`, `AI_TIMEOUT_MS_POSTER` 
 `AI_PAID_DAILY_OUTPUT_TOKENS_POSTER` with no other change. A vision role skips models that
 cannot read images (OpenRouter `/models` catalog, or a 400 saying so).
 
+`modelsFrom: 'MATCH'` makes a role read the donor's `MODEL_MATCH` / `OPENROUTER_MODEL_MATCH`
+(and default) wherever its own are empty; timeout, paid cap and ledger scope stay its own.
+`DEDUPE` is registered that way (`ledgerScope: 'catalog-audit'`, 180000 ms).
+
 ## Routing and fallback
 
 - With `LLM_BASE_URL`: primary × `MODEL_<ROLE>` (else `MODEL_PRIMARY`, `MODEL_FALLBACK`),
@@ -86,7 +90,7 @@ Defaults live in `src/ai/config.js` (`AI_DEFAULTS`, roles); `.env.example` mirro
 | `MODEL_<ROLE>` | empty | primary models of one role, in order |
 | `OPENROUTER_API_KEY` | empty | secret, comma list; empty = no OpenRouter |
 | `OPENROUTER_MODEL_PRIMARY` / `_<ROLE>` | role default | `id[:rpm[:rpd]]`, best first |
-| `AI_TIMEOUT_MS` / `AI_TIMEOUT_MS_<ROLE>` | role default (60000, MATCH 180000) | per request |
+| `AI_TIMEOUT_MS` / `AI_TIMEOUT_MS_<ROLE>` | role default (60000, MATCH and DEDUPE 180000) | per request |
 | `AI_MAX_TOKENS` | 8192 | completion ceiling when a call names none |
 | `AI_REASONING` / `AI_REASONING_<ROLE>` | empty | `off|low|medium|high`, overrides the caller's `reasoning`; empty = caller's choice. Sent as `reasoning` to OpenRouter and `reasoning_effort` to the primary |
 | `AI_RETRIES` | 2 | extra tries of a pair on 429/5xx |

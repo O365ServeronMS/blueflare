@@ -64,12 +64,12 @@ export function reconcileSourceIdentity(incoming, existing) {
 const SEASON_WORD = /(?:^| )(?:season|phan) (\d{1,2})(?: |$)/u;
 const SEASON_SLUG = /(?:^|-)phan-(\d{1,2})(?:-(?:19|20)\d{2})?$/u;
 
-function seasonInText(value) {
+export function seasonInText(value) {
   const match = SEASON_WORD.exec(normalizeTitle(value));
   return match ? Number(match[1]) : null;
 }
 
-function seasonInSlug(value) {
+export function seasonInSlug(value) {
   const match = SEASON_SLUG.exec(String(value || ''));
   return match ? Number(match[1]) : null;
 }

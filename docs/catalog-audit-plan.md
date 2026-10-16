@@ -29,7 +29,7 @@ Phụ: alias `nha-ngoai-giao-phan-3` trỏ về row Phần 1 (slug cũ còn sót
 | Row có nguồn mâu thuẫn mùa (tmdb_season / slug `phan-N` / tên gốc) | 76 |
 | Nhóm dùng chung `imdb_id` | 866 nhóm / 2.881 row |
 | Ready có TMDB id | 34.693 / 41.761 (83%; movie 87,1%, tv 78,7%) |
-| tv có TMDB id nhưng chưa có season | 1.204 (≈ 1.211 blocked `season-unknown`) |
+| tv mang TMDB id loại *movie* (không phải tv id thiếu season; tv id thiếu season = 0) | 1.204 |
 | AI match: số lần thử mỗi phim | không có trần; 1.233 phim thử ≥ 4 lần, tối đa 13 |
 | AI match lỗi `model-refused` | 22.085 lượt (dừng từ 10-09) |
 

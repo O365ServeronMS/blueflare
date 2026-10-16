@@ -401,7 +401,12 @@ function sourceFingerprint(source) {
   return JSON.stringify([source.provider_slug, source.priority, source.availability, source.metadata, source.streams, source.provider_updated_at]);
 }
 
-export async function upsertCanonical(incoming) {
+/**
+ * `relocate`: ignore the row the record is attached to now and pick its row afresh (strong
+ * identity, then title identity). The catalog audit uses it to move a record off a row of
+ * another season; the ON CONFLICT below then re-points the source.
+ */
+export async function upsertCanonical(incoming, { relocate = false } = {}) {
   if (!incoming.providerMovieId || !incoming.providerSlug) {
     throw new Error('Provider movie identity is incomplete');
   }
@@ -432,7 +437,7 @@ export async function upsertCanonical(incoming) {
       );
     }
     incoming = { ...incoming, providerMovieId: reconciled.providerMovieId };
-    const sourceMovie = await findBySource(client, incoming);
+    const sourceMovie = relocate ? null : await findBySource(client, incoming);
     const strongIdentityMovie = await findStrongIdentity(client, incoming);
     const identity = tmdbIdentity(incoming);
     const sourceMatchesIdentity = !sourceMovie || !identity || (

@@ -47,7 +47,7 @@ function incomingFromRow(row) {
 
 /**
  * Fold the NguonC-only row `dropId` into the KKPhim-only row `keepId`.
- * With `renameTo` the survivor takes that slug and the old one becomes an alias.
+ * With `renameTo` the survivor takes that slug; the old one (a stale season slug) is dropped, not aliased.
  * Returns { merged:false, reason } when either row no longer looks as planned,
  * or { merged:true, keptSlug, droppedSlug } after one committed transaction.
  */
@@ -129,12 +129,10 @@ export async function mergeDuplicate(keepId, dropId, renameTo = null) {
     );
     let keptSlug = keep.canonical_slug;
     if (renameTo && renameTo !== keptSlug) {
+      // renameTo is only set when the old slug names another season (renameTarget), so the old
+      // slug is not kept as an alias: it would send `...-phan-3` to this row's other season.
       await client.query('DELETE FROM movie_slug_aliases WHERE slug=$1', [renameTo]);
       await client.query('UPDATE movies SET canonical_slug=$2 WHERE id=$1', [keepId, renameTo]);
-      await client.query(
-        'INSERT INTO movie_slug_aliases (slug, movie_id) VALUES ($1,$2) ON CONFLICT (slug) DO UPDATE SET movie_id=EXCLUDED.movie_id',
-        [keptSlug, keepId]
-      );
       keptSlug = renameTo;
     }
     await client.query('COMMIT');

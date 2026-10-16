@@ -23,6 +23,7 @@ explain what the TMDB, translation and OpenRouter variables do.
   - [AI match](#ai-match)
   - [Identity audit and undo](#identity-audit-and-undo)
 - [Duplicate merge (NguonC + KKPhim)](#duplicate-merge-nguonc--kkphim)
+- [Catalog audit (weekly)](#catalog-audit-weekly)
 - [API contract](#api-contract)
 - [Provider identity](#provider-identity)
 - [Operations](#operations)
@@ -420,6 +421,23 @@ type, a compatible season, episode totals within 1.5x, agreeing slug bases, and 
 Undo one merge by hand from `movie_merges` (`dropped_row`, `moved_source_ids`, `favorites`, `history`);
 delete the matching `movie_slug_aliases` row. `tools/merge-backtest.mjs` is the read-only precision
 check, `tools/merge-duplicates.mjs --apply` runs the merge against a scratch `DATABASE_URL`.
+
+## Catalog audit (weekly)
+
+The worker's fifth loop (`catalogAudit.js`, overview in `CLAUDE.md`) audits the whole catalog once a
+week, Sunday 03:00 Vietnam time by default (`CATALOG_AUDIT_DAY` 0-6, `CATALOG_AUDIT_HOUR` 0-23, both
+Vietnam time). After a deploy it catches up at once when the current slot has no finished run; a
+failed run is retried hourly, at most 3 times per slot. `CATALOG_AUDIT_MODE=dry-run` (default) records
+proposals only; `apply` writes at most `CATALOG_AUDIT_MAX_ACTIONS` (500) per run, each group re-read
+and re-gated under the lock the sync cycle holds.
+
+- `node scripts/catalog-audit-report.mjs <out.csv> [--run <id>] [--status dry-run]` prints the run
+  summary (detector counts, statuses, gate reasons) and exports its actions as CSV (read-only).
+- `node scripts/catalog-audit-undo.mjs <actionId>` reverses one applied action: season fix and
+  merge through `tmdb_identity_changes`, alias/slug/hidden row/moved source from the action's
+  `before`. Like the identity undo, it writes to the database only; invalidate the printed slugs.
+- A group without enough evidence is `blocked` with a `gate` reason, never forced: the next run
+  sees it again after a sync has changed its data.
 
 ## API contract
 

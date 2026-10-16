@@ -128,6 +128,15 @@ export const config = Object.freeze({
     ? process.env.TMDB_SEASON_INFER_MODE
     : 'off',
   tmdbSeasonInferBatch: integer('TMDB_SEASON_INFER_BATCH', 100, 1),
+  // Weekly catalog audit (catalogAudit.js, fifth worker loop): off | dry-run (log proposals only) | apply.
+  catalogAuditMode: ['off', 'dry-run', 'apply'].includes(process.env.CATALOG_AUDIT_MODE) ? process.env.CATALOG_AUDIT_MODE : 'dry-run',
+  // Weekly slot in Vietnam time (UTC+7, no DST): day 0 = Sunday, hour 0-23. A missed slot is caught up at start.
+  catalogAuditDay: Math.min(6, integer('CATALOG_AUDIT_DAY', 0, 0)),
+  catalogAuditHour: Math.min(23, integer('CATALOG_AUDIT_HOUR', 3, 0)),
+  // Groups per model request (token budget caps it too) and the most actions one run may write.
+  catalogAuditBatch: integer('CATALOG_AUDIT_BATCH', 8, 1),
+  catalogAuditBatchTokens: integer('CATALOG_AUDIT_BATCH_TOKENS', 16000, 1000),
+  catalogAuditMaxActions: integer('CATALOG_AUDIT_MAX_ACTIONS', 500, 1),
   tmdbMatchEnabled: boolean('TMDB_MATCH_ENABLED', false),
   tmdbMatchLimit: integer('TMDB_MATCH_LIMIT', 60, 1),
   tmdbMatchConcurrency: integer('TMDB_MATCH_CONCURRENCY', 2, 1),

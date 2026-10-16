@@ -75,6 +75,7 @@ import { runImageHostCheck } from './imageHostCheck.js';
 import { findCastVerifiedMatch } from './tmdbMatch.js';
 import { refreshTmdbAiMatches } from './tmdbMatchAiSync.js';
 import { aiLoopEnabled, runTmdbMatchAiLoop } from './tmdbMatchAiLoop.js';
+import { catalogLock, runCatalogAuditLoop } from './catalogAudit.js';
 import { getAi } from './ai/index.js';
 import { promoteVerifiedMatches } from './tmdbIdentity.js';
 import { refreshSeasonInference } from './tmdbSeasonInferSync.js';
@@ -1044,13 +1045,25 @@ function startTmdbMatchAiLoop() {
   }).catch((error) => console.error('[worker] tmdb ai match loop stopped unexpectedly', error));
 }
 
+// Weekly catalog audit (fifth loop). Its writes share catalogLock with syncCycle, so they never overlap a sync.
+let auditLoop = null;
+function startCatalogAuditLoop() {
+  if (auditLoop || config.catalogAuditMode === 'off') return;
+  auditLoop = runCatalogAuditLoop({
+    signal: stopController.signal,
+    providers: new Map(providers.map((provider) => [provider.name.toLowerCase(), provider])),
+    upsert: upsertCanonical,
+    onChanged: (slugs) => invalidateForSlugs(slugs)
+  }).catch((error) => console.error('[worker] catalog audit loop stopped unexpectedly', error));
+}
+
 try {
   await runWorkerLoop({
     // The loop needs the migrated schema (ai_quota_ledger); it is started once, after the first successful migrate.
-    initialize: async () => { await migrate(); startTmdbMatchAiLoop(); },
+    initialize: async () => { await migrate(); startTmdbMatchAiLoop(); startCatalogAuditLoop(); },
     runCycle: async () => {
       await refreshHeroTrendingIfDue();
-      if (!stopping) await syncCycle();
+      if (!stopping) await catalogLock.run(syncCycle);
     },
     writeHeartbeat: writeWorkerHeartbeat,
     intervalMs: config.syncIntervalMs,
@@ -1066,7 +1079,8 @@ try {
   // A timed-out cycle can still hold a pooled client or a wedged Valkey socket,
   // which would stall a graceful close forever. Bound it, then exit.
   // The loop stops after its current request (the signal aborts an in-flight AI call); bound the wait.
-  if (aiLoop) await Promise.race([aiLoop, new Promise((resolve) => setTimeout(resolve, 5000).unref())]);
+  const loops = [aiLoop, auditLoop].filter(Boolean);
+  if (loops.length) await Promise.race([Promise.allSettled(loops), new Promise((resolve) => setTimeout(resolve, 5000).unref())]);
   await Promise.race([
     Promise.allSettled([closeCache(), closeDatabase()]),
     new Promise((resolve) => setTimeout(resolve, 5000).unref())

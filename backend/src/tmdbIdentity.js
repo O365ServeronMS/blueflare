@@ -401,6 +401,33 @@ export async function assignTmdbIdentity(movieId, input, { source = 'inferred', 
   return { action: 'conflict', survivorId: movieId, reason: 'unique:unknown' };
 }
 
+/**
+ * Rewrite the TMDB tuple of a row that already has one, on a caller-owned transaction: a season
+ * correction (`identity` = same id, other season) or a clear (`identity` = null, the row goes back to
+ * 'ineligible' so the match passes pick it up again). Logged as kind 'assign' with the old columns in
+ * `before`, so undoTmdbIdentity reverses it. Used by the catalog audit; the gate runs before this.
+ */
+export async function rewriteTmdbIdentity(client, movieId, identity, { reason, evidence = null, source = 'inferred' } = {}) {
+  const row = (await client.query('SELECT * FROM movies WHERE id=$1 FOR UPDATE', [movieId])).rows[0];
+  if (!row) return { action: 'noop', reason: 'row-missing' };
+  const before = pickColumns(row, IDENTITY_COLUMNS);
+  let written;
+  if (identity) {
+    written = await writeTmdbIdentity(client, movieId, identity, row.tmdb_id_source || source);
+  } else {
+    written = (await client.query(
+      'UPDATE movies SET tmdb_id=NULL, tmdb_media_type=NULL, tmdb_season_number=NULL, tmdb_id_source=NULL, ' +
+      "tmdb_identity_status='ineligible', tmdb_identity_verified_at=NULL, tmdb_thumb_asset_id=NULL, tmdb_poster_asset_id=NULL, " +
+      'updated_at=now() WHERE id=$1 RETURNING *', [movieId]
+    )).rows[0];
+  }
+  const changeId = await logChange(client, {
+    movieId, kind: 'assign', source, tmdbId: identity?.id ?? null, mediaType: identity?.mediaType ?? null,
+    season: identity?.season ?? null, reason, evidence, before
+  });
+  return { action: 'assigned', changeId, row: written, before };
+}
+
 // ---------------------------------------------------------------------------------------------
 // Promotion of verified tmdb_match_* rows
 // ---------------------------------------------------------------------------------------------

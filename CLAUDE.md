@@ -40,7 +40,7 @@ replica suffix. Service-to-service traffic still uses the stable service DNS nam
 
 ## Background jobs
 
-Four loops run outside the request path. None of them may be moved into the request path.
+Five loops run outside the request path. None of them may be moved into the request path.
 
 ### Provider sync
 
@@ -67,6 +67,16 @@ Four loops run outside the request path. None of them may be moved into the requ
 - `TMDB_MATCH_AI_MODE=off|dry-run|apply`, default `dry-run` (verified in `backend/src/config.js`): dry-run only writes `tmdb_match_ai_runs`; apply writes `tmdb_id` with source `inferred` through `tmdbIdentity.js` (assign, or merge into the row already holding it).
 - Every assign/merge/blocked/conflict is logged in `tmdb_identity_changes` (030) and reversible with `backend/scripts/tmdb-identity-undo.mjs`.
 - Films are packed into token-budget batches. Quota is tracked per key+model per UTC day in `ai_quota_ledger` (031, renamed by 032; disposable).
+
+### Catalog audit
+
+`worker`, weekly at `CATALOG_AUDIT_DAY`/`CATALOG_AUDIT_HOUR` Vietnam time (default Sunday 03:00 = Saturday 20:00 UTC; `catalogAudit.js`), with an immediate catch-up when the current slot has no finished run and fewer than 3 failed ones. Never a request path. Goal: one row per TMDB movie or tv season, so more rows can get a TMDB id.
+
+- `catalogAuditExtract.js` loads every ready row with its sources/aliases, flags rows with fixed detector codes (multi-season, season-marker, slug-season, alias-wrong, tmdb-mismatch, type-mismatch, episode-mismatch, year-spread, orphan, dup-same-season) and packs them into groups of at most 10 rows.
+- Proposals: deterministic rules (hide orphans, rename a slug or re-point an alias naming another season) and, for groups needing judgement, the AI module (role `DEDUPE`, borrows MATCH's models/keys unless `MODEL_DEDUPE`/`OPENROUTER_MODEL_DEDUPE` are set, own paid cap `AI_PAID_DAILY_OUTPUT_TOKENS_DEDUPE`). The model only names actions on ids of its group (`set_season`, `move_source`, `merge_rows`, `fix_alias`, `rename_slug`, `clear_tmdb`, `report`).
+- `catalogAuditGate.js` (pure) checks every action against the row's own titles/slug/sources and TMDB `/tv` facts; a refused action refuses the rest of its group's proposal. `report` (e.g. wrong movie/series type) is never applied. Rows are hidden (`catalog_state='unavailable'`), never deleted.
+- `CATALOG_AUDIT_MODE=off|dry-run|apply`, default `dry-run`: dry-run only records. Apply writes through `catalogAuditApply.js` under `catalogLock`, the in-process lock `syncCycle` also holds, re-reading the group first; at most `CATALOG_AUDIT_MAX_ACTIONS` writes a run. TMDB season/merge writes go through `tmdbIdentity.js` (logged in `tmdb_identity_changes`); a moved source is re-ingested with `upsertCanonical(…, {relocate:true})`.
+- Every proposal lands in `catalog_audit_actions` (034, runs in `catalog_audit_runs`); `backend/scripts/catalog-audit-report.mjs` exports a run as CSV, `catalog-audit-undo.mjs <actionId>` reverses one applied action.
 
 ### Image prewarm
 
@@ -142,6 +152,7 @@ The Cloudflare IP ranges in `lib/account-proxy.ts` are hardcoded; refresh them f
 | `translateBatch.js` | batched translation requests |
 | `tmdbMatch.js` | cast-verified match |
 | `tmdbMatchAi.js`, `tmdbMatchAiSync.js`, `tmdbMatchAiLoop.js` | AI match: candidates, prompt, two-tier gate; pass engine (`tmdb_match_ai_runs`); fourth worker loop |
+| `catalogAudit.js`, `catalogAuditExtract.js`, `catalogAuditGate.js`, `catalogAuditApply.js` | weekly catalog audit: loop + run + model prompt and `catalogLock`; loader/detectors/groups; pure gate; apply/undo |
 | `tmdbSeasonInfer.js`, `tmdbSeasonInferSync.js` | pure TMDB season inference for tv rows with a known id; worker pass `refreshSeasonInference` |
 | `tmdbIdentity.js` | assign/merge/promote/undo of TMDB identity (`tmdb_identity_changes`); `backend/scripts/tmdb-identity-report.mjs` read-only review CSV, `tmdb-identity-undo.mjs <changeId>` |
 | `duplicateMerge.js`, `duplicateMergeRepository.js` | duplicate merge plan / apply |
@@ -189,7 +200,7 @@ The two Caddy site blocks live inline in `bootstrap-vps.sh`, not as separate fil
 
 ### AI calls
 
-- Every model call goes through `backend/src/ai/` (`getAi().chat(role, …)` / `.json(role, …)`, doc `backend/AI.md`); no other file may call an LLM over HTTP, read AI env or implement fallback. Order: primary OpenAI-compatible provider (`LLM_BASE_URL`, `LLM_API_KEY`, `MODEL_<ROLE>` or `MODEL_PRIMARY`/`MODEL_FALLBACK`), then OpenRouter (`OPENROUTER_API_KEY`, `OPENROUTER_MODEL_<ROLE>`), next pair on 401/402/408/429/5xx, network error, timeout or a bad answer. Roles are registered in `src/ai/config.js` (`TRANSLATE`, `MATCH`); defaults live only there and `.env.example` mirrors them. Old `OPENROUTER_*` names still work with a deprecation warning.
+- Every model call goes through `backend/src/ai/` (`getAi().chat(role, …)` / `.json(role, …)`, doc `backend/AI.md`); no other file may call an LLM over HTTP, read AI env or implement fallback. Order: primary OpenAI-compatible provider (`LLM_BASE_URL`, `LLM_API_KEY`, `MODEL_<ROLE>` or `MODEL_PRIMARY`/`MODEL_FALLBACK`), then OpenRouter (`OPENROUTER_API_KEY`, `OPENROUTER_MODEL_<ROLE>`), next pair on 401/402/408/429/5xx, network error, timeout or a bad answer. Roles are registered in `src/ai/config.js` (`TRANSLATE`, `MATCH`, `DEDUPE`; `modelsFrom` lets a role borrow another's model lists); defaults live only there and `.env.example` mirrors them. Old `OPENROUTER_*` names still work with a deprecation warning.
 
 ### Reviews and translation
 
@@ -214,7 +225,7 @@ The two Caddy site blocks live inline in `bootstrap-vps.sh`, not as separate fil
 ## Backup and recovery
 
 PostgreSQL is the only irreplaceable state, including user accounts, sessions and
-per-title watch history with the last episode (migrations 020, 021) and the TMDB identity audit/undo log `tmdb_identity_changes` (030), all covered by the same dump. `ai_quota_ledger` (031, renamed by 032) is disposable: wiping it only resets the day's request count until the provider answers 429. The image cache rebuilds itself from
+per-title watch history with the last episode (migrations 020, 021) the TMDB identity audit/undo log `tmdb_identity_changes` (030) and the catalog audit log `catalog_audit_runs`/`catalog_audit_actions` (034, needed to undo an applied action), all covered by the same dump. `ai_quota_ledger` (031, renamed by 032) is disposable: wiping it only resets the day's request count until the provider answers 429. The image cache rebuilds itself from
 `image_assets`; Valkey is disposable; the frontend is stateless.
 
 The `backup` service dumps, verifies with `pg_restore --list`, uploads to an

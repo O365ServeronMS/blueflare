@@ -39,7 +39,9 @@ const roles = new Map();
 /**
  * One line per role. `vision`: the role may send images (models that cannot read them are
  * skipped). `defaultOr`: OpenRouter models when no env names any. Optional `timeoutMs`,
- * `maxTokens`, `ledgerScope` (quota counters; defaults to the lower-case name).
+ * `maxTokens`, `ledgerScope` (quota counters; defaults to the lower-case name), `modelsFrom`
+ * (another role whose MODEL_/OPENROUTER_MODEL_ lists and default this role uses when its own
+ * env names none; the paid cap and ledger scope stay this role's own).
  */
 export function registerRole(name, spec = {}) {
   const key = String(name ?? '').trim().toUpperCase();
@@ -50,7 +52,8 @@ export function registerRole(name, spec = {}) {
     defaultOr: String(spec.defaultOr ?? ''),
     timeoutMs: Number(spec.timeoutMs) > 0 ? Number(spec.timeoutMs) : null,
     maxTokens: Number(spec.maxTokens) > 0 ? Number(spec.maxTokens) : null,
-    ledgerScope: String(spec.ledgerScope ?? key.toLowerCase())
+    ledgerScope: String(spec.ledgerScope ?? key.toLowerCase()),
+    modelsFrom: spec.modelsFrom ? String(spec.modelsFrom).toUpperCase() : null
   });
   roles.set(key, role);
   return role;
@@ -66,6 +69,7 @@ export const roleNames = () => [...roles.keys()];
 
 registerRole('MATCH', { defaultOr: 'nvidia/nemotron-3-super-120b-a12b:free', timeoutMs: 180000, ledgerScope: 'tmdb-match' });
 registerRole('TRANSLATE', { ledgerScope: 'translate' });
+registerRole('DEDUPE', { modelsFrom: 'MATCH', timeoutMs: 180000, ledgerScope: 'catalog-audit' });
 
 // ---- env --------------------------------------------------------------------------------
 
@@ -167,20 +171,22 @@ export function readAiConfig(env = process.env, options = {}) {
  * Where a role's calls go, in order: `[{ provider, models }]`, routes without keys or models
  * left out. With a primary provider: primary x MODEL_<ROLE> (or MODEL_PRIMARY + MODEL_FALLBACK),
  * then OpenRouter x OPENROUTER_MODEL_<ROLE>. Without one: OpenRouter x MODEL_<ROLE>, falling back
- * to the OpenRouter list.
+ * to the OpenRouter list. A role with `modelsFrom` reads the donor role's lists where its own are empty.
  */
 export function roleRoutes(cfg, roleName) {
   const role = getRole(roleName);
+  const donor = role.modelsFrom ? getRole(role.modelsFrom) : null;
   const v = cfg.view;
-  const orModels = text(v['OPENROUTER_MODEL_' + role.name]) || text(v.OPENROUTER_MODEL_PRIMARY) || role.defaultOr;
+  const named = (prefix) => text(v[prefix + role.name]) || (donor ? text(v[prefix + donor.name]) : '');
+  const orModels = named('OPENROUTER_MODEL_') || text(v.OPENROUTER_MODEL_PRIMARY) || role.defaultOr || donor?.defaultOr || '';
   const routes = [];
   if (cfg.primary) {
-    const own = text(v['MODEL_' + role.name]);
+    const own = named('MODEL_');
     const list = own || [text(v.MODEL_PRIMARY), text(v.MODEL_FALLBACK)].filter(Boolean).join(',');
     routes.push({ provider: cfg.primary, models: parseModels(list, { freeRpm: 0 }) });
     routes.push({ provider: cfg.openrouter, models: parseModels(orModels) });
   } else {
-    routes.push({ provider: cfg.openrouter, models: parseModels(text(v['MODEL_' + role.name]) || orModels) });
+    routes.push({ provider: cfg.openrouter, models: parseModels(named('MODEL_') || orModels) });
   }
   return routes.filter((route) => route.provider.keys.length && route.models.length);
 }

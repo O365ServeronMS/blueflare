@@ -430,3 +430,16 @@ test('AI_REASONING overrides the caller and reaches both providers', async () =>
   assert.deepEqual(seen[1].body.reasoning, { effort: 'medium' });
   assert.throws(() => createAi({ env: { AI_REASONING: 'huge' }, transport, warn: () => {} }), /AI_REASONING/);
 });
+
+test('DEDUPE borrows the MATCH models and keys unless it names its own, with its own paid cap', async () => {
+  const { roleRoutes, rolePaidCap } = await import('../src/ai/config.js');
+  const borrowed = readAiConfig({ LLM_BASE_URL: PRIMARY, LLM_API_KEY: 'k', MODEL_MATCH: 'deep', OPENROUTER_API_KEY: 'or', OPENROUTER_MODEL_MATCH: 'or/m' });
+  assert.equal(roleRoutes(borrowed, 'DEDUPE').length, 2);
+  assert.equal(JSON.stringify(roleRoutes(borrowed, 'DEDUPE').map((r) => r.models)), JSON.stringify(roleRoutes(borrowed, 'MATCH').map((r) => r.models)));
+  const own = readAiConfig({ LLM_BASE_URL: PRIMARY, LLM_API_KEY: 'k', MODEL_MATCH: 'deep', MODEL_DEDUPE: 'wide', OPENROUTER_API_KEY: 'or' });
+  assert.match(JSON.stringify(roleRoutes(own, 'DEDUPE')[0].models), /wide/);
+  assert.doesNotMatch(JSON.stringify(roleRoutes(own, 'DEDUPE')[0].models), /deep/);
+  const capped = readAiConfig({ OPENROUTER_API_KEY: 'or', AI_PAID_DAILY_OUTPUT_TOKENS_MATCH: '100', AI_PAID_DAILY_OUTPUT_TOKENS_DEDUPE: '7' });
+  assert.equal(rolePaidCap(capped, 'DEDUPE'), 7);
+  assert.equal(rolePaidCap(capped, 'MATCH'), 100);
+});

@@ -17,7 +17,7 @@ const diplomatRow = (id, season, year, slug) => ({
   ratings: {}, created_at: `2026-08-2${season}T00:00:00Z`
 });
 
-function fakeDatabase(movies) {
+function fakeDatabase(movies, { sourceRow = null } = {}) {
   const sources = [];
   const statements = [];
   const reply = (rows) => ({ rows, rowCount: rows.length });
@@ -27,7 +27,7 @@ function fakeDatabase(movies) {
       statements.push({ sql, params });
       if (/^(BEGIN|COMMIT|ROLLBACK)/.test(sql)) return reply([]);
       if (sql.startsWith('SELECT provider_movie_id FROM movie_provider_sources')) return reply([]);
-      if (sql.includes('JOIN movie_provider_sources s ON s.movie_id = m.id')) return reply([]);
+      if (sql.includes('JOIN movie_provider_sources s ON s.movie_id = m.id')) return reply(movies.filter((m) => m.id === sourceRow));
       if (sql.includes('WHERE tmdb_id=$1 AND tmdb_media_type=$2')) {
         return reply(movies.filter((m) => m.tmdb_id === params[0] && m.tmdb_media_type === params[1] &&
           (m.tmdb_season_number ?? null) === (params[2] ?? null)));
@@ -106,6 +106,19 @@ test('the imdb lookup still attaches a record to the season row it belongs to', 
   const { movie } = await withFakePool(client, () => upsertCanonical(season4));
   assert.equal(movie.id, 's4');
   assert.equal(sources[0].movie_id, 's4');
+});
+
+test('relocate ignores the row a record sits on and picks its row afresh (catalog audit move_source)', async () => {
+  // A NguonC season 4 record (no TMDB id to contradict anything) sits on the season 2 row.
+  const nguonc4 = { ...season4, provider: 'nguonc', providerMovieId: 'nc-diplomat-4', priority: 10, tmdbId: null, tmdbMediaType: null, tmdbSeasonNumber: null, imdbId: null };
+  const fresh = () => [diplomatRow('s2', 2, 2024, 'nha-ngoai-giao-phan-2-2024')];
+  const stays = fakeDatabase(fresh(), { sourceRow: 's2' });
+  assert.equal((await withFakePool(stays.client, () => upsertCanonical(nguonc4))).movie.id, 's2');
+  const moves = fakeDatabase(fresh(), { sourceRow: 's2' });
+  const { movie } = await withFakePool(moves.client, () => upsertCanonical(nguonc4, { relocate: true }));
+  assert.notEqual(movie.id, 's2');
+  assert.equal(moves.statements.some((st) => st.sql.includes('JOIN movie_provider_sources s ON s.movie_id = m.id')), false);
+  assert.equal(moves.sources[0].movie_id, movie.id);
 });
 
 test('incomingSeason and rowSeason read TMDB season, title markers and slugs', () => {

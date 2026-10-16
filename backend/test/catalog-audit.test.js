@@ -262,3 +262,13 @@ test('a refused answer is skipped, an unavailable model makes the run partial', 
     assert.deepEqual(db.actions, []);
   }
 });
+
+test('a run stopped by shutdown is failed, so the slot runs again', async () => {
+  const { s3, s4 } = diplomat();
+  const db = fakeDb([s3, s4]);
+  let stopping = false;
+  const ai = { available: () => true, ready: async () => {}, json: async () => { stopping = true; throw new AiError('aborted', { kind: 'content' }); } };
+  const result = await runCatalogAudit({ db, ai, tmdb, config: { ...settings, catalogAuditBatch: 1 }, isStopping: () => stopping, log: () => {} });
+  assert.equal(result.status, 'failed');
+  assert.equal(db.runs[0].summary.stopped, 'stopping');
+});

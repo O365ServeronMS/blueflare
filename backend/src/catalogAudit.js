@@ -41,7 +41,9 @@ export const nextSlot = (now, day, hour) => lastSlot(now, day, hour) + 7 * DAY_M
 export async function runDue(now = Date.now(), { db = pool, settings = config } = {}) {
   const slot = new Date(lastSlot(now, settings.catalogAuditDay, settings.catalogAuditHour));
   const result = await db.query(
-    "SELECT count(*) FILTER (WHERE status IN ('done','partial'))::int AS finished, count(*) FILTER (WHERE status='failed')::int AS failed " +
+    // a 'partial' stopped by shutdown (written before such runs became 'failed') counts as a failed try
+    "SELECT count(*) FILTER (WHERE status='done' OR (status='partial' AND summary->>'stopped' IS DISTINCT FROM 'stopping'))::int AS finished, " +
+    "count(*) FILTER (WHERE status='failed' OR (status='partial' AND summary->>'stopped'='stopping'))::int AS failed " +
     'FROM catalog_audit_runs WHERE started_at >= $1', [slot]);
   const { finished, failed } = result.rows[0];
   return finished === 0 && failed < MAX_FAILED_TRIES;
@@ -281,9 +283,10 @@ export async function runCatalogAudit(deps = {}) {
       if (changed.size >= 50 && deps.onChanged) { await flush(deps, changed, log); }
     }
     if (deps.onChanged) await flush(deps, changed, log);
-    const status = summary.stopped ? 'partial' : 'done';
-    await db.query('UPDATE catalog_audit_runs SET status=$2, finished_at=now(), groups=$3, summary=$4::jsonb WHERE id=$1',
-      [runId, status, summary.groups, JSON.stringify(summary)]);
+    // A shutdown is not a finished run: 'failed' lets runDue redo the slot after the restart (deploys stop the worker).
+    const status = summary.stopped === 'stopping' ? 'failed' : summary.stopped ? 'partial' : 'done';
+    await db.query('UPDATE catalog_audit_runs SET status=$2, finished_at=now(), groups=$3, summary=$4::jsonb, error=$5 WHERE id=$1',
+      [runId, status, summary.groups, JSON.stringify(summary), status === 'failed' ? 'interrupted' : null]);
     log('[worker] catalog audit run=' + runId + ' ' + status + ' statuses=' + JSON.stringify(summary.statuses) +
       ' requests=' + summary.requests + (summary.stopped ? ' stopped=' + summary.stopped : ''));
     return { runId, status, summary };

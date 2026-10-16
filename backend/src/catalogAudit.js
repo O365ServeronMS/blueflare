@@ -165,7 +165,7 @@ async function recordAction(db, runId, group, verdict, extra = {}) {
     'INSERT INTO catalog_audit_actions (run_id, group_key, detectors, action, params, reason, status, gate, before, after, slugs, identity_change_id, model) ' +
     'VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9::jsonb,$10::jsonb,$11,$12,$13)',
     [runId, group.key, group.detectors, type, JSON.stringify(params), reason ?? null, extra.status, extra.gate ?? null,
-      JSON.stringify(extra.before ?? null), JSON.stringify(extra.after ?? verdict.detail ?? null), extra.slugs ?? [],
+      JSON.stringify(extra.before ?? null), JSON.stringify(extra.after ?? verdict.detail ?? null), extra.slugs ?? verdict.slugs ?? group.rows.map((r) => r.canonical_slug),
       extra.identityChangeId ?? null, extra.model ?? null]
   );
 }

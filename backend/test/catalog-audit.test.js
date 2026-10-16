@@ -223,7 +223,7 @@ function fakeDb(rows) {
       if (sql.startsWith('UPDATE catalog_audit_runs SET status=\'failed\', finished_at=now(), error=')) return { rows: [] };
       if (sql.startsWith('INSERT INTO catalog_audit_runs')) { runs.push({ mode: params[0] }); return { rows: [{ id: 7 }] }; }
       if (sql.includes('FROM movies m WHERE m.catalog_state=\'ready\'')) return { rows: params[0].startsWith('0000') ? rows : [] };
-      if (sql.startsWith('INSERT INTO catalog_audit_actions')) { actions.push({ action: params[3], params: JSON.parse(params[4]), status: params[6], gate: params[7], model: params[12] }); return { rows: [] }; }
+      if (sql.startsWith('INSERT INTO catalog_audit_actions')) { actions.push({ action: params[3], params: JSON.parse(params[4]), status: params[6], gate: params[7], model: params[12], slugs: params[10] }); return { rows: [] }; }
       if (sql.startsWith('UPDATE catalog_audit_runs SET status=$2')) { Object.assign(runs[0], { status: params[1], summary: JSON.parse(params[3]) }); return { rows: [] }; }
       if (sql.startsWith("UPDATE catalog_audit_runs SET status='failed'")) { Object.assign(runs[0], { status: 'failed', error: params[2] }); return { rows: [] }; }
       throw new Error('unexpected query ' + sql.slice(0, 80));
@@ -250,6 +250,7 @@ test('a dry-run records the gated model proposal and writes nothing', async () =
   assert.equal(result.status, 'done');
   assert.deepEqual(db.actions.map((a) => [a.action, a.status, a.model]), [['set_season', 'dry-run', 'test-model'], ['move_source', 'dry-run', 'test-model']]);
   assert.equal(db.runs[0].summary.requests, 1);
+  assert.ok(db.actions.every((a) => a.slugs.length > 0), 'every action names its slugs');
 });
 
 test('a refused answer is skipped, an unavailable model makes the run partial', async () => {

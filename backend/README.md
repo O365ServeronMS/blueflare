@@ -359,6 +359,11 @@ runs only with `TMDB_MATCH_AI_ENABLED=true`, a usable `MATCH` route (AI keys + m
 - Retry windows: `none`, `unverifiable` and verified-but-not-applied results are
   not re-examined for `TMDB_MATCH_AI_RETRY_MS`; errors wait
   `TMDB_MATCH_AI_ERROR_RETRY_MS`. Rows with a cast of two or more go first.
+- Attempt cap: each run stores `meta_key` = md5(title|original title|year) (migration 035).
+  After 3 `none`/`unverifiable` runs on the current key a title is given up (obscure local
+  titles often have no TMDB page; errors do not count). A changed title, original title or year
+  is a new key: the title is listed again at once, with a fresh cap. Rows the catalog audit
+  splits off are new rows and go through the `priority` scope.
 - Loop: `tmdbMatchAiLoop.js` wakes every `TMDB_MATCH_AI_LOOP_MS` and ranks one
   token-packed batch per tick; `TMDB_MATCH_AI_LOOP=false` runs the older whole pass
   inside the sync cycle instead (`TMDB_MATCH_AI_LIMIT` titles per cycle). The scope

@@ -177,6 +177,9 @@ test('listAiMatchCandidates: SQL shape, parameters, ordering and retry rules', a
   assert.match(sql, /ORDER BY \(jsonb_typeof\(m\.actors\) = 'array' AND jsonb_array_length\(m\.actors\) >= 2\) DESC/);
   assert.equal(Math.max(...[...sql.matchAll(/\$(\d+)/g)].map((m) => Number(m[1]))), params.length);
   assert.doesNotMatch(sql, /tmdb_id_source|tmdb_match_id/);
+  // Runs count only on the current metadata; three real answers give the title up.
+  assert.match(sql, /r\.meta_key IS NOT DISTINCT FROM md5\(/);
+  assert.match(sql, /t\.outcome IN \('none', 'unverifiable'\)\) < 3 /);
 });
 
 test('recordAiRun writes one idempotent row with the outcome', async () => {
@@ -187,6 +190,7 @@ test('recordAiRun writes one idempotent row with the outcome', async () => {
     await recordAiRun({ runId: 'r', mode: 'dry-run', movieId: 'm', candidates: [], status: 'rejected', outcome: 'none' });
   } finally { pool.query = original; }
   assert.match(calls[0].sql, /ON CONFLICT \(run_id, movie_id\) DO NOTHING/);
+  assert.match(calls[0].sql, /meta_key\) SELECT .*md5\(coalesce\(m\.title/);
   assert.equal(calls[0].params[8], 'rejected');
   assert.equal(calls[0].params[9], 'none');
 });

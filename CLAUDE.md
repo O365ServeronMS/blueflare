@@ -63,6 +63,7 @@ Five loops run outside the request path. None of them may be moved into the requ
 
 `worker`, its own loop every `TMDB_MATCH_AI_LOOP_MS` (`tmdbMatchAiLoop.js`; `TMDB_MATCH_AI_LOOP=false` folds it back into the sync cycle). For titles without a `tmdb_id`, it fetches real TMDB candidates and has a model rank them through the AI module (role `MATCH`), when `TMDB_MATCH_AI_ENABLED=true` and the role has keys and models (none = pass off; translation and match keep separate ledger scopes and separate paid output caps). Never a request path.
 
+- At most 3 real attempts (`none`/`unverifiable`, not `error`) per title on the same title/original title/year (`tmdb_match_ai_runs.meta_key`, 035); a metadata change reopens it.
 - The model never supplies an id; an independent two-tier gate (`decideAiMatch`: T1 cast overlap + year, T2 exact name + year + size, no rival candidate) decides.
 - `TMDB_MATCH_AI_MODE=off|dry-run|apply`, default `dry-run` (verified in `backend/src/config.js`): dry-run only writes `tmdb_match_ai_runs`; apply writes `tmdb_id` with source `inferred` through `tmdbIdentity.js` (assign, or merge into the row already holding it).
 - Every assign/merge/blocked/conflict is logged in `tmdb_identity_changes` (030) and reversible with `backend/scripts/tmdb-identity-undo.mjs`.
@@ -225,7 +226,7 @@ The two Caddy site blocks live inline in `bootstrap-vps.sh`, not as separate fil
 ## Backup and recovery
 
 PostgreSQL is the only irreplaceable state, including user accounts, sessions and
-per-title watch history with the last episode (migrations 020, 021) the TMDB identity audit/undo log `tmdb_identity_changes` (030) and the catalog audit log `catalog_audit_runs`/`catalog_audit_actions` (034, needed to undo an applied action), all covered by the same dump. `ai_quota_ledger` (031, renamed by 032) is disposable: wiping it only resets the day's request count until the provider answers 429. The image cache rebuilds itself from
+per-title watch history with the last episode (migrations 020, 021), the TMDB identity audit/undo log `tmdb_identity_changes` (030) and the catalog audit log `catalog_audit_runs`/`catalog_audit_actions` (034, needed to undo an applied action), all covered by the same dump. `ai_quota_ledger` (031, renamed by 032) is disposable: wiping it only resets the day's request count until the provider answers 429. The image cache rebuilds itself from
 `image_assets`; Valkey is disposable; the frontend is stateless.
 
 The `backup` service dumps, verifies with `pg_restore --list`, uploads to an

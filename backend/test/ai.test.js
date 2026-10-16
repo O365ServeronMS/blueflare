@@ -400,6 +400,21 @@ test('a 429 auth lockout (Token Harbor after bad keys) disables the key at once,
   assert.equal(fetch.calls.filter(isPrimary).length, 1, 'the key stays off for Retry-After');
 });
 
+test('a spent Token Harbor free allowance parks the whole key until the stated reset date', async () => {
+  const vars = env({ LLM_BASE_URL: PRIMARY, LLM_API_KEY: 'th', MODEL_PRIMARY: 'deep:free', MODEL_FALLBACK: 'mimo:free', OPENROUTER_MODEL_PRIMARY: 'or/m' });
+  const message = "You've used this period's free allowance. Your next rolling 7-day period starts on 10 Oct 2026 at 01:00 UTC. Use the paid model.";
+  const { ai, fetch, warnings } = make(vars, (call) => (isPrimary(call)
+    ? { status: 429, body: { error: { message, code: 'free_tier_limit_reached' } }, headers: { 'retry-after': '3600' } }
+    : answer('ok')));
+  const r = await ai.chat('TRANSLATE', user('x'));
+  assert.equal(r.provider, 'openrouter');
+  assert.deepEqual(r.attempts.map((a) => a.reason), ['http 429 (free allowance used up)', 'ok']);
+  assert.equal(fetch.calls.filter(isPrimary).length, 1, 'the second primary model is not tried');
+  assert.ok(warnings.some((w) => /free allowance used up .*parked until 2026-10-10T01:00:00\.000Z/.test(w)));
+  await ai.chat('TRANSLATE', user('x'));
+  assert.equal(fetch.calls.filter(isPrimary).length, 1, 'no probe before the reset');
+});
+
 test('AI_REASONING overrides the caller and reaches both providers', async () => {
   const { createAi } = await import('../src/ai/index.js');
   const seen = [];

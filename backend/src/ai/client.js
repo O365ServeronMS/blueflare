@@ -27,6 +27,10 @@ const JSON_INSTRUCTION = 'Answer with a single valid JSON value only: no markdow
 const MODEL_GONE = /not a valid model|no endpoints|model[^.]{0,40}(not found|does not exist|not exist|unknown)|unknown model|not supported|unsupported model/i;
 const PARAMS_REJECTED = /requested parameters|response_format|json_schema|json_object|structured output/i;
 const IMAGE_REJECTED = /image|vision|multimodal|modalit/i;
+// Token Harbor: the whole free allowance of the key is spent until a stated date, for every model.
+const FREE_ALLOWANCE_DONE = /free_tier_limit_reached|used this period.s free allowance/i;
+const ALLOWANCE_RESET = /starts on (\d{1,2} [A-Za-z]{3,9} \d{4}) at (\d{1,2}:\d{2}) UTC/i;
+const MAX_ALLOWANCE_PARK_MS = 8 * 24 * 60 * 60 * 1000;
 const AUTH_LOCKOUT = /failed authenticat|authentication attempts|invalid (api )?key|api key (is )?(invalid|revoked)/i;
 
 /** The only error the AI module throws for a failed call. `attempts`: [{ provider, model, reason }]. */
@@ -371,6 +375,13 @@ export function createAi(options = {}) {
         const { delayMs } = classifyRateLimit(raw, headers, now());
         reason = 'http 429 (auth lockout)';
         announce(keyState(key), now() + clamp(delayMs ?? cfg.cooldownMs), key.label + ' disabled: too many failed authentications (HTTP 429)');
+      } else if (status === 429 && FREE_ALLOWANCE_DONE.test(raw)) {
+        // Retry-After says 1h, but nothing works before the stated reset: park the key until then.
+        const m = ALLOWANCE_RESET.exec(raw);
+        const resetAt = m ? Date.parse(m[1] + ' ' + m[2] + ' UTC') : NaN;
+        const wait = Number.isFinite(resetAt) ? Math.min(Math.max(resetAt - now(), 60000), MAX_ALLOWANCE_PARK_MS) : cfg.cooldownMs;
+        reason = 'http 429 (free allowance used up)';
+        announce(keyState(key), now() + wait, key.label + ' free allowance used up (HTTP 429), parked until ' + new Date(now() + wait).toISOString());
       } else if (status === 429) {
         const { daily, delayMs } = classifyRateLimit(raw, headers, now());
         const tries = retried.get(pid) ?? 0;

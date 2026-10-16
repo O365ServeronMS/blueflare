@@ -399,3 +399,19 @@ test('a 429 auth lockout (Token Harbor after bad keys) disables the key at once,
   await ai.chat('TRANSLATE', user('x'));
   assert.equal(fetch.calls.filter(isPrimary).length, 1, 'the key stays off for Retry-After');
 });
+
+test('AI_REASONING overrides the caller and reaches both providers', async () => {
+  const { createAi } = await import('../src/ai/index.js');
+  const seen = [];
+  const transport = async (url, init) => {
+    seen.push({ url, body: JSON.parse(init.body) });
+    if (seen.length === 1) return new Response('{}', { status: 500 });
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }], usage: {} }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const ai = createAi({ env: { LLM_BASE_URL: 'https://p.example/v1', LLM_API_KEY: 'k', MODEL_PRIMARY: 'm', OPENROUTER_API_KEY: 'o', OPENROUTER_MODEL_TRANSLATE: 'x/y', AI_REASONING: 'medium', AI_RETRIES: '0' }, transport, sleep: async () => {}, warn: () => {} });
+  await ai.chat('TRANSLATE', [{ role: 'user', content: 'hi' }], { reasoning: 'off' });
+  assert.equal(seen[0].body.reasoning_effort, 'medium');
+  assert.equal(seen[0].body.reasoning, undefined);
+  assert.deepEqual(seen[1].body.reasoning, { effort: 'medium' });
+  assert.throws(() => createAi({ env: { AI_REASONING: 'huge' }, transport, warn: () => {} }), /AI_REASONING/);
+});

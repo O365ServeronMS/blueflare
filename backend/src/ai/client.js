@@ -1,4 +1,4 @@
-import { readAiConfig, getRole, roleRoutes, roleTimeoutMs, rolePaidCap } from './config.js';
+import { readAiConfig, getRole, roleRoutes, roleTimeoutMs, rolePaidCap, roleReasoning } from './config.js';
 import {
   checkSchema, classifyRateLimit, contentText, extractJson, isFree, keyFingerprint, nextUtcMidnight, scopedFingerprint,
   sniffImageType, usageOf
@@ -186,6 +186,8 @@ export function createAi(options = {}) {
       body.usage = { include: true };
       const reasoning = reasoningField(opts.reasoning);
       if (reasoning) body.reasoning = reasoning;
+    } else if (['low', 'medium', 'high'].includes(opts.reasoning)) {
+      body.reasoning_effort = opts.reasoning; // OpenAI-style field; providers that do not know it ignore it
     }
     return body;
   }
@@ -202,6 +204,7 @@ export function createAi(options = {}) {
   async function run(roleName, messages, opts, mode) {
     const role = getRole(roleName);
     if (!Array.isArray(messages) || !messages.length) throw new TypeError('messages must be a non-empty array');
+    opts = { ...opts, reasoning: roleReasoning(cfg, role.name) ?? opts.reasoning };
     reasoningField(opts.reasoning); // validate up front
     const images = hasImages(messages);
     if (images && !role.vision) throw new TypeError('AI role ' + role.name + ' does not take images (registerRole with vision: true)');

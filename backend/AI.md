@@ -25,8 +25,8 @@ j.data;
 await ai.json('POSTER', [{ role: 'user', content: [{ type: 'text', text: 'Mô tả poster' }, imagePart(pngBytes)] }]);
 ```
 
-Options: `maxTokens`, `timeoutMs`, `temperature` (0), `reasoning` (`off|low|medium|high|{maxTokens}`,
-OpenRouter only), `schema` (json), `accept(value)` (validator; a throw moves on to the next
+Options: `maxTokens`, `timeoutMs`, `temperature` (0), `reasoning` (`off|low|medium|high|{maxTokens}`;
+`{maxTokens}` and `off` reach OpenRouter only), `schema` (json), `accept(value)` (validator; a throw moves on to the next
 pair, a throw with `.permanent` counts as a content refusal), `estTokens`, `signal`,
 `only: { provider, model }`.
 
@@ -88,6 +88,7 @@ Defaults live in `src/ai/config.js` (`AI_DEFAULTS`, roles); `.env.example` mirro
 | `OPENROUTER_MODEL_PRIMARY` / `_<ROLE>` | role default | `id[:rpm[:rpd]]`, best first |
 | `AI_TIMEOUT_MS` / `AI_TIMEOUT_MS_<ROLE>` | role default (60000, MATCH 180000) | per request |
 | `AI_MAX_TOKENS` | 8192 | completion ceiling when a call names none |
+| `AI_REASONING` / `AI_REASONING_<ROLE>` | empty | `off|low|medium|high`, overrides the caller's `reasoning`; empty = caller's choice. Sent as `reasoning` to OpenRouter and `reasoning_effort` to the primary |
 | `AI_RETRIES` | 2 | extra tries of a pair on 429/5xx |
 | `AI_COOLDOWN_MS` | 3600000 | longest park of a key/model |
 | `AI_PAID_DAILY_OUTPUT_TOKENS_<ROLE>` | 0 | paid completion tokens per UTC day; 0 = no cap |

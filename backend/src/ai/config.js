@@ -10,6 +10,7 @@ import { parseKeys, parseModels } from './util.js';
  *   AI_TIMEOUT_MS[_<ROLE>]       per-request timeout; empty = the role default
  *   AI_MAX_TOKENS                default completion ceiling when a call names none
  *   AI_PAID_DAILY_OUTPUT_TOKENS_<ROLE>  completion tokens per UTC day over non-`:free` models; 0 = no cap
+ *   AI_REASONING[_<ROLE>]        off|low|medium|high; overrides what the caller asks for; empty = the caller's choice
  *   AI_RETRIES, AI_COOLDOWN_MS   technical knobs (see AI_DEFAULTS)
  */
 
@@ -144,6 +145,7 @@ export function readAiConfig(env = process.env, options = {}) {
   const openrouterBaseUrl = text(folded.openrouterBaseUrl || OPENROUTER_BASE_URL).replace(/\/+$/, '');
   const openrouter = { name: 'openrouter', baseUrl: openrouterBaseUrl, keys: parseKeys(view.OPENROUTER_API_KEY), openrouter: true };
 
+  for (const name of roles.keys()) roleReasoning({ view }, name); // fail at startup on a bad AI_REASONING
   const parkMs = Number(folded.transientParkMs);
   const parkMaxMs = Number(folded.transientParkMaxMs);
   return Object.freeze({
@@ -193,4 +195,16 @@ export function roleTimeoutMs(cfg, roleName) {
 export function rolePaidCap(cfg, roleName) {
   const value = positiveInt(cfg.view, 'AI_PAID_DAILY_OUTPUT_TOKENS_' + getRole(roleName).name, 0, () => {}, 0);
   return value > 0 ? value : null;
+}
+
+const REASONING_LEVELS = ['off', 'low', 'medium', 'high'];
+
+/** AI_REASONING_<ROLE>, then AI_REASONING; null = leave it to the caller. Throws on an unknown level. */
+export function roleReasoning(cfg, roleName) {
+  const name = getRole(roleName).name;
+  const raw = text(cfg.view['AI_REASONING_' + name]) || text(cfg.view.AI_REASONING);
+  if (!raw) return null;
+  const level = raw.toLowerCase();
+  if (!REASONING_LEVELS.includes(level)) throw new AiConfigError('AI_REASONING must be one of ' + REASONING_LEVELS.join('|'));
+  return level;
 }

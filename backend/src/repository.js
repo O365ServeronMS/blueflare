@@ -7,6 +7,7 @@ import {
   sanitizeMovieImageSources
 } from './imageSourcePolicy.js';
 import {
+  identityConflict,
   isControlledFuzzyMatch,
   normalizeTitle,
   reconcileSourceIdentity,
@@ -76,10 +77,25 @@ export async function writeTmdbIdentity(client, movieId, identity, source = null
   return result.rows[0];
 }
 
-async function persistTmdbIdentity(client, movieId, incoming) {
+// The provider path only fills or confirms a TMDB tuple; findIdentity refuses rows whose
+// tuple contradicts the incoming one. Should one still be overwritten, it is logged so
+// it shows up in tmdb_identity_changes like every other identity write.
+async function persistTmdbIdentity(client, movie, incoming, existed) {
   const identity = tmdbIdentity(incoming);
   if (!identity) return null;
-  return writeTmdbIdentity(client, movieId, identity);
+  const before = !existed || movie.tmdb_id === null || movie.tmdb_id === undefined ? null
+    : { tmdbId: Number(movie.tmdb_id), mediaType: movie.tmdb_media_type ?? null, season: movie.tmdb_season_number ?? null };
+  const written = await writeTmdbIdentity(client, movie.id, identity);
+  if (before && (before.tmdbId !== identity.id || before.mediaType !== identity.mediaType ||
+    (before.season === null ? null : Number(before.season)) !== identity.season)) {
+    await client.query(
+      'INSERT INTO tmdb_identity_changes (movie_id, kind, source, tmdb_id, media_type, season, reason, evidence, before) ' +
+      "VALUES ($1,'assign','provider',$2,$3,$4,'provider-overwrite',$5::jsonb,$6::jsonb)",
+      [movie.id, identity.id, identity.mediaType, identity.season,
+        JSON.stringify({ provider: incoming.provider, slug: incoming.providerSlug }), JSON.stringify(before)]
+    );
+  }
+  return written;
 }
 
 
@@ -174,25 +190,35 @@ async function findStrongIdentity(client, incoming) {
     if (result.rowCount) return result.rows[0];
     return null;
   }
-  if (incoming.imdbId) {
-    const result = await client.query(
-      'SELECT * FROM movies WHERE imdb_id = $1 AND media_type = $2 LIMIT 1',
-      [incoming.imdbId, incoming.mediaType]
-    );
-    if (result.rowCount) return result.rows[0];
-  }
-  return null;
+  return findByImdb(client, incoming);
+}
+
+// A tv IMDb id names the whole series, so every season row carries it: pick the
+// first row whose season and TMDB tuple do not contradict the incoming record.
+async function findByImdb(client, incoming) {
+  if (!incoming.imdbId) return null;
+  const result = await client.query(
+    'SELECT * FROM movies WHERE imdb_id = $1 AND media_type = $2 ' +
+    'ORDER BY tmdb_season_number NULLS FIRST, created_at, id LIMIT 50',
+    [incoming.imdbId, incoming.mediaType]
+  );
+  const identity = tmdbIdentity(incoming);
+  return result.rows.find((row) => !identityConflict(row, incoming, identity)) || null;
 }
 
 async function findIdentity(client, incoming) {
+  const movie = await findLooseIdentity(client, incoming);
+  if (!movie) return null;
+  const conflict = identityConflict(movie, incoming, tmdbIdentity(incoming));
+  if (!conflict) return movie;
+  console.warn('[repository] identity candidate rejected provider=' + incoming.provider +
+    ' slug=' + incoming.providerSlug + ' candidate=' + movie.canonical_slug + ' reason=' + conflict);
+  return null;
+}
 
-  if (incoming.imdbId) {
-    const result = await client.query(
-      'SELECT * FROM movies WHERE imdb_id = $1 AND media_type = $2 LIMIT 1',
-      [incoming.imdbId, incoming.mediaType]
-    );
-    if (result.rowCount) return result.rows[0];
-  }
+async function findLooseIdentity(client, incoming) {
+  const byImdb = await findByImdb(client, incoming);
+  if (byImdb) return byImdb;
 
   if (incoming.provider === 'nguonc' && incoming.year && incoming.normalizedOriginalTitle) {
     const season = nguoncSeason({ title: incoming.title, canonical_slug: incoming.providerSlug }) ?? 1;
@@ -209,7 +235,7 @@ async function findIdentity(client, incoming) {
   if (incoming.year && incoming.normalizedOriginalTitle) {
     const result = await client.query(
       'SELECT * FROM movies WHERE normalized_original_title = $1 ' +
-      'AND year = $2 AND media_type = $3 AND tmdb_season_number IS NULL LIMIT 1',
+      'AND year = $2 AND media_type = $3 AND tmdb_season_number IS NULL ORDER BY created_at, id LIMIT 1',
       [incoming.normalizedOriginalTitle, incoming.year, incoming.mediaType]
     );
     if (result.rowCount) return result.rows[0];
@@ -218,7 +244,7 @@ async function findIdentity(client, incoming) {
   if (incoming.year && incoming.normalizedTitle) {
     const result = await client.query(
       'SELECT * FROM movies WHERE normalized_title = $1 ' +
-      'AND year = $2 AND media_type = $3 AND tmdb_season_number IS NULL LIMIT 1',
+      'AND year = $2 AND media_type = $3 AND tmdb_season_number IS NULL ORDER BY created_at, id LIMIT 1',
       [incoming.normalizedTitle, incoming.year, incoming.mediaType]
     );
     if (result.rowCount) return result.rows[0];
@@ -226,7 +252,7 @@ async function findIdentity(client, incoming) {
 
   if (!incoming.year) return null;
   const candidates = await client.query(
-    'SELECT * FROM movies WHERE year = $1 AND media_type = $2 AND tmdb_season_number IS NULL LIMIT 100',
+    'SELECT * FROM movies WHERE year = $1 AND media_type = $2 AND tmdb_season_number IS NULL ORDER BY created_at, id LIMIT 100',
     [incoming.year, incoming.mediaType]
   );
   return candidates.rows.find((candidate) => (
@@ -421,10 +447,11 @@ export async function upsertCanonical(incoming) {
       [incoming.provider, incoming.providerMovieId]
     );
     const previousSource = previousSourceResult.rows[0] || null;
+    const existed = Boolean(movie);
     movie = movie
       ? await updateMovie(client, movie, incoming)
       : await insertMovie(client, await withoutTakenImdb(client, incoming));
-    movie = (await persistTmdbIdentity(client, movie.id, incoming)) || movie;
+    movie = (await persistTmdbIdentity(client, movie, incoming, existed)) || movie;
 
     await client.query(
       'INSERT INTO movie_provider_sources (' +

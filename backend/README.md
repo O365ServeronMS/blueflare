@@ -431,7 +431,8 @@ check, `tools/merge-duplicates.mjs --apply` runs the merge against a scratch `DA
 
 The worker's fifth loop (`catalogAudit.js`, overview in `CLAUDE.md`) audits the whole catalog once a
 week, Sunday 03:00 Vietnam time by default (`CATALOG_AUDIT_DAY` 0-6, `CATALOG_AUDIT_HOUR` 0-23, both
-Vietnam time). After a deploy it catches up at once when the current slot has no finished run; a
+Vietnam time). After a deploy it catches up at once when the current slot has no finished run in the current mode
+(switching dry-run to apply reruns the slot); a
 failed run is retried hourly, at most 3 times per slot. `CATALOG_AUDIT_MODE=dry-run` (default) records
 proposals only; `apply` writes at most `CATALOG_AUDIT_MAX_ACTIONS` (500) per run, each group re-read
 and re-gated under the lock the sync cycle holds.

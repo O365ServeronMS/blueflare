@@ -37,14 +37,17 @@ export function lastSlot(now, day = 0, hour = 3) {
 
 export const nextSlot = (now, day, hour) => lastSlot(now, day, hour) + 7 * DAY_MS;
 
-/** True when the current slot has no finished run and fewer than MAX_FAILED_TRIES failed ones. */
+/**
+ * True when the current slot has no finished run in the current mode and fewer than MAX_FAILED_TRIES failed ones.
+ * Only a run of the same mode finishes the slot, so switching dry-run to apply redoes it at once.
+ */
 export async function runDue(now = Date.now(), { db = pool, settings = config } = {}) {
   const slot = new Date(lastSlot(now, settings.catalogAuditDay, settings.catalogAuditHour));
   const result = await db.query(
     // a 'partial' stopped by shutdown (written before such runs became 'failed') counts as a failed try
-    "SELECT count(*) FILTER (WHERE status='done' OR (status='partial' AND summary->>'stopped' IS DISTINCT FROM 'stopping'))::int AS finished, " +
+    "SELECT count(*) FILTER (WHERE (status='done' OR (status='partial' AND summary->>'stopped' IS DISTINCT FROM 'stopping')) AND summary->>'mode'=$2)::int AS finished, " +
     "count(*) FILTER (WHERE status='failed' OR (status='partial' AND summary->>'stopped'='stopping'))::int AS failed " +
-    'FROM catalog_audit_runs WHERE started_at >= $1', [slot]);
+    'FROM catalog_audit_runs WHERE started_at >= $1', [slot, settings.catalogAuditMode]);
   const { finished, failed } = result.rows[0];
   return finished === 0 && failed < MAX_FAILED_TRIES;
 }

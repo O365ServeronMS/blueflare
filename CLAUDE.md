@@ -71,7 +71,7 @@ Five loops run outside the request path. None of them may be moved into the requ
 
 ### Catalog audit
 
-`worker`, weekly at `CATALOG_AUDIT_DAY`/`CATALOG_AUDIT_HOUR` Vietnam time (default Sunday 03:00 = Saturday 20:00 UTC; `catalogAudit.js`), with an immediate catch-up when the current slot has no finished run and fewer than 3 failed ones. Never a request path. Goal: one row per TMDB movie or tv season, so more rows can get a TMDB id.
+`worker`, weekly at `CATALOG_AUDIT_DAY`/`CATALOG_AUDIT_HOUR` Vietnam time (default Sunday 03:00 = Saturday 20:00 UTC; `catalogAudit.js`), with an immediate catch-up when the current slot has no finished run in the current mode (so switching dry-run to apply reruns it) and fewer than 3 failed ones (a run cut off by a restart counts as failed). Never a request path. Goal: one row per TMDB movie or tv season, so more rows can get a TMDB id.
 
 - `catalogAuditExtract.js` loads every ready row with its sources/aliases, flags rows with fixed detector codes (multi-season, season-marker, slug-season, alias-wrong, tmdb-mismatch, type-mismatch, episode-mismatch, year-spread, orphan, dup-same-season) and packs them into groups of at most 10 rows.
 - Proposals: deterministic rules (hide orphans, rename a slug or re-point an alias naming another season) and, for groups needing judgement, the AI module (role `DEDUPE`, borrows MATCH's models/keys unless `MODEL_DEDUPE`/`OPENROUTER_MODEL_DEDUPE` are set, own paid cap `AI_PAID_DAILY_OUTPUT_TOKENS_DEDUPE`). The model only names actions on ids of its group (`set_season`, `move_source`, `merge_rows`, `fix_alias`, `rename_slug`, `clear_tmdb`, `report`).

@@ -192,8 +192,8 @@ test('the weekly slot is Sunday 03:00 Vietnam time (Saturday 20:00 UTC)', () => 
 });
 
 test('runDue: once per slot, at most three failed tries', async () => {
-  const db = (finished, failed) => ({ query: async (sql, params) => { assert.ok(params[0] instanceof Date); return { rows: [{ finished, failed }] }; } });
-  const settings = { catalogAuditDay: 0, catalogAuditHour: 3 };
+  const db = (finished, failed) => ({ query: async (sql, params) => { assert.ok(params[0] instanceof Date); assert.equal(params[1], 'apply'); return { rows: [{ finished, failed }] }; } });
+  const settings = { catalogAuditDay: 0, catalogAuditHour: 3, catalogAuditMode: 'apply' };
   assert.equal(await runDue(Date.now(), { db: db(0, 0), settings }), true);
   assert.equal(await runDue(Date.now(), { db: db(1, 0), settings }), false);
   assert.equal(await runDue(Date.now(), { db: db(0, 2), settings }), true);

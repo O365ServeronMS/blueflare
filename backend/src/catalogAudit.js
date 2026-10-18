@@ -168,7 +168,7 @@ async function recordAction(db, runId, group, verdict, extra = {}) {
     'INSERT INTO catalog_audit_actions (run_id, group_key, detectors, action, params, reason, status, gate, before, after, slugs, identity_change_id, model) ' +
     'VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9::jsonb,$10::jsonb,$11,$12,$13)',
     [runId, group.key, group.detectors, type, JSON.stringify(params), reason ?? null, extra.status, extra.gate ?? null,
-      JSON.stringify(extra.before ?? null), JSON.stringify(extra.after ?? verdict.detail ?? null), extra.slugs ?? verdict.slugs ?? group.rows.map((r) => r.canonical_slug),
+      JSON.stringify(extra.before ?? null), JSON.stringify(extra.after ?? verdict.detail ?? null), extra.slugs ?? verdict.detail?.slugs ?? group.rows.map((r) => r.canonical_slug),
       extra.identityChangeId ?? null, extra.model ?? null]
   );
 }
@@ -298,6 +298,45 @@ export async function runCatalogAudit(deps = {}) {
       [runId, JSON.stringify(summary), String(error.message).slice(0, 500)]).catch(() => {});
     throw error;
   }
+}
+
+/**
+ * Apply one group's recorded, not yet applied actions (`dry-run`, e.g. over the run cap) of its latest
+ * run, re-gated on the current rows; stops at the first action that does not apply. Used by
+ * scripts/catalog-audit-apply.mjs. deps: { db, tmdb, providers, upsert, lock }. Returns `{ results, slugs }`.
+ */
+export async function applyRecordedGroup(groupKey, deps = {}) {
+  const db = deps.db ?? pool;
+  const recorded = (await db.query(
+    'SELECT * FROM catalog_audit_actions WHERE group_key=$1 AND run_id=(SELECT max(run_id) FROM catalog_audit_actions WHERE group_key=$1) ' +
+    "AND status='dry-run' ORDER BY id", [groupKey])).rows;
+  if (!recorded.length) return { results: [], slugs: [] };
+  const catalog = await loadCatalog(db);
+  const { family, holderOf } = analyseCatalog(catalog);
+  const slugs = new Set(recorded.flatMap((a) => a.slugs || []));
+  const ids = new Set(recorded.map((a) => a.params.movieId).filter(Boolean));
+  const rows = catalog.filter((r) => ids.has(r.id) || slugs.has(r.canonical_slug));
+  const facts = deps.tmdb ? await fetchFacts([{ rows }], deps.tmdb, () => false) : new Map();
+  const actions = recorded.map((a) => ({ type: a.action, ...a.params, reason: a.reason }));
+  const results = [];
+  const changed = new Set();
+  await (deps.lock ?? catalogLock).run(async () => {
+    const verdicts = gateProposal(createState(rows, { facts, holderOf, family }), actions);
+    let broken = false;
+    for (const [i, verdict] of verdicts.entries()) {
+      let outcome;
+      if (!verdict.ok) outcome = { status: 'blocked', gate: verdict.gate };
+      else if (broken) outcome = { status: 'blocked', gate: 'earlier-action-failed' };
+      else outcome = await applyAuditAction(verdict, { ...deps, runId: recorded[i].run_id });
+      if (outcome.status !== 'applied') broken = true;
+      for (const slug of outcome.slugs || []) changed.add(slug);
+      await db.query('UPDATE catalog_audit_actions SET status=$2, gate=$3, before=$4::jsonb, after=$5::jsonb, slugs=$6, identity_change_id=$7 WHERE id=$1',
+        [recorded[i].id, outcome.status, outcome.gate ?? null, JSON.stringify(outcome.before ?? null), JSON.stringify(outcome.after ?? null),
+          outcome.slugs?.length ? outcome.slugs : recorded[i].slugs, outcome.identityChangeId ?? null]);
+      results.push({ id: Number(recorded[i].id), action: verdict.action.type, status: outcome.status, gate: outcome.gate ?? null });
+    }
+  });
+  return { results, slugs: [...changed] };
 }
 
 async function flush(deps, changed, log) {

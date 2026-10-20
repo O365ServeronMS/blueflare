@@ -44,6 +44,25 @@ check_backend() {
   cd backend && node --test
 }
 
+# The tests gated on TEST_DATABASE_URL skip in check_backend. Here they run against a
+# throwaway PostgreSQL container on a loopback port, removed afterwards; production's
+# database is never touched. VERIFY_DB=0 skips this check.
+check_backend_db() {
+  local name="bf-verify-pg-$$" port files i
+  files=$(grep -l TEST_DATABASE_URL backend/test/*.test.js)
+  trap 'docker rm -f "$name" >/dev/null 2>&1' RETURN
+  docker run -d --rm --name "$name" -e POSTGRES_PASSWORD=verify -e POSTGRES_DB=bf_test \
+    -p 127.0.0.1::5432 --memory 512m "${POSTGRES_IMAGE:-postgres:18.6-trixie}" >/dev/null || return 1
+  for i in $(seq 1 30); do
+    docker exec "$name" pg_isready -U postgres -d bf_test -h 127.0.0.1 >/dev/null 2>&1 && break
+    sleep 1
+  done
+  port=$(docker port "$name" 5432/tcp | head -n1 | sed 's/.*://')
+  [[ -n "$port" ]] || { echo "throwaway postgres did not publish a port"; return 1; }
+  cd backend && TEST_DATABASE_URL="postgres://postgres:verify@127.0.0.1:$port/bf_test" \
+    node --test $(sed 's#^backend/##' <<<"$files")
+}
+
 # vitest only runs what vitest.config.ts includes; a test file outside those
 # globs silently never runs.
 check_vitest_scope() {
@@ -135,8 +154,14 @@ run whitespace git diff --check HEAD
 
 if touches '^backend/'; then
   run backend check_backend
+  if [[ "${VERIFY_DB:-1}" == 0 ]]; then
+    skip backend-db "VERIFY_DB=0"
+  else
+    run backend-db check_backend_db
+  fi
 else
   skip backend "no backend/ changes"
+  skip backend-db "no backend/ changes"
 fi
 
 if touches '^frontend/'; then

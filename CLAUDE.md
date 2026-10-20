@@ -252,8 +252,8 @@ What it runs:
 | Check | What | When |
 | --- | --- | --- |
 | `whitespace` | `git diff --check HEAD` | always |
-| `backend` | `cd backend && node --test` (fails if `backend/node_modules` is missing) | `backend/` changed |
-| `backend-db` | the `TEST_DATABASE_URL`-gated tests (skipped in `backend`) against a throwaway `postgres` container on a loopback port, removed afterwards; `VERIFY_DB=0` skips it | `backend/` changed |
+| `backend` | `cd backend && node --test` on every test file except the `TEST_DATABASE_URL`-gated ones (fails if `backend/node_modules` is missing) | `backend/` changed |
+| `backend-db` | the `TEST_DATABASE_URL`-gated test files against a throwaway `postgres` container on a loopback port, removed afterwards; `VERIFY_DB=0` skips it and `backend` runs those files with their DB tests skipped | `backend/` changed |
 | `vitest-scope` | every frontend test file is inside a `vitest.config.ts` include glob | `frontend/` changed |
 | `vitest` | `cd frontend && npx vitest run` | `frontend/` changed |
 | `build` | `cd frontend && npm run build` | `frontend/` changed |

@@ -41,7 +41,15 @@ check_backend() {
     echo "backend/node_modules is missing: run 'npm ci' in backend/ (providers.test.js needs 'pg')."
     return 1
   fi
-  cd backend && node --test
+  # The TEST_DATABASE_URL-gated files run in check_backend_db instead, so nothing here is
+  # skipped; with VERIFY_DB=0 they stay here and their DB tests skip.
+  local files
+  if [[ "${VERIFY_DB:-1}" == 0 ]]; then
+    files=$(ls backend/test/*.test.js)
+  else
+    files=$(grep -L TEST_DATABASE_URL backend/test/*.test.js)
+  fi
+  cd backend && node --test $(sed 's#^backend/##' <<<"$files")
 }
 
 # The tests gated on TEST_DATABASE_URL skip in check_backend. Here they run against a

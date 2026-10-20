@@ -24,7 +24,8 @@ const label = (name) => String(name).replace(/^google-/, '');
  * strictly sequential. Providers form an ordered chain (TRANSLATE_PROVIDER): the
  * first one not in cooldown translates; a 'blocked' answer puts that provider in
  * cooldown and the SAME review continues with the next one. The pass ends when
- * no provider is left or after too many consecutive per-review errors. State is
+ * no provider is left, after too many consecutive per-review errors, or once
+ * TRANSLATE_PASS_MAX_MS has passed (the request in flight is aborted). State is
  * in memory: a restart simply retries once.
  * Returns the canonical slugs whose visible translations changed.
  */
@@ -60,6 +61,15 @@ export async function syncReviewTranslations(deps = {}) {
   let pending = await list(settings.translateReviewsPerCycle);
   if (!pending.length) return [];
 
+  // TRANSLATE_PASS_MAX_MS: past it no new review starts and the request in flight is aborted.
+  const budgetMs = Number(settings.translatePassMaxMs) > 0 ? Number(settings.translatePassMaxMs) : 0;
+  const stopAt = budgetMs ? now() + budgetMs : Infinity;
+  const abort = new AbortController();
+  const timer = budgetMs ? setTimeout(() => abort.abort(), budgetMs) : null;
+  timer?.unref?.();
+  let outOfTime = false;
+  const timeUp = () => (outOfTime ||= abort.signal.aborted || now() >= stopAt);
+
   const changed = new Set();
   const counts = { checked: 0, ok: 0, failed: 0, blocked: 0 };
   const used = Object.fromEntries(chain.map((p) => [label(p.name), 0]));
@@ -80,13 +90,14 @@ export async function syncReviewTranslations(deps = {}) {
       const batchStats = { requests: 0, split: 0 };
       // Translate `group` in one request; a rejected answer splits it in two, down to single reviews (per-review path below).
       const run = async (group) => {
-        if (group.length < 2 || now() < stateOf(batcher.name).cooldownUntil) return;
-        const meta = {};
+        if (group.length < 2 || now() < stateOf(batcher.name).cooldownUntil || timeUp()) return;
+        const meta = { signal: abort.signal };
         let items;
         batchStats.requests += 1;
         try {
           items = await batcher.translate.batch(group.map((r) => r.content), meta);
         } catch (error) {
+          if (abort.signal.aborted) { outOfTime = true; return; }
           if (error?.blocked) {
             counts.blocked += 1;
             console.warn('[worker] review translate blocked (' + label(batcher.name) + ', batch):', error.message);
@@ -117,7 +128,7 @@ export async function syncReviewTranslations(deps = {}) {
         }
       };
       for (const group of packBatches(pending, { maxChars: settings.translateBatchMaxChars, maxItems: settings.translateBatchMaxItems })) {
-        if (now() < stateOf(batcher.name).cooldownUntil) break;
+        if (now() < stateOf(batcher.name).cooldownUntil || timeUp()) break;
         await run(group);
       }
       pending = pending.filter((r) => leftover.has(r.id));
@@ -127,6 +138,7 @@ export async function syncReviewTranslations(deps = {}) {
 
   outer:
   for (const review of pending) {
+    if (timeUp()) break;
     counts.checked += 1;
     let done = false;
     const contentFailed = new Map(); // provider name -> error, for this review only
@@ -147,7 +159,7 @@ export async function syncReviewTranslations(deps = {}) {
       }
       lastCall[provider.name] = now();
       try {
-        const meta = {};
+        const meta = { signal: abort.signal };
         const translated = String(await provider.translate(review.content, meta) ?? '').trim();
         if (!translated) throw new Error('empty translation');
         // Echoing the source (names, already Vietnamese) is stored as '' so the row leaves the queue.
@@ -163,6 +175,8 @@ export async function syncReviewTranslations(deps = {}) {
         consecutive = 0;
         done = true;
       } catch (error) {
+        // Out of time: the review stays pending as it was, with no failure recorded.
+        if (abort.signal.aborted) { outOfTime = true; counts.checked -= 1; break outer; }
         if (error?.blocked) {
           counts.blocked += 1;
           console.warn('[worker] review translate blocked (' + label(provider.name) + '):', error.message);
@@ -188,11 +202,12 @@ export async function syncReviewTranslations(deps = {}) {
     }
   }
 
+  if (timer) clearTimeout(timer);
   if (!available().length) {
     state.cooldownUntil = Math.max(state.cooldownUntil, Math.min(...chain.map((p) => stateOf(p.name).cooldownUntil)));
   }
   console.log('[worker] review translate checked=' + counts.checked + ' ok=' + counts.ok +
-    ' failed=' + counts.failed + ' blocked=' + counts.blocked +
+    ' failed=' + counts.failed + ' blocked=' + counts.blocked + (outOfTime ? ' stopped=time-budget' : '') +
     ' providers=' + Object.entries(used).map(([name, n]) => name + ':' + n).join(',') +
     (Object.keys(modelUsed).length ? ' models=' + Object.entries(modelUsed).map(([id, n]) => id + ':' + n).join(',') : '') +
     (Object.keys(keyUsed).length ? ' keys=' + Object.entries(keyUsed).map(([id, n]) => id + ':' + n).join(',') : ''));

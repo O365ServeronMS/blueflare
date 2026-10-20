@@ -93,6 +93,8 @@ export const config = Object.freeze({
   translateEnabled: boolean('TRANSLATE_ENABLED', false),
   translateProvider: String(process.env.TRANSLATE_PROVIDER || 'ai'),
   translateReviewsPerCycle: integer('TRANSLATE_REVIEWS_PER_CYCLE', 150, 1),
+  // Wall-clock budget of one translation pass; the rest waits for the next cycle.
+  translatePassMaxMs: integer('TRANSLATE_PASS_MAX_MS', 10 * 60 * 1000, 1000),
   translateDelayMs: integer('TRANSLATE_DELAY_MS', 1000, 0),
   translateMaxConsecutiveErrors: integer('TRANSLATE_MAX_CONSECUTIVE_ERRORS', 5, 1),
   translateCooldownMs: integer('TRANSLATE_COOLDOWN_MS', 60 * 60 * 1000, 1000),

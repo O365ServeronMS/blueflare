@@ -465,3 +465,55 @@ test('sync batch: blocked batch leaves the reviews to the per-review path of the
     { count: 3 });
   assert.deepEqual(log.recorded.map((r) => r[1]), ['google-gtx', 'google-gtx', 'google-gtx']);
 });
+
+test('time budget: no new review starts past TRANSLATE_PASS_MAX_MS, nothing is failed or cooled down', async () => {
+  const { deps, log } = harness({ translate: async (t) => { log.time += 400; return 'VI ' + t; } });
+  deps.config = { ...cfg, translatePassMaxMs: 1000 };
+  const lines = [];
+  const original = console.log;
+  console.log = (line) => lines.push(String(line));
+  try { await syncReviewTranslations(deps); } finally { console.log = original; }
+  // r0 1000->1400, r1 ->1800, r2 starts at 1800 (< 2000) ->2200, r3 sees the budget gone.
+  assert.deepEqual(log.recorded.map((r) => r.id), ['r0', 'r1', 'r2']);
+  assert.equal(log.failed.length, 0);
+  assert.equal(deps.state.cooldownUntil, 0, 'the next cycle carries on');
+  assert.match(lines.at(-1), /checked=3 ok=3 failed=0 .*stopped=time-budget/);
+});
+
+test('time budget: the request in flight is aborted and its review stays pending without a failure', async () => {
+  let calls = 0;
+  const { deps, log } = harness({
+    translate: (t, meta) => {
+      calls += 1;
+      return new Promise((_, reject) => meta.signal.addEventListener('abort', () => reject(new Error('aborted'))));
+    }
+  });
+  deps.config = { ...cfg, translatePassMaxMs: 30 };
+  const started = Date.now();
+  const lines = [];
+  const original = console.log;
+  console.log = (line) => lines.push(String(line));
+  try { assert.deepEqual(await syncReviewTranslations(deps), []); } finally { console.log = original; }
+  assert.match(lines.at(-1), /checked=0 .*stopped=time-budget/);
+  assert.ok(Date.now() - started < 2000);
+  assert.equal(calls, 1, 'no further review starts');
+  assert.equal(log.recorded.length, 0);
+  assert.equal(log.failed.length, 0, 'an abort is not a translation failure');
+  assert.equal(deps.state.cooldownUntil, 0);
+});
+
+test('providers forward the pass signal: ai to the AI module, gtx to fetch', async () => {
+  const { aiProvider } = await import('../src/translate.js');
+  const controller = new AbortController();
+  let aiSignal;
+  const ai = { chat: async (role, messages, opts) => { aiSignal = opts.signal; return { value: 'xin chao', model: 'm', provider: 'p', key: 'k' }; } };
+  await aiProvider({ ai })('hello', { signal: controller.signal });
+  assert.equal(aiSignal, controller.signal);
+
+  let fetchSignal;
+  const gtx = googleGtxProvider({ timeoutMs: 60000, fetchImpl: async (url, init) => { fetchSignal = init.signal; return res(200, JSON.stringify([[['Chao', 'Hi']]])); } });
+  await gtx('Hi', { signal: controller.signal });
+  assert.equal(fetchSignal.aborted, false);
+  controller.abort();
+  assert.equal(fetchSignal.aborted, true);
+});

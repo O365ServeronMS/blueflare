@@ -108,12 +108,13 @@ export function googleGtxProvider(options = {}) {
   const fetchImpl = options.fetchImpl ?? fetch;
   const timeoutMs = options.timeoutMs ?? config.translateTimeoutMs;
   const endpoint = options.endpoint ?? 'https://translate.googleapis.com/translate_a/single';
-  return async function translateChunk(text) {
+  return async function translateChunk(text, meta = {}) {
+    const timeout = AbortSignal.timeout(timeoutMs);
     const response = await fetchImpl(endpoint + '?client=gtx&sl=en&tl=vi&dt=t', {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' },
       body: 'q=' + encodeURIComponent(text),
-      signal: AbortSignal.timeout(timeoutMs)
+      signal: meta.signal ? AbortSignal.any([timeout, meta.signal]) : timeout
     });
     if (response.status === 429 || response.status === 403) {
       throw new TranslateBlockedError('translate blocked: HTTP ' + response.status);
@@ -162,7 +163,7 @@ export function assertNoStrayCjk(source, translated) {
 export function aiProvider(options = {}) {
   const ai = options.ai ?? getAi();
   const ask = async (messages, maxTokens, accept, meta) => {
-    const result = await ai.chat('TRANSLATE', messages, { temperature: 0.2, maxTokens, reasoning: 'off', accept });
+    const result = await ai.chat('TRANSLATE', messages, { temperature: 0.2, maxTokens, reasoning: 'off', accept, signal: meta.signal });
     Object.assign(meta, { model: result.model, provider: result.provider, key: result.provider + ' ' + result.key, usage: result.usage });
     return result.value;
   };
@@ -219,7 +220,7 @@ export function createTranslator(options = {}) {
       try {
         return await chunkFn(chunk, meta);
       } catch (error) {
-        if (error.blocked || error.permanent || attempt >= retries) throw error;
+        if (error.blocked || error.permanent || attempt >= retries || meta?.signal?.aborted) throw error;
         await sleep(backoffMs * 2 ** attempt);
       }
     }

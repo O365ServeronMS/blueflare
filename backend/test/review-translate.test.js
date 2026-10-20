@@ -517,3 +517,36 @@ test('providers forward the pass signal: ai to the AI module, gtx to fetch', asy
   controller.abort();
   assert.equal(fetchSignal.aborted, true);
 });
+
+test('paused pass: a skipped pass logs once per cooldown with its end and the last block', async () => {
+  const blocked = Object.assign(new Error('ai TRANSLATE unavailable: nothing could be tried'), { blocked: true, retryAfterMs: 60000 });
+  const { deps, log } = harness({ translate: async () => { throw blocked; } });
+  const lines = [];
+  const original = console.log;
+  const warn = console.warn;
+  console.log = (line) => lines.push(String(line));
+  console.warn = () => {};
+  try {
+    await syncReviewTranslations(deps); // blocked: cooldown until 61000
+    const paused = () => lines.filter((l) => l.includes('paused until'));
+    assert.equal(deps.state.cooldownUntil, 61000);
+    assert.equal(paused().length, 0, 'the pass that was blocked logs its own checked line');
+
+    log.time = 30000;
+    await syncReviewTranslations(deps);
+    await syncReviewTranslations(deps);
+    assert.equal(paused().length, 1, 'repeated skips in the same cooldown log once');
+    assert.match(paused()[0], /paused until 1970-01-01T00:01:01\.000Z \(last block: .*nothing could be tried\)/);
+
+    log.time = 62000;
+    await syncReviewTranslations(deps); // blocked again: a new cooldown
+    log.time = 63000;
+    await syncReviewTranslations(deps);
+    assert.equal(paused().length, 2, 'a new cooldown is announced again');
+    assert.match(paused()[1], /paused until 1970-01-01T00:02:02\.000Z/);
+    assert.equal(log.recorded.length, 0);
+  } finally {
+    console.log = original;
+    console.warn = warn;
+  }
+});

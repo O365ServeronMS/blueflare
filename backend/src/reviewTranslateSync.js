@@ -35,7 +35,16 @@ export async function syncReviewTranslations(deps = {}) {
   const state = deps.state ?? defaultState;
   state.providers ??= {};
   const now = deps.now ?? (() => Date.now());
-  if (now() < state.cooldownUntil) return [];
+  // A skipped pass logs once per cooldown, so the log shows translation is paused and until when.
+  const paused = (until) => {
+    if (state.pausedLogged !== until) {
+      state.pausedLogged = until;
+      console.log('[worker] review translate paused until ' + new Date(until).toISOString() +
+        (state.lastBlock ? ' (last block: ' + state.lastBlock + ')' : ''));
+    }
+    return [];
+  };
+  if (now() < state.cooldownUntil) return paused(state.cooldownUntil);
 
   const list = deps.listPending ?? listPendingReviewTranslations;
   const record = deps.record ?? recordReviewTranslation;
@@ -56,7 +65,7 @@ export async function syncReviewTranslations(deps = {}) {
   }
   const stateOf = (name) => (state.providers[name] ??= { cooldownUntil: 0, errors: 0 });
   const available = () => chain.filter((p) => now() >= stateOf(p.name).cooldownUntil);
-  if (!available().length) return [];
+  if (!available().length) return paused(Math.min(...chain.map((p) => stateOf(p.name).cooldownUntil)));
 
   let pending = await list(settings.translateReviewsPerCycle);
   if (!pending.length) return [];
@@ -81,6 +90,7 @@ export async function syncReviewTranslations(deps = {}) {
   const openCooldown = (provider, error) => {
     const wait = Number(error.retryAfterMs) > 0 ? error.retryAfterMs : provider.cooldownMs ?? settings.translateCooldownMs;
     stateOf(provider.name).cooldownUntil = now() + wait;
+    state.lastBlock = label(provider.name) + ': ' + String(error?.message ?? '').slice(0, 160);
   };
 
   if (settings.translateBatchEnabled) {

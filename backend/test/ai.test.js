@@ -447,6 +447,8 @@ test('DEDUPE borrows the MATCH models and keys unless it names its own, with its
 test('openrouter/free counts as a free model', () => {
   assert.equal(isFree('openrouter/free'), true);
   assert.equal(isFree('vendor/model:free'), true);
+  assert.equal(isFree('deepseek/deepseek-v4.1-flash-free'), true);
+  assert.equal(isFree('deepseek/deepseek-v4.1-flash'), false);
   assert.equal(isFree('openai/gpt-6-luna'), false);
   assert.deepEqual(parseModels('openrouter/free:20:300'), [{ id: 'openrouter/free', rpm: 20, rpd: 300 }]);
 });

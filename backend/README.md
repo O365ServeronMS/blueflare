@@ -274,7 +274,7 @@ serves English.
 - Log line: `[worker] review translate checked= ok= failed= blocked=
   providers=ai:N models=<model id>:A,<model id>:B keys=<provider> k1:N`
   (`keys=` only when the AI module answered). `translate_provider` stores
-  `<provider>:<model id>` (`tokenharbor.ai:<model>`, `openrouter:<model>`); rows
+  `<provider>:<model id>` (`api.orcarouter.ai:<model>`, `openrouter:<model>`); rows
   written earlier may still say `google-gtx` or `gemini:<model>`.
 - Storage: migration `026_review_translation.sql` adds `content_vi`,
   `translated_hash`, `translated_at`, `translate_failed_at`,

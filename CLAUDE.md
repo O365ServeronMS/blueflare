@@ -47,6 +47,7 @@ Five loops run outside the request path. None of them may be moved into the requ
 `worker`, every `SYNC_INTERVAL_MS`. One cycle does, in order:
 
 - **Crawl and backfill:** crawls NguonC/KKPhim head pages plus a checkpointed backfill and upserts canonical rows.
+- **Stale sources:** `staleSources.js` (`STALE_SOURCE_MODE=off|dry-run|apply`, default `apply`; `STALE_SOURCE_DAYS`, `STALE_SOURCE_BATCH`) re-fetches detail for sources not upserted for `STALE_SOURCE_DAYS`. Every attempt that does not end in an upsert pushes the source back through `stale_next_check_at` (036), so failing sources never hold the queue. Apply marks a source unavailable after two 404s at least 7 days apart and then **hard-deletes** a movie left with no available source (`deleteMovieIfNoAvailableSource`; cascades to its user favorites/history/progress, reviews and aliases; no undo except the backup).
 - **Ratings:** enriches approved visible rows with MDBList Rotten Tomatoes critic/audience scores under a per-key daily budget.
 - **TMDB recommendations and credits:** refreshes TMDB recommendation/similar id lists for the detail-page rail, and TMDB cast/director credits for rows with a verified TMDB identity.
 - **Reviews:** refreshes TMDB user reviews (`TMDB_REVIEWS_*`, table `movie_reviews`, verified identity only; the worker is the only caller, never a request path) and stores them as plain text. Reviews are re-fetchable from TMDB, not irreplaceable state.

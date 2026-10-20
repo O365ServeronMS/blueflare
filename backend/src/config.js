@@ -273,9 +273,10 @@ export const config = Object.freeze({
   sweepCycleDays: integer('SWEEP_CYCLE_DAYS', 14, 0),
   // Stale-source refresh lane: re-fetch detail for sources not upserted for
   // staleSourceDays. Marking unavailable needs mode=apply and two 404s >= 7 days apart.
+  // A failed attempt defers the source (stale_next_check_at), so it never holds the queue.
   staleSourceMode: ['off', 'dry-run', 'apply'].includes(process.env.STALE_SOURCE_MODE)
     ? process.env.STALE_SOURCE_MODE
-    : 'dry-run',
+    : 'apply',
   staleSourceDays: integer('STALE_SOURCE_DAYS', 14, 1),
   staleSourceBatch: integer('STALE_SOURCE_BATCH', 150, 1),
   requestTimeoutMs: integer('REQUEST_TIMEOUT_MS', 15000, 1000),

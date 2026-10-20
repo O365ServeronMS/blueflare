@@ -467,7 +467,7 @@ export async function upsertCanonical(incoming, { relocate = false } = {}) {
       'movie_id=EXCLUDED.movie_id, provider_slug=EXCLUDED.provider_slug, ' +
       'priority=EXCLUDED.priority, availability=true, metadata=EXCLUDED.metadata, ' +
       'streams=EXCLUDED.streams, provider_updated_at=EXCLUDED.provider_updated_at, ' +
-      'last_success_at=now(), last_seen_at=now(), not_found_count=0, first_not_found_at=NULL, updated_at=now()',
+      'last_success_at=now(), last_seen_at=now(), not_found_count=0, first_not_found_at=NULL, stale_next_check_at=NULL, updated_at=now()',
       [
         movie.id,
         incoming.provider,
@@ -1420,6 +1420,7 @@ export async function listStaleSources(providers, olderThanMs, limit) {
     'SELECT id, movie_id, provider, provider_slug, not_found_count, first_not_found_at FROM movie_provider_sources ' +
     'WHERE availability AND provider = ANY($1::text[]) ' +
     "AND last_success_at < now() - ($2::bigint * interval '1 millisecond') " +
+    'AND (stale_next_check_at IS NULL OR stale_next_check_at <= now()) ' +
     'ORDER BY last_success_at ASC LIMIT $3',
     [providers, olderThanMs, Math.max(1, Math.floor(limit))]
   );
@@ -1442,6 +1443,14 @@ export async function recordSourceNotFound(id, minGapMs) {
   return result.rows[0] || null;
 }
 
+/** Push a stale source back so a failed refresh does not hold the head of the stale lane. */
+export async function deferStaleSource(id, delayMs) {
+  await pool.query(
+    "UPDATE movie_provider_sources SET stale_next_check_at = now() + ($2::bigint * interval '1 millisecond') WHERE id=$1",
+    [id, Math.max(0, Math.floor(delayMs))]
+  );
+}
+
 export async function markSourceUnavailable(id) {
   const result = await pool.query(
     'UPDATE movie_provider_sources SET availability=false, updated_at=now() WHERE id=$1 AND availability ' +
@@ -1449,6 +1458,35 @@ export async function markSourceUnavailable(id) {
     [id]
   );
   return result.rows[0]?.canonical_slug || null;
+}
+
+/**
+ * Hard-delete a movie once no available source is left (stale lane, mode apply).
+ * Cascades to its sources, aliases, reviews and user favorites/history/progress.
+ * Returns the deleted canonical slug, or null when a source is still available.
+ */
+export async function deleteMovieIfNoAvailableSource(movieId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const locked = await client.query('SELECT canonical_slug FROM movies WHERE id=$1 FOR UPDATE', [movieId]);
+    const slug = locked.rows[0]?.canonical_slug;
+    const available = slug && await client.query(
+      'SELECT 1 FROM movie_provider_sources WHERE movie_id=$1 AND availability LIMIT 1', [movieId]
+    );
+    if (!slug || available.rowCount > 0) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+    await client.query('DELETE FROM movies WHERE id=$1', [movieId]);
+    await client.query('COMMIT');
+    return slug;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 /** Count of `movieIds` that would have no available source once `excludeSourceIds` are gone (log-only). */
@@ -1459,6 +1497,16 @@ export async function countMoviesWithoutAvailableSource(movieIds, excludeSourceI
     'AND NOT EXISTS (SELECT 1 FROM movie_provider_sources s WHERE s.movie_id=m.id AND s.availability ' +
     'AND s.id <> ALL($2::bigint[]))',
     [movieIds, excludeSourceIds]
+  );
+  return result.rows[0].n;
+}
+
+/** Stale sources currently pushed back by the stale lane (log-only). */
+export async function countDeferredStale(providers, olderThanMs) {
+  const result = await pool.query(
+    'SELECT count(*)::int AS n FROM movie_provider_sources WHERE availability AND provider = ANY($1::text[]) ' +
+    "AND last_success_at < now() - ($2::bigint * interval '1 millisecond') AND stale_next_check_at > now()",
+    [providers, olderThanMs]
   );
   return result.rows[0].n;
 }

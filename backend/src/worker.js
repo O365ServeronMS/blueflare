@@ -48,9 +48,12 @@ import {
   resetCompletedCheckpoint,
   listStaleSources,
   recordSourceNotFound,
+  deleteMovieIfNoAvailableSource,
   markSourceUnavailable,
   countMoviesWithoutAvailableSource,
   countUnseenSince,
+  deferStaleSource,
+  countDeferredStale,
   countMdblistOverdue,
   withHeroTrendingRefreshLock,
   getMovieInvalidationDimensions,
@@ -301,8 +304,11 @@ async function refreshStaleSourcesPass() {
       upsert: upsertCanonical,
       recordNotFound: recordSourceNotFound,
       markUnavailable: markSourceUnavailable,
+      deleteIfNoSource: deleteMovieIfNoAvailableSource,
       countNoSource: countMoviesWithoutAvailableSource,
-      countUnseen: countUnseenSince
+      countUnseen: countUnseenSince,
+      defer: deferStaleSource,
+      countDeferred: countDeferredStale
     },
     settings: {
       staleMs: config.staleSourceDays * 24 * 60 * 60 * 1000,

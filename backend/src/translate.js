@@ -2,7 +2,7 @@ import { config } from './config.js';
 import { newNonce, batchSystemPrompt, batchUserMessage, parseBatchResponse } from './translateBatch.js';
 import { getAi } from './ai/index.js';
 
-/** Provider-side limit per request; stays well under URL/body caps for gtx. */
+/** Provider-side limit per request. */
 export const TRANSLATE_CHUNK_MAX = 4000;
 
 /** The provider refused us (rate limit, captcha, forbidden): stop hammering it. */
@@ -85,53 +85,8 @@ export function splitIntoChunks(text, max = TRANSLATE_CHUNK_MAX) {
   return planChunks(text, max).map((chunk) => chunk.text);
 }
 
-/** gtx answers [[[translated, source, ...], ...], ...]; the translation is the joined segments. */
-export function parseGtxResponse(json) {
-  const segments = Array.isArray(json) ? json[0] : null;
-  if (!Array.isArray(segments)) throw new Error('unexpected translate response shape');
-  let out = '';
-  for (const segment of segments) {
-    if (Array.isArray(segment) && typeof segment[0] === 'string') out += segment[0];
-  }
-  return out;
-}
-
 function sleepMs(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * Free unofficial Google endpoint. One POST per chunk (form body, so no URL
- * length limit). 429/403 or an HTML page (captcha / consent) means blocked.
- */
-export function googleGtxProvider(options = {}) {
-  const fetchImpl = options.fetchImpl ?? fetch;
-  const timeoutMs = options.timeoutMs ?? config.translateTimeoutMs;
-  const endpoint = options.endpoint ?? 'https://translate.googleapis.com/translate_a/single';
-  return async function translateChunk(text, meta = {}) {
-    const timeout = AbortSignal.timeout(timeoutMs);
-    const response = await fetchImpl(endpoint + '?client=gtx&sl=en&tl=vi&dt=t', {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-      body: 'q=' + encodeURIComponent(text),
-      signal: meta.signal ? AbortSignal.any([timeout, meta.signal]) : timeout
-    });
-    if (response.status === 429 || response.status === 403) {
-      throw new TranslateBlockedError('translate blocked: HTTP ' + response.status);
-    }
-    const type = String(response.headers?.get?.('content-type') || '');
-    if (/text\/html/i.test(type)) throw new TranslateBlockedError('translate blocked: html response');
-    if (!response.ok) {
-      const error = new Error('translate HTTP ' + response.status);
-      error.status = response.status;
-      throw error;
-    }
-    const body = await response.text();
-    if (/^\s*</.test(body)) throw new TranslateBlockedError('translate blocked: html response');
-    let json;
-    try { json = JSON.parse(body); } catch { throw new Error('translate response is not JSON'); }
-    return parseGtxResponse(json);
-  };
 }
 
 /** Fixed system instruction: the review is data, never instructions. */
@@ -190,14 +145,17 @@ export function aiProvider(options = {}) {
   return single;
 }
 
-const PROVIDERS = { 'google-gtx': googleGtxProvider, ai: aiProvider };
+const PROVIDERS = { ai: aiProvider };
 /** Old chain names, still accepted. */
 const PROVIDER_ALIASES = { openrouter: 'ai' };
+/** Providers taken out of the code: a chain still naming one skips it with a warning instead of failing. */
+const REMOVED_PROVIDERS = new Set(['google-gtx']);
+const warnedRemoved = new Set();
 
 /** TRANSLATE_PROVIDER is an ordered, comma-separated chain; a single name still works. */
 export function parseProviderChain(value) {
   const names = String(value ?? '').split(',').map((name) => name.trim()).filter(Boolean).map((name) => PROVIDER_ALIASES[name] ?? name);
-  return [...new Set(names.length ? names : ['google-gtx'])];
+  return [...new Set(names.length ? names : ['ai'])];
 }
 
 /**
@@ -243,30 +201,27 @@ export function createTranslator(options = {}) {
 
 /**
  * The usable providers of the chain, in order: `{ name, translate, delayMs, cooldownMs }`.
- * `ai` is left out when role TRANSLATE has no provider with a key and a model, so a deploy
- * without AI keys behaves exactly like the remaining providers.
+ * `ai` is left out when role TRANSLATE has no provider with a key and a model.
  */
 export function buildTranslators(settings = config, options = {}) {
   const out = [];
   for (const name of parseProviderChain(settings.translateProvider)) {
-    if (!PROVIDERS[name]) throw new Error('unknown TRANSLATE_PROVIDER: ' + name);
-    if (name === 'ai') {
-      const ai = options.ai ?? getAi();
-      if (!ai.available('TRANSLATE')) continue;
-      out.push({
-        name,
-        translate: createTranslator({ provider: name, ai, retries: 0 }), // the AI module retries and falls back itself
-        delayMs: 0, // spacing is per model inside the AI module
-        cooldownMs: ai.config.cooldownMs
-      });
-    } else {
-      out.push({
-        name,
-        translate: createTranslator({ provider: name, timeoutMs: settings.translateTimeoutMs, fetchImpl: options.fetchImpl }),
-        delayMs: settings.translateDelayMs,
-        cooldownMs: settings.translateCooldownMs
-      });
+    if (REMOVED_PROVIDERS.has(name)) {
+      if (!warnedRemoved.has(name)) {
+        warnedRemoved.add(name);
+        console.warn('[worker] review translate: provider ' + name + ' was removed, drop it from TRANSLATE_PROVIDER');
+      }
+      continue;
     }
+    if (!PROVIDERS[name]) throw new Error('unknown TRANSLATE_PROVIDER: ' + name);
+    const ai = options.ai ?? getAi();
+    if (!ai.available('TRANSLATE')) continue;
+    out.push({
+      name,
+      translate: createTranslator({ provider: name, ai, retries: 0 }), // the AI module retries and falls back itself
+      delayMs: 0, // spacing is per model inside the AI module
+      cooldownMs: ai.config.cooldownMs
+    });
   }
   return out;
 }

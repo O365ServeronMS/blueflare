@@ -17,8 +17,6 @@ function normalized(text) {
   return String(text).replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
-const label = (name) => String(name).replace(/^google-/, '');
-
 /**
  * Translate stored reviews that have no fresh Vietnamese text. Worker-only,
  * strictly sequential. Providers form an ordered chain (TRANSLATE_PROVIDER): the
@@ -53,13 +51,13 @@ export async function syncReviewTranslations(deps = {}) {
 
   const providers = deps.providers
     ?? (deps.translate
-      ? [{ name: String(settings.translateProvider).split(',')[0].trim() || 'google-gtx', translate: deps.translate, delayMs: settings.translateDelayMs, cooldownMs: settings.translateCooldownMs }]
+      ? [{ name: String(settings.translateProvider).split(',')[0].trim() || 'ai', translate: deps.translate, delayMs: 0, cooldownMs: settings.translateCooldownMs }]
       : null);
   const chain = providers ?? buildTranslators(settings, { ai: deps.ai });
   if (!chain.length) {
     if (!state.warnedNoProvider) {
       state.warnedNoProvider = true;
-      console.warn('[worker] review translate: no usable provider (set LLM_BASE_URL+LLM_API_KEY or OPENROUTER_API_KEY, or add google-gtx to TRANSLATE_PROVIDER)');
+      console.warn('[worker] review translate: no usable provider (set LLM_BASE_URL+LLM_API_KEY or OPENROUTER_API_KEY)');
     }
     return [];
   }
@@ -81,7 +79,7 @@ export async function syncReviewTranslations(deps = {}) {
 
   const changed = new Set();
   const counts = { checked: 0, ok: 0, failed: 0, blocked: 0 };
-  const used = Object.fromEntries(chain.map((p) => [label(p.name), 0]));
+  const used = Object.fromEntries(chain.map((p) => [p.name, 0]));
   const modelUsed = {};
   const keyUsed = {};
   const lastCall = {};
@@ -90,7 +88,7 @@ export async function syncReviewTranslations(deps = {}) {
   const openCooldown = (provider, error) => {
     const wait = Number(error.retryAfterMs) > 0 ? error.retryAfterMs : provider.cooldownMs ?? settings.translateCooldownMs;
     stateOf(provider.name).cooldownUntil = now() + wait;
-    state.lastBlock = label(provider.name) + ': ' + String(error?.message ?? '').slice(0, 160);
+    state.lastBlock = provider.name + ': ' + String(error?.message ?? '').slice(0, 160);
   };
 
   if (settings.translateBatchEnabled) {
@@ -110,7 +108,7 @@ export async function syncReviewTranslations(deps = {}) {
           if (abort.signal.aborted) { outOfTime = true; return; }
           if (error?.blocked) {
             counts.blocked += 1;
-            console.warn('[worker] review translate blocked (' + label(batcher.name) + ', batch):', error.message);
+            console.warn('[worker] review translate blocked (' + batcher.name + ', batch):', error.message);
             openCooldown(batcher, error);
             return;
           }
@@ -130,7 +128,7 @@ export async function syncReviewTranslations(deps = {}) {
           counts.checked += 1;
           if (await record(review.id, review.contentHash, value, meta.model ? (meta.provider ?? batcher.name) + ':' + meta.model : batcher.name)) {
             counts.ok += 1;
-            used[label(batcher.name)] += 1;
+            used[batcher.name] += 1;
             if (meta.model) modelUsed[meta.model] = (modelUsed[meta.model] ?? 0) + 1;
             if (value) changed.add(review.slug);
           }
@@ -160,7 +158,7 @@ export async function syncReviewTranslations(deps = {}) {
         counts.failed += 1;
         await recordFailure(review.id, { retryMs: settings.translateCooldownMs }).catch(() => {});
         console.warn('[worker] review translate failed for ' + review.slug + ' (content refused by ' +
-          [...contentFailed.keys()].map(label).join(',') + '):', [...contentFailed.values()].at(-1)?.message);
+          [...contentFailed.keys()].join(',') + '):', [...contentFailed.values()].at(-1)?.message);
         break;
       }
       if (lastCall[provider.name] != null && provider.delayMs > 0) {
@@ -176,7 +174,7 @@ export async function syncReviewTranslations(deps = {}) {
         const value = normalized(translated) === normalized(review.content) ? '' : translated;
         if (await record(review.id, review.contentHash, value, meta.model ? (meta.provider ?? provider.name) + ':' + meta.model : provider.name)) {
           counts.ok += 1;
-          used[label(provider.name)] += 1;
+          used[provider.name] += 1;
           if (meta.key) keyUsed[meta.key] = (keyUsed[meta.key] ?? 0) + 1;
           if (meta.model) modelUsed[meta.model] = (modelUsed[meta.model] ?? 0) + 1;
           if (value) changed.add(review.slug);
@@ -189,7 +187,7 @@ export async function syncReviewTranslations(deps = {}) {
         if (abort.signal.aborted) { outOfTime = true; counts.checked -= 1; break outer; }
         if (error?.blocked) {
           counts.blocked += 1;
-          console.warn('[worker] review translate blocked (' + label(provider.name) + '):', error.message);
+          console.warn('[worker] review translate blocked (' + provider.name + '):', error.message);
           openCooldown(provider, error);
           continue; // same review, next provider
         }
@@ -202,7 +200,7 @@ export async function syncReviewTranslations(deps = {}) {
         consecutive += 1;
         stateOf(provider.name).errors += 1;
         await recordFailure(review.id, { retryMs: settings.translateCooldownMs }).catch(() => {});
-        console.warn('[worker] review translate failed for ' + review.slug + ' (' + label(provider.name) + '):', error?.message);
+        console.warn('[worker] review translate failed for ' + review.slug + ' (' + provider.name + '):', error?.message);
         done = true;
         if (consecutive >= settings.translateMaxConsecutiveErrors) {
           state.cooldownUntil = now() + settings.translateCooldownMs;

@@ -95,10 +95,8 @@ export const config = Object.freeze({
   translateReviewsPerCycle: integer('TRANSLATE_REVIEWS_PER_CYCLE', 150, 1),
   // Wall-clock budget of one translation pass; the rest waits for the next cycle.
   translatePassMaxMs: integer('TRANSLATE_PASS_MAX_MS', 10 * 60 * 1000, 1000),
-  translateDelayMs: integer('TRANSLATE_DELAY_MS', 1000, 0),
   translateMaxConsecutiveErrors: integer('TRANSLATE_MAX_CONSECUTIVE_ERRORS', 5, 1),
   translateCooldownMs: integer('TRANSLATE_COOLDOWN_MS', 60 * 60 * 1000, 1000),
-  translateTimeoutMs: integer('TRANSLATE_TIMEOUT_MS', 10000, 1000),
   // Several reviews per request (one free-tier request instead of one per review).
   translateBatchEnabled: boolean('TRANSLATE_BATCH_ENABLED', false),
   translateBatchMaxChars: integer('TRANSLATE_BATCH_MAX_CHARS', 8000, 500),

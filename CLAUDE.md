@@ -51,8 +51,8 @@ Five loops run outside the request path. None of them may be moved into the requ
 - **Ratings:** enriches approved visible rows with MDBList Rotten Tomatoes critic/audience scores under a per-key daily budget.
 - **TMDB recommendations and credits:** refreshes TMDB recommendation/similar id lists for the detail-page rail, and TMDB cast/director credits for rows with a verified TMDB identity.
 - **Reviews:** refreshes TMDB user reviews (`TMDB_REVIEWS_*`, table `movie_reviews`, verified identity only; the worker is the only caller, never a request path) and stores them as plain text. Reviews are re-fetchable from TMDB, not irreplaceable state.
-- **Translation:** a separate worker-only pass right after the reviews pass machine-translates stored English reviews to Vietnamese (`TRANSLATE_*`, columns `content_vi`/`translated_hash` on `movie_reviews`). It is sequential and never a request path; only public TMDB review text is sent; column `translate_provider` = `<provider>:<model>` (e.g. `openrouter:<model>`)/`google-gtx`.
-  - Ordered provider chain `TRANSLATE_PROVIDER`, default `ai` (the AI module, role `TRANSLATE`; `openrouter` is an old alias), with the free unofficial Google gtx endpoint as an optional fallback.
+- **Translation:** a separate worker-only pass right after the reviews pass machine-translates stored English reviews to Vietnamese (`TRANSLATE_*`, columns `content_vi`/`translated_hash` on `movie_reviews`). It is sequential and never a request path; only public TMDB review text is sent; column `translate_provider` = `<provider>:<model>` (e.g. `openrouter:<model>`; older rows may say `google-gtx`).
+  - Provider `TRANSLATE_PROVIDER=ai` (the AI module, role `TRANSLATE`; `openrouter` is an old alias). The unofficial Google gtx endpoint was removed because Google blocked the VPS IP for good; `google-gtx` in the chain is skipped with a warning. Do not add it back.
   - Paid cap: `AI_PAID_DAILY_OUTPUT_TOKENS_TRANSLATE` / `AI_PAID_DAILY_OUTPUT_TOKENS_MATCH` cap the completion tokens of all non-`:free` models of a role together per UTC day (column `output_tokens` of `ai_quota_ledger`, 033); `:free` models keep serving after it. There is deliberately no total daily token cap (`OPENROUTER_*_DAILY_TOKENS` were removed on purpose; do not reintroduce them).
   - Time budget: `TRANSLATE_PASS_MAX_MS` (default 10 min) caps one pass; past it no review starts and the request in flight is aborted through its signal, so slow free models cannot push the cycle past its deadline.
   - Batching: `TRANSLATE_BATCH_ENABLED` (default `false`) packs several reviews into one nonce-delimited request, validated and split on a bad answer (`translateBatch.js`).
@@ -151,7 +151,7 @@ The Cloudflare IP ranges in `lib/account-proxy.ts` are hardcoded; refresh them f
 | `tmdbReviews.js`, `tmdbReviewsSync.js` | plain-text normalising, score, spoiler flag; worker pass |
 | `reviewSpoiler.js`, `reviewOrder.js` | spoiler detection; display order + cache keys |
 | `ai/` (`index.js`, `config.js`, `client.js`, `util.js`) | the only AI client: roles, env + defaults, primary→OpenRouter fallback, retries, response_format downgrade, quota/paid cap via the ledger, UTC-day helpers (doc `backend/AI.md`) |
-| `translate.js`, `reviewTranslateSync.js` | chunking + `ai` and gtx providers + provider chain; worker translation pass |
+| `translate.js`, `reviewTranslateSync.js` | chunking + `ai` provider + provider chain; worker translation pass |
 | `translateBatch.js` | batched translation requests |
 | `tmdbMatch.js` | cast-verified match |
 | `tmdbMatchAi.js`, `tmdbMatchAiSync.js`, `tmdbMatchAiLoop.js` | AI match: candidates, prompt, two-tier gate; pass engine (`tmdb_match_ai_runs`); fourth worker loop |
@@ -209,7 +209,7 @@ The two Caddy site blocks live inline in `bootstrap-vps.sh`, not as separate fil
 
 - `GET /api/movies/:slug/reviews` is public and cached 60s, keyed `reviews:<slug>:<page>:<limit>` only (never cookies, user agent or `returnTo`); the browser "Xem thêm" button calls it on `img.bluesia.net` like other client catalog calls. Page 1 (2 reviews) rides along in `GET /api/movie/:slug`.
 - Each review carries `contentVi` (null unless a translation of the current English text exists).
-- A provider can be blocked at any time (gtx is unofficial); it then goes into its own cooldown (`TRANSLATE_COOLDOWN_MS` / `AI_COOLDOWN_MS`), the next provider in the chain continues the same review, and the API fails open to English when none is left.
+- A provider can be blocked at any time; it then goes into its own cooldown (`TRANSLATE_COOLDOWN_MS` / `AI_COOLDOWN_MS`), the next provider in the chain continues the same review, and the API fails open to English when none is left.
 - `hasSpoiler` and `score` are computed on the English text, never on the translation.
 
 ### Caching and revalidation

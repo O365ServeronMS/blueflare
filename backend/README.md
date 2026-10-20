@@ -233,20 +233,19 @@ Reviews are re-fetchable, so they are not irreplaceable state.
 Separate worker-only pass (`reviewTranslateSync.js`, right after the reviews
 pass in each sync cycle). It translates the English `content` to Vietnamese
 through an ordered provider chain (`TRANSLATE_PROVIDER`, `translate.js`): by
-default `ai`, the AI module's role `TRANSLATE` (see [AI module](#ai-module)), with the
-free, unofficial Google gtx endpoint (`google-gtx`) as an optional fallback. Only
+`ai`, the AI module's role `TRANSLATE` (see [AI module](#ai-module)), the only
+provider. The free unofficial Google gtx endpoint was removed after Google blocked
+the VPS IP; a chain still naming `google-gtx` skips it with one warning. Only
 public TMDB review text is sent to a provider. A provider can start refusing us
-at any time (gtx is unofficial, free quotas run out), so everything fails open:
-the API simply serves English.
+at any time (free quotas run out), so everything fails open: the API simply
+serves English.
 
 - Queue: reviews of ready rows with no fresh translation (`content_vi IS NULL`
   or `translated_hash` differs from `content_hash`), skipping rows backing off
   (`translate_retry_at`), at most `TRANSLATE_REVIEWS_PER_CYCLE` per cycle. Reviews
   likely on page 1 of their title (spoiler-flagged and best score band first, the
   display order of `reviewOrder.js` without the daily shuffle) go first, then
-  oldest first. Sequential, spaced
-  per provider: `TRANSLATE_DELAY_MS` for gtx; the AI module spaces each model by its
-  own RPM.
+  oldest first. Sequential; the AI module spaces each model by its own RPM.
 - Chunking: long text is split into chunks of at most 4000 chars on
   paragraph/sentence boundaries and rejoined keeping line breaks; transient errors
   retry twice with backoff.
@@ -259,8 +258,7 @@ the API simply serves English.
   backlog drains over many cycles (150 per cycle by default), not at once. A
   review whose translation equals the source is stored as `''` so it leaves the
   queue without showing a translation.
-- Cooldown: a blocked provider (gtx: HTTP 429/403 or an HTML captcha/consent
-  page) cools down alone and the same review continues on the next provider in
+- Cooldown: a blocked provider cools down alone and the same review continues on the next provider in
   the chain. The pass ends only when no provider is available, or after
   `TRANSLATE_MAX_CONSECUTIVE_ERRORS` provider-level failures in a row (it then
   pauses for `TRANSLATE_COOLDOWN_MS`). Cooldown state is in memory (a worker
@@ -276,8 +274,8 @@ the API simply serves English.
 - Log line: `[worker] review translate checked= ok= failed= blocked=
   providers=ai:N models=<model id>:A,<model id>:B keys=<provider> k1:N`
   (`keys=` only when the AI module answered). `translate_provider` stores
-  `<provider>:<model id>` (`tokenharbor.ai:<model>`, `openrouter:<model>`) or
-  `google-gtx` (rows written earlier may still say `gemini:<model>`).
+  `<provider>:<model id>` (`tokenharbor.ai:<model>`, `openrouter:<model>`); rows
+  written earlier may still say `google-gtx` or `gemini:<model>`.
 - Storage: migration `026_review_translation.sql` adds `content_vi`,
   `translated_hash`, `translated_at`, `translate_failed_at`,
   `translate_retry_at` to `movie_reviews`; migration
@@ -294,10 +292,8 @@ the API simply serves English.
 | Variable | Meaning |
 | --- | --- |
 | `TRANSLATE_ENABLED` | Run the pass; off keeps reviews English. |
-| `TRANSLATE_PROVIDER` | Ordered comma-separated chain of `ai`, `google-gtx`, e.g. `ai,google-gtx` (`openrouter` = old alias of `ai`). |
+| `TRANSLATE_PROVIDER` | Provider chain; only `ai` (`openrouter` = old alias). `google-gtx` was removed and is skipped with a warning. |
 | `TRANSLATE_REVIEWS_PER_CYCLE` | Reviews translated per cycle. |
-| `TRANSLATE_DELAY_MS` | gtx only: spacing between calls. |
-| `TRANSLATE_TIMEOUT_MS` | gtx only: per-call timeout. |
 | `TRANSLATE_MAX_CONSECUTIVE_ERRORS` | Provider-level failures in a row before the pass pauses. |
 | `TRANSLATE_COOLDOWN_MS` | Pause / cooldown after a block or too many errors. |
 | `TRANSLATE_BATCH_ENABLED` | Pack several reviews per AI request. |

@@ -10,8 +10,6 @@ import {
   buildTranslators,
   parseProviderChain,
   createTranslator,
-  googleGtxProvider,
-  parseGtxResponse,
   planChunks,
   splitIntoChunks
 } from '../src/translate.js';
@@ -42,31 +40,10 @@ test('chunking: paragraph breaks survive a round trip through the planner', () =
   assert.equal(planChunks(text).length, 1);
 });
 
-test('parseGtxResponse: joins segments, rejects bad shapes', () => {
-  assert.equal(parseGtxResponse([[['Xin chao. ', 'Hello. ', null], ['The gioi\n', 'World\n']], null, 'en']), 'Xin chao. The gioi\n');
-  assert.throws(() => parseGtxResponse({}), /shape/);
-  assert.throws(() => parseGtxResponse([null]), /shape/);
-});
-
 const res = (status, body, type = 'application/json') => ({
   status, ok: status >= 200 && status < 300,
   headers: { get: () => type },
   text: async () => body
-});
-
-test('gtx provider: POST form body, parses, detects blocked responses', async () => {
-  let seen;
-  const ok = googleGtxProvider({ timeoutMs: 1000, fetchImpl: async (url, init) => { seen = { url, init }; return res(200, JSON.stringify([[['Chao', 'Hi']]])); } });
-  assert.equal(await ok('Hi & bye'), 'Chao');
-  assert.match(seen.url, /translate_a\/single\?client=gtx&sl=en&tl=vi&dt=t/);
-  assert.equal(seen.init.method, 'POST');
-  assert.equal(seen.init.body, 'q=' + encodeURIComponent('Hi & bye'));
-  for (const response of [res(429, ''), res(403, ''), res(200, '<html>captcha</html>', 'text/html'), res(200, '  <!doctype html>')]) {
-    const p = googleGtxProvider({ timeoutMs: 1000, fetchImpl: async () => response });
-    await assert.rejects(p('x'), (e) => e instanceof TranslateBlockedError && e.blocked === true);
-  }
-  const bad = googleGtxProvider({ timeoutMs: 1000, fetchImpl: async () => res(500, 'no') });
-  await assert.rejects(bad('x'), (e) => !e.blocked && e.status === 500);
 });
 
 test('translator: retries transient errors with backoff, never retries blocked, keeps breaks', async () => {
@@ -89,7 +66,7 @@ test('translator: retries transient errors with backoff, never retries blocked, 
   await assert.rejects(async () => createTranslator({ provider: 'nope' }), /unknown/);
 });
 
-const cfg = { translateEnabled: true, translateProvider: 'google-gtx', translateReviewsPerCycle: 10, translateDelayMs: 5, translateMaxConsecutiveErrors: 3, translateCooldownMs: 1000, translateTimeoutMs: 1000 };
+const cfg = { translateEnabled: true, translateProvider: 'ai', translateReviewsPerCycle: 10, translateMaxConsecutiveErrors: 3, translateCooldownMs: 1000 };
 const pend = (n) => Array.from({ length: n }, (_, i) => ({ id: 'r' + i, slug: 's' + (i % 2), content: 'text ' + i, contentHash: 'h' + i }));
 
 function harness(overrides = {}) {
@@ -106,13 +83,12 @@ function harness(overrides = {}) {
   return { deps, log };
 }
 
-test('sync: translates sequentially with spacing, returns changed slugs, stores source hash', async () => {
+test('sync: translates sequentially, returns changed slugs, stores source hash', async () => {
   const { deps, log } = harness();
   const changed = await syncReviewTranslations(deps);
   assert.deepEqual(changed.sort(), ['s0', 's1']);
   assert.equal(log.recorded.length, 6);
   assert.deepEqual(log.recorded[2], { id: 'r2', hash: 'h2', value: 'VI text 2' });
-  assert.equal(log.sleeps.length, 5);
 });
 
 test('sync: disabled, nothing pending, and echoed text', async () => {
@@ -239,16 +215,21 @@ test('stray CJK in a translation of a CJK-free source is a content refusal; a CJ
 
 const aiFor = (vars = {}, extra = {}) => createAi({ env: { OPENROUTER_API_KEY: SECRET, OPENROUTER_MODEL_TRANSLATE: 'a/one:0', AI_COOLDOWN_MS: '6000', ...vars }, warn: () => {}, ...extra });
 
-test('chain config: ordered, single value works, no AI provider skips ai, unknown throws', () => {
-  assert.deepEqual(parseProviderChain(' google-gtx , ai,google-gtx'), ['google-gtx', 'ai']);
-  assert.deepEqual(parseProviderChain('openrouter,google-gtx'), ['ai', 'google-gtx'], 'old name still accepted');
-  assert.deepEqual(parseProviderChain(''), ['google-gtx']);
-  assert.deepEqual(buildTranslators({ ...cfg, translateProvider: 'google-gtx' }, { ai: aiFor() }).map((p) => p.name), ['google-gtx']);
+test('chain config: ordered, single value works, no AI provider skips ai, removed gtx is skipped, unknown throws', () => {
+  assert.deepEqual(parseProviderChain(' ai , openrouter'), ['ai'], 'old name still accepted, duplicates dropped');
+  assert.deepEqual(parseProviderChain(''), ['ai']);
+  const both = buildTranslators({ ...cfg, translateProvider: 'openrouter' }, { ai: aiFor() });
+  assert.deepEqual(both.map((p) => [p.name, p.delayMs, p.cooldownMs]), [['ai', 0, 6000]]);
   const noKeys = createAi({ env: {}, warn: () => {} });
-  assert.deepEqual(buildTranslators({ ...cfg, translateProvider: 'google-gtx,ai' }, { ai: noKeys }).map((p) => p.name), ['google-gtx']);
-  const both = buildTranslators({ ...cfg, translateProvider: 'google-gtx,openrouter' }, { ai: aiFor() });
-  assert.deepEqual(both.map((p) => [p.name, p.delayMs, p.cooldownMs]), [['google-gtx', 5, cfg.translateCooldownMs], ['ai', 0, 6000]]);
   assert.deepEqual(buildTranslators({ ...cfg, translateProvider: 'ai' }, { ai: noKeys }), []);
+  const warnings = [];
+  const warn = console.warn; console.warn = (m) => warnings.push(m);
+  try {
+    assert.deepEqual(buildTranslators({ ...cfg, translateProvider: 'ai,google-gtx' }, { ai: aiFor() }).map((p) => p.name), ['ai']);
+    assert.deepEqual(buildTranslators({ ...cfg, translateProvider: 'google-gtx' }, { ai: aiFor() }), []);
+  } finally { console.warn = warn; }
+  assert.equal(warnings.length, 1, 'the removed provider is announced once');
+  assert.match(warnings[0], /google-gtx was removed/);
   assert.throws(() => buildTranslators({ ...cfg, translateProvider: 'nope' }, { ai: noKeys }), /unknown/);
 });
 
@@ -258,40 +239,40 @@ function chain(behaviour = {}) {
     name, delayMs, cooldownMs,
     translate: async (t) => { calls.push(name); return (behaviour[name] ?? ((x) => name + ':' + x))(t); }
   });
-  return { calls, providers: [mk('google-gtx', 5, 1000), mk('openrouter', 50, 6000)] };
+  return { calls, providers: [mk('first', 5, 1000), mk('openrouter', 50, 6000)] };
 }
 const blockedErr = (ms) => Object.assign(new TranslateBlockedError('429'), { retryAfterMs: ms });
 
-test('chain: gtx first; blocked gtx continues the same review on openrouter and is skipped afterwards', async () => {
+test('chain: blocked first provider continues the same review on openrouter and is skipped afterwards', async () => {
   let n = 0;
-  const c = chain({ 'google-gtx': (t) => { n += 1; if (n === 3) throw blockedErr(null); return 'g:' + t; } });
+  const c = chain({ 'first': (t) => { n += 1; if (n === 3) throw blockedErr(null); return 'g:' + t; } });
   const { deps, log } = harness({ providers: c.providers, translate: undefined });
   const logs = [];
   const orig = console.log; console.log = (m) => logs.push(m);
   try { await syncReviewTranslations(deps); } finally { console.log = orig; }
-  assert.deepEqual(c.calls, ['google-gtx', 'google-gtx', 'google-gtx', 'openrouter', 'openrouter', 'openrouter', 'openrouter']);
+  assert.deepEqual(c.calls, ['first', 'first', 'first', 'openrouter', 'openrouter', 'openrouter', 'openrouter']);
   assert.equal(log.recorded.length, 6);
   assert.equal(log.recorded[2].value, 'openrouter:text 2');
   assert.equal(log.failed.length, 0);
-  assert.equal(deps.state.providers['google-gtx'].cooldownUntil, 2000);
+  assert.equal(deps.state.providers['first'].cooldownUntil, 2000);
   assert.equal(deps.state.cooldownUntil, 0);
-  assert.match(logs.at(-1), /checked=6 ok=6 failed=0 blocked=1 providers=gtx:2,openrouter:4/);
+  assert.match(logs.at(-1), /checked=6 ok=6 failed=0 blocked=1 providers=first:2,openrouter:4/);
 });
 
 test('chain: provider recorded per review', async () => {
   let n = 0;
-  const c = chain({ 'google-gtx': (t) => { n += 1; if (n > 1) throw blockedErr(null); return 'g' + t; } });
+  const c = chain({ 'first': (t) => { n += 1; if (n > 1) throw blockedErr(null); return 'g' + t; } });
   const stored = [];
   const { deps } = harness({ providers: c.providers, translate: undefined, listPending: async () => pend(2), record: async (id, h, v, p) => { stored.push([id, p]); return true; } });
   await syncReviewTranslations(deps);
-  assert.deepEqual(stored, [['r0', 'google-gtx'], ['r1', 'openrouter']]);
+  assert.deepEqual(stored, [['r0', 'first'], ['r1', 'openrouter']]);
 });
 
 test('chain: both blocked ends the pass, review untouched, pass cooldown is the earliest provider', async () => {
-  const c = chain({ 'google-gtx': () => { throw blockedErr(null); }, openrouter: () => { throw blockedErr(34000); } });
+  const c = chain({ 'first': () => { throw blockedErr(null); }, openrouter: () => { throw blockedErr(34000); } });
   const { deps, log } = harness({ providers: c.providers, translate: undefined });
   assert.deepEqual(await syncReviewTranslations(deps), []);
-  assert.deepEqual(c.calls, ['google-gtx', 'openrouter']);
+  assert.deepEqual(c.calls, ['first', 'openrouter']);
   assert.equal(log.failed.length, 0);
   assert.equal(deps.state.providers.openrouter.cooldownUntil, 1000 + 34000);
   assert.equal(deps.state.cooldownUntil, 2000);
@@ -299,7 +280,7 @@ test('chain: both blocked ends the pass, review untouched, pass cooldown is the 
   deps.listPending = async () => { listed += 1; return pend(1); };
   await syncReviewTranslations(deps);
   assert.equal(listed, 0);
-  // gtx cooldown over, openrouter still cooling: only gtx is tried.
+  // first cooldown over, openrouter still cooling: only first is tried.
   log.time = 2000;
   c.providers[0].translate = async () => 'back';
   await syncReviewTranslations(deps);
@@ -308,7 +289,7 @@ test('chain: both blocked ends the pass, review untouched, pass cooldown is the 
 });
 
 test('chain: openrouter safety refusal is a per-review failure with backoff, not a provider block', async () => {
-  const c = chain({ 'google-gtx': () => { throw blockedErr(null); }, openrouter: (t) => { if (t === 'text 0') throw new TranslateContentError('SAFETY'); return 'ok'; } });
+  const c = chain({ 'first': () => { throw blockedErr(null); }, openrouter: (t) => { if (t === 'text 0') throw new TranslateContentError('SAFETY'); return 'ok'; } });
   const { deps, log } = harness({ providers: c.providers, translate: undefined, listPending: async () => pend(2) });
   await syncReviewTranslations(deps);
   assert.deepEqual(log.failed, [{ id: 'r0', retryMs: 1000 }]);
@@ -317,7 +298,7 @@ test('chain: openrouter safety refusal is a per-review failure with backoff, not
 });
 
 test('chain: each provider keeps its own delay; no usable provider is a no-op', async () => {
-  const c = chain({ 'google-gtx': () => { throw blockedErr(null); } });
+  const c = chain({ 'first': () => { throw blockedErr(null); } });
   const { deps, log } = harness({ providers: c.providers, translate: undefined, listPending: async () => pend(3) });
   await syncReviewTranslations(deps);
   assert.deepEqual(log.sleeps, [50, 50]);
@@ -340,19 +321,19 @@ test('chain: injected review text reaches the provider only as the text argument
 
 test('chain: content refusal falls through to the next provider for the same review, no error streak', async () => {
   const refuse = () => { throw new TranslateContentError('SAFETY'); };
-  const c = chain({ 'google-gtx': refuse });
+  const c = chain({ 'first': refuse });
   const { deps, log } = harness({ providers: c.providers, translate: undefined, listPending: async () => pend(8) });
   await syncReviewTranslations(deps);
   assert.equal(log.recorded.length, 8);
   assert.equal(log.recorded[0].value, 'openrouter:text 0');
   assert.equal(log.failed.length, 0);
   assert.equal(deps.state.cooldownUntil, 0);
-  assert.equal(deps.state.providers['google-gtx'].cooldownUntil, 0);
+  assert.equal(deps.state.providers['first'].cooldownUntil, 0);
 });
 
 test('chain: 5+ all-provider content refusals back off each review once and never open the cooldown', async () => {
   const refuse = () => { throw new TranslateContentError('SAFETY'); };
-  const c = chain({ 'google-gtx': refuse, openrouter: refuse });
+  const c = chain({ 'first': refuse, openrouter: refuse });
   const { deps, log } = harness({ providers: c.providers, translate: undefined, listPending: async () => pend(6) });
   await syncReviewTranslations(deps);
   assert.equal(log.failed.length, 6);
@@ -363,7 +344,7 @@ test('chain: 5+ all-provider content refusals back off each review once and neve
 });
 
 test('chain: provider-level errors still count toward the consecutive breaker', async () => {
-  const c = chain({ 'google-gtx': () => { throw new Error('boom'); } });
+  const c = chain({ 'first': () => { throw new Error('boom'); } });
   const { deps, log } = harness({ providers: c.providers, translate: undefined, listPending: async () => pend(6) });
   await syncReviewTranslations(deps);
   assert.equal(log.failed.length, 3);
@@ -401,15 +382,6 @@ test('sync: records openrouter:<model>, logs per-model counts, never logs the ke
   assert.deepEqual(log.recorded, [['vi', 'openrouter:m1'], ['vi', 'openrouter:m1']]);
   assert.ok(log.logs.some((m) => /providers=ai:2 models=m1:2/.test(m)), log.logs.join('\n'));
   assert.ok(log.logs.every((m) => !String(m).includes(SECRET)));
-});
-
-test('sync chain: the AI key rejected continues the same review on gtx continues the same review on gtx', async () => {
-  const state = { cooldownUntil: 0 };
-  const log = await runSync(orSettings('ai,google-gtx'), async (url) => (
-    /translate_a\/single/.test(String(url)) ? res(200, JSON.stringify([[['gtx vi', 'x']]])) : or(401, { error: { message: 'no auth' } })
-  ), { state });
-  assert.deepEqual(log.recorded, [['gtx vi', 'google-gtx'], ['gtx vi', 'google-gtx']]);
-  assert.ok(state.providers.ai.cooldownUntil > 1000);
 });
 
 test('sync: with only ai and the key rejected the pass ends without failing reviews', async () => {
@@ -460,10 +432,18 @@ test('sync batch: a rejected answer splits the group, every review still ends tr
 });
 
 test('sync batch: blocked batch leaves the reviews to the per-review path of the next provider', async () => {
-  const log = await runSync({ ...orSettings('ai,google-gtx'), translateBatchEnabled: true, translateBatchMaxChars: 8000, translateBatchMaxItems: 12 },
-    async (url) => (/translate_a\/single/.test(String(url)) ? res(200, JSON.stringify([[['gtx vi', 'x']]])) : or(401, { error: { message: 'no auth' } })),
-    { count: 3 });
-  assert.deepEqual(log.recorded.map((r) => r[1]), ['google-gtx', 'google-gtx', 'google-gtx']);
+  const batching = { name: 'ai', delayMs: 0, cooldownMs: 1000, translate: Object.assign(async () => 'unused', { batch: async () => { throw blockedErr(null); } }) };
+  const single = { name: 'openrouter', delayMs: 0, cooldownMs: 1000, translate: async (t) => 'vi ' + t };
+  const stored = [];
+  const { deps } = harness({
+    providers: [batching, single], translate: undefined, listPending: async () => pend(3),
+    record: async (id, h, v, p) => { stored.push(p); return true; }
+  });
+  deps.config = { ...cfg, translateBatchEnabled: true, translateBatchMaxChars: 8000, translateBatchMaxItems: 12 };
+  const orig = console.log, warn = console.warn; console.log = () => {}; console.warn = () => {};
+  try { await syncReviewTranslations(deps); } finally { console.log = orig; console.warn = warn; }
+  assert.deepEqual(stored, ['openrouter', 'openrouter', 'openrouter']);
+  assert.ok(deps.state.providers.ai.cooldownUntil > 1000);
 });
 
 test('time budget: no new review starts past TRANSLATE_PASS_MAX_MS, nothing is failed or cooled down', async () => {
@@ -502,20 +482,13 @@ test('time budget: the request in flight is aborted and its review stays pending
   assert.equal(deps.state.cooldownUntil, 0);
 });
 
-test('providers forward the pass signal: ai to the AI module, gtx to fetch', async () => {
+test('the ai provider forwards the pass signal to the AI module', async () => {
   const { aiProvider } = await import('../src/translate.js');
   const controller = new AbortController();
   let aiSignal;
   const ai = { chat: async (role, messages, opts) => { aiSignal = opts.signal; return { value: 'xin chao', model: 'm', provider: 'p', key: 'k' }; } };
   await aiProvider({ ai })('hello', { signal: controller.signal });
   assert.equal(aiSignal, controller.signal);
-
-  let fetchSignal;
-  const gtx = googleGtxProvider({ timeoutMs: 60000, fetchImpl: async (url, init) => { fetchSignal = init.signal; return res(200, JSON.stringify([[['Chao', 'Hi']]])); } });
-  await gtx('Hi', { signal: controller.signal });
-  assert.equal(fetchSignal.aborted, false);
-  controller.abort();
-  assert.equal(fetchSignal.aborted, true);
 });
 
 test('paused pass: a skipped pass logs once per cooldown with its end and the last block', async () => {

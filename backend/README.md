@@ -70,7 +70,7 @@ the browser connects to the selected provider.
 | `postgres` | Canonical movies and provider provenance. |
 | `valkey` | Final JSON responses and cache-version invalidation. |
 | `image-cache-init` | One-shot `mkdir`+`chown` of the image cache directory. It exits 0 and stays exited; `api` waits for that completion because it runs as uid 1000 and cannot write a root-owned bind mount. |
-| `backup` | Scheduled dump to an S3-compatible store. Exits 0 and stays exited when `BACKUP_ENABLED=false`. |
+| `backup` | Scheduled dump to an S3-compatible store. Idles without backing up when `BACKUP_ENABLED=false`. |
 
 The `frontend` service is covered under [Caddy](#caddy). Caddy is the public TLS
 boundary.
@@ -526,8 +526,8 @@ The `backup` service takes a scheduled offsite backup: `pg_dump -Fc`, verified
 with `pg_restore --list` before it counts as a backup, uploaded to an
 S3-compatible object store, then pruned on both ends (`BACKUP_KEEP_LOCAL` for
 fast local restores, `BACKUP_KEEP_REMOTE` for the actual backup). It is off
-unless `BACKUP_ENABLED=true`, and sits at `Exited (0)` when off rather than
-restart-looping. The image cache is deliberately excluded: it rebuilds itself
+unless `BACKUP_ENABLED=true`; when off it idles rather than exiting, so
+`restart: unless-stopped` neither loops nor loses the daemon after a reboot. The image cache is deliberately excluded: it rebuilds itself
 from `image_assets` and the worker prewarms it.
 
 The target is any S3-compatible store, so changing provider is an env change

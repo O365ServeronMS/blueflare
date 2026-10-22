@@ -222,9 +222,10 @@ services:
     container_name: blueflare-backup
     build:
       context: ${BLUEFLARE_SRC:-/home/ubuntu/blueflare}/infra/backup
-    # on-failure, not unless-stopped: with BACKUP_ENABLED=false the script
-    # exits 0 and the container stays stopped instead of restart-looping.
-    restart: on-failure
+    # unless-stopped so the daemon survives a reboot: on SIGTERM the script
+    # exits 0, which `on-failure` treats as done. With BACKUP_ENABLED=false
+    # the script idles rather than exiting, so there is no restart loop.
+    restart: unless-stopped
     user: "1000:1000"
     # Every BACKUP_* knob is read straight from .env. Listing them under
     # `environment:` as well would silently override the env_file with an empty

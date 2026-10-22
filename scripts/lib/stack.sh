@@ -47,7 +47,7 @@ wait_healthy() {
     case $state in
       running/healthy/*|running/none/*) log "  $svc: $state"; return 0 ;;
       running/starting/*|created/*|restarting/*) ;;
-      # backup exits 0 by design when BACKUP_ENABLED=false.
+      # backup exited 0 when BACKUP_ENABLED=false before it idled; kept for old images.
       exited/none/0) [[ $svc == backup ]] && { log "  $svc: exited 0 (backup disabled)"; return 0; }
                      log "  $svc: $state"; return 1 ;;
       *) log "  $svc: $state"; return 1 ;;

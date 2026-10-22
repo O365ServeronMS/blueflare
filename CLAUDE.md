@@ -29,7 +29,7 @@ their designed finished state, not a failure:
 | `postgres` | canonical metadata, volume `postgres-data` |
 | `valkey` | JSON response cache, `allkeys-lru`, capped |
 | `image-cache-init` | one-shot `mkdir`+`chown` of the image cache dir, then `Exited (0)` |
-| `backup` | scheduled offsite dump (optional, `BACKUP_ENABLED`, default `false` in `.env.example`); `Exited (0)` when `BACKUP_ENABLED=false` |
+| `backup` | scheduled offsite dump (optional, `BACKUP_ENABLED`, default `false` in `.env.example`); idles (running, no-op) when `BACKUP_ENABLED=false` |
 
 Host-side container names are pinned to `blueflare-<service>` without Compose's
 replica suffix. Service-to-service traffic still uses the stable service DNS names

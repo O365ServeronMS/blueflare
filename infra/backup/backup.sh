@@ -34,10 +34,13 @@ log() { printf '[backup] %s\n' "$*"; }
 fail() { printf '[backup] %s\n' "$*" >&2; }
 
 if [[ "$ENABLED" != "true" && "$ENABLED" != "1" ]]; then
-  # Exiting 0 with `restart: on-failure` leaves the container stopped instead
-  # of restart-looping, which is the honest representation of "turned off".
   log "BACKUP_ENABLED=$ENABLED; nothing to do"
-  exit 0
+  [[ "$ONCE" == "--once" ]] && exit 0
+  # Idle instead of exiting: the service is `restart: unless-stopped` so a
+  # reboot brings an enabled daemon back, and an exit would restart-loop.
+  trap 'exit 0' TERM INT
+  sleep infinity &
+  wait
 fi
 
 for required in POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB \

@@ -4,6 +4,9 @@ import { createAi, AiError, AiConfigError, imagePart, readAiConfig, registerRole
 import { createQuotaLedger } from '../src/aiQuotaLedger.js';
 import { checkSchema, extractJson, isFree, parseModels } from '../src/ai/util.js';
 
+// A role of the test's own: the module ships MATCH and DEDUPE only, both with defaults.
+registerRole('SAMPLE');
+
 const PRIMARY = 'https://llm.example/v1';
 const OR = 'https://openrouter.ai/api/v1';
 const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
@@ -39,25 +42,25 @@ const user = (text) => [{ role: 'user', content: text }];
 const isPrimary = (call) => call.url.startsWith(PRIMARY);
 
 test('a) without LLM_BASE_URL every call goes to OpenRouter with MODEL_<ROLE>', async () => {
-  const { ai, fetch } = make(env({ MODEL_TRANSLATE: 'vendor/one,vendor/two', OPENROUTER_MODEL_TRANSLATE: 'ignored/model' }), () => answer('xin chào', orUsage));
-  const result = await ai.chat('TRANSLATE', user('hello'));
+  const { ai, fetch } = make(env({ MODEL_SAMPLE: 'vendor/one,vendor/two', OPENROUTER_MODEL_SAMPLE: 'ignored/model' }), () => answer('xin chào', orUsage));
+  const result = await ai.chat('SAMPLE', user('hello'));
   assert.equal(result.text, 'xin chào');
   assert.equal(result.provider, 'openrouter');
   assert.equal(result.model, 'vendor/one');
   assert.equal(fetch.calls.length, 1);
   assert.equal(fetch.calls[0].url, OR + '/chat/completions');
   assert.equal(fetch.calls[0].auth, 'Bearer or-key');
-  assert.deepEqual(ai.modelsFor('TRANSLATE'), [{ provider: 'openrouter', model: 'vendor/one' }, { provider: 'openrouter', model: 'vendor/two' }]);
+  assert.deepEqual(ai.modelsFor('SAMPLE'), [{ provider: 'openrouter', model: 'vendor/one' }, { provider: 'openrouter', model: 'vendor/two' }]);
   // MODEL_PRIMARY is a primary-provider slug: without a primary provider the role falls back to its OpenRouter list.
-  const { ai: plain } = make(env({ MODEL_PRIMARY: 'th-only', OPENROUTER_MODEL_TRANSLATE: 'vendor/or' }), () => answer('x'));
-  assert.deepEqual(plain.modelsFor('TRANSLATE'), [{ provider: 'openrouter', model: 'vendor/or' }]);
+  const { ai: plain } = make(env({ MODEL_PRIMARY: 'th-only', OPENROUTER_MODEL_SAMPLE: 'vendor/or' }), () => answer('x'));
+  assert.deepEqual(plain.modelsFor('SAMPLE'), [{ provider: 'openrouter', model: 'vendor/or' }]);
 });
 
 test('b) primary 402 / 429 / 5xx falls back to OpenRouter with OPENROUTER_MODEL_<ROLE>', async () => {
   for (const status of [402, 429, 500, 503]) {
-    const vars = env({ LLM_BASE_URL: PRIMARY + '/', LLM_API_KEY: 'th-key', MODEL_PRIMARY: 'deep:free', OPENROUTER_MODEL_TRANSLATE: 'or/model' });
+    const vars = env({ LLM_BASE_URL: PRIMARY + '/', LLM_API_KEY: 'th-key', MODEL_PRIMARY: 'deep:free', OPENROUTER_MODEL_SAMPLE: 'or/model' });
     const { ai, fetch } = make(vars, (call) => (isPrimary(call) ? { status, body: { error: { message: 'nope' } } } : answer('ok', orUsage)));
-    const result = await ai.chat('TRANSLATE', user('hi'));
+    const result = await ai.chat('SAMPLE', user('hi'));
     assert.equal(result.provider, 'openrouter', 'status ' + status);
     assert.equal(result.model, 'or/model');
     const primaryCalls = fetch.calls.filter(isPrimary);
@@ -67,7 +70,7 @@ test('b) primary 402 / 429 / 5xx falls back to OpenRouter with OPENROUTER_MODEL_
     assert.deepEqual(result.attempts.map((a) => a.provider), [...primaryCalls.map(() => 'llm.example'), 'openrouter']);
     // The next call starts on OpenRouter while the primary pair is parked.
     fetch.calls.length = 0;
-    await ai.chat('TRANSLATE', user('again'));
+    await ai.chat('SAMPLE', user('again'));
     assert.equal(fetch.calls.filter(isPrimary).length, 0, 'parked after ' + status);
   }
 });
@@ -75,28 +78,28 @@ test('b) primary 402 / 429 / 5xx falls back to OpenRouter with OPENROUTER_MODEL_
 test('b) a 401 key and a network error / timeout also fall through, and a 429 retry can succeed', async () => {
   const vars = env({ LLM_BASE_URL: PRIMARY, LLM_API_KEY: 'bad-key', MODEL_PRIMARY: 'deep', OPENROUTER_MODEL_PRIMARY: 'or/model' });
   const { ai, warnings } = make(vars, (call) => (isPrimary(call) ? { status: 401, body: {} } : answer('ok')));
-  assert.equal((await ai.chat('TRANSLATE', user('x'))).provider, 'openrouter');
+  assert.equal((await ai.chat('SAMPLE', user('x'))).provider, 'openrouter');
   assert.ok(warnings.some((w) => /llm\.example k1 \([0-9a-f]{6}\) disabled/.test(w)));
   assert.ok(warnings.every((w) => !w.includes('bad-key')), 'keys never reach a log line');
-  const { ai: dead } = make(env({ OPENROUTER_API_KEY: 'bad-or-key', OPENROUTER_MODEL_TRANSLATE: 'a/one,b/two' }), () => ({ status: 401, body: {} }));
-  const err = await dead.chat('TRANSLATE', user('x')).catch((e) => e);
+  const { ai: dead } = make(env({ OPENROUTER_API_KEY: 'bad-or-key', OPENROUTER_MODEL_SAMPLE: 'a/one,b/two' }), () => ({ status: 401, body: {} }));
+  const err = await dead.chat('SAMPLE', user('x')).catch((e) => e);
   assert.ok(err instanceof AiError && err.blocked, 'every key rejected = unavailable');
   assert.ok(!JSON.stringify({ m: err.message, a: err.attempts }).includes('bad-or-key'), 'keys never reach an error');
 
   const timeout = Object.assign(new Error('t'), { name: 'TimeoutError' });
   const { ai: flaky } = make(vars, (call) => (isPrimary(call) ? timeout : answer('ok')));
-  const r = await flaky.chat('TRANSLATE', user('x'));
+  const r = await flaky.chat('SAMPLE', user('x'));
   assert.deepEqual(r.attempts.map((a) => a.reason), ['timeout', 'ok']);
 
   let n = 0;
   const { ai: retry } = make(vars, (call) => (isPrimary(call) && ++n === 1 ? { status: 429, body: {}, headers: { 'retry-after': '1' } } : answer('ok')));
-  assert.equal((await retry.chat('TRANSLATE', user('x'))).provider, 'llm.example');
+  assert.equal((await retry.chat('SAMPLE', user('x'))).provider, 'llm.example');
 });
 
 test('c) primary body has no usage/reasoning/OpenRouter headers; the OpenRouter body has both', async () => {
   const vars = env({ LLM_BASE_URL: PRIMARY, LLM_API_KEY: 'th', MODEL_PRIMARY: 'deep:free', MODEL_FALLBACK: 'mimo:free', OPENROUTER_MODEL_PRIMARY: 'or/m' });
   const { ai, fetch } = make(vars, (call) => (isPrimary(call) ? { status: 503, body: {} } : answer('ok', orUsage)));
-  const result = await ai.chat('TRANSLATE', user('hi'), { reasoning: 'high', maxTokens: 100 });
+  const result = await ai.chat('SAMPLE', user('hi'), { reasoning: 'high', maxTokens: 100 });
   const primary = fetch.calls.find(isPrimary);
   assert.equal(primary.body.usage, undefined);
   assert.equal(primary.body.reasoning, undefined);
@@ -114,17 +117,17 @@ test('c) primary body has no usage/reasoning/OpenRouter headers; the OpenRouter 
 
   // A primary answer without usage or cost is fine: usage null, cost null.
   const { ai: ok } = make(vars, () => answer('ok'));
-  assert.equal((await ok.chat('TRANSLATE', user('hi'))).usage, null);
+  assert.equal((await ok.chat('SAMPLE', user('hi'))).usage, null);
   const { ai: noCost } = make(vars, () => answer('ok', { usage: { prompt_tokens: 3, completion_tokens: 1 } }));
-  assert.equal((await noCost.chat('TRANSLATE', user('hi'))).usage.cost, null);
+  assert.equal((await noCost.chat('SAMPLE', user('hi'))).usage.cost, null);
 
   // reasoning mapping on OpenRouter.
   for (const [value, field] of [['off', { enabled: false }], [{ maxTokens: 512 }, { max_tokens: 512 }], [{ maxTokens: 0 }, { enabled: false }]]) {
-    const { ai: r, fetch: f } = make(env({ OPENROUTER_MODEL_TRANSLATE: 'or/m' }), () => answer('ok'));
-    await r.chat('TRANSLATE', user('x'), { reasoning: value });
+    const { ai: r, fetch: f } = make(env({ OPENROUTER_MODEL_SAMPLE: 'or/m' }), () => answer('ok'));
+    await r.chat('SAMPLE', user('x'), { reasoning: value });
     assert.deepEqual(f.calls[0].body.reasoning, field);
   }
-  await assert.rejects(ok.chat('TRANSLATE', user('x'), { reasoning: 'max' }), TypeError);
+  await assert.rejects(ok.chat('SAMPLE', user('x'), { reasoning: 'max' }), TypeError);
 });
 
 test('d) bad JSON moves to the next pair; when every pair fails AiError lists every reason', async () => {
@@ -182,7 +185,7 @@ test('e) a vision role skips models that cannot read images', async () => {
   await ai.chat('POSTER_TEST', user('text'));
   assert.equal(fetch.calls[0].body.model, 'text-only');
   // A non-vision role refuses images outright.
-  await assert.rejects(ai.chat('TRANSLATE', messages), TypeError);
+  await assert.rejects(ai.chat('SAMPLE', messages), TypeError);
   assert.throws(() => imagePart(Buffer.from('nope')), TypeError);
 });
 
@@ -248,18 +251,16 @@ test('h) LLM_BASE_URL without LLM_API_KEY fails at startup with a clear error', 
 test('deprecated names still work and warn once at startup; new names win', () => {
   const warnings = [];
   const cfg = readAiConfig({
-    OPENROUTER_API_KEYS: 'a,b', OPENROUTER_MATCH_MODELS: 'old/m', OPENROUTER_MODEL_TRANSLATE: 'new/t', OPENROUTER_TRANSLATE_MODELS: 'old/t',
-    OPENROUTER_MATCH_PAID_DAILY_OUTPUT_TOKENS: '500', TMDB_MATCH_AI_TIMEOUT_MS: '90000', OPENROUTER_BASE_URL: 'https://or.example/v1/',
+    OPENROUTER_API_KEYS: 'a,b', OPENROUTER_MATCH_MODELS: 'old/m', OPENROUTER_MATCH_PAID_DAILY_OUTPUT_TOKENS: '500', AI_PAID_DAILY_OUTPUT_TOKENS_MATCH: '700', TMDB_MATCH_AI_TIMEOUT_MS: '90000', OPENROUTER_BASE_URL: 'https://or.example/v1/',
     TMDB_MATCH_AI_RESERVE_PCT: '20', OPENROUTER_COOLDOWN_MS: ''
   }, { warn: (m) => warnings.push(m) });
   assert.deepEqual(cfg.openrouter.keys, ['a', 'b']);
   assert.equal(cfg.openrouter.baseUrl, 'https://or.example/v1');
   assert.equal(cfg.view.OPENROUTER_MODEL_MATCH, 'old/m');
-  assert.equal(cfg.view.OPENROUTER_MODEL_TRANSLATE, 'new/t');
-  assert.equal(cfg.view.AI_PAID_DAILY_OUTPUT_TOKENS_MATCH, '500');
+  assert.equal(cfg.view.AI_PAID_DAILY_OUTPUT_TOKENS_MATCH, '700');
   assert.equal(cfg.view.AI_TIMEOUT_MS_MATCH, '90000');
   assert.ok(warnings.some((w) => /OPENROUTER_API_KEYS is deprecated, rename it to OPENROUTER_API_KEY/.test(w)));
-  assert.ok(warnings.some((w) => /OPENROUTER_TRANSLATE_MODELS is deprecated and ignored because OPENROUTER_MODEL_TRANSLATE/.test(w)));
+  assert.ok(warnings.some((w) => /OPENROUTER_MATCH_PAID_DAILY_OUTPUT_TOKENS is deprecated and ignored because AI_PAID_DAILY_OUTPUT_TOKENS_MATCH/.test(w)));
   assert.ok(warnings.some((w) => /TMDB_MATCH_AI_RESERVE_PCT is no longer read/.test(w)));
   assert.ok(!warnings.some((w) => /OPENROUTER_COOLDOWN_MS/.test(w)), 'empty legacy values are silent');
   assert.ok(!warnings.some((w) => /\ba,b\b/.test(w)));
@@ -268,15 +269,15 @@ test('deprecated names still work and warn once at startup; new names win', () =
 
 test('timeouts: call > AI_TIMEOUT_MS_<ROLE> > AI_TIMEOUT_MS > role default; AI_MAX_TOKENS default', async () => {
   const { ai, fetch } = make(env({ OPENROUTER_MODEL_PRIMARY: 'm' }), () => answer('ok'));
-  await ai.chat('TRANSLATE', user('x'));
+  await ai.chat('SAMPLE', user('x'));
   assert.equal(fetch.calls[0].body.max_tokens, 8192);
   const { roleTimeoutMs } = await import('../src/ai/config.js');
   assert.equal(roleTimeoutMs(readAiConfig({}), 'MATCH'), 180000);
-  assert.equal(roleTimeoutMs(readAiConfig({}), 'TRANSLATE'), 60000);
+  assert.equal(roleTimeoutMs(readAiConfig({}), 'SAMPLE'), 60000);
   assert.equal(roleTimeoutMs(readAiConfig({ AI_TIMEOUT_MS: '30000' }), 'MATCH'), 30000);
   assert.equal(roleTimeoutMs(readAiConfig({ AI_TIMEOUT_MS: '30000', AI_TIMEOUT_MS_MATCH: '200000' }), 'MATCH'), 200000);
   const { ai: m, fetch: f } = make(env({ OPENROUTER_MODEL_PRIMARY: 'm', AI_MAX_TOKENS: '1000' }), () => answer('ok'));
-  await m.chat('TRANSLATE', user('x'));
+  await m.chat('SAMPLE', user('x'));
   assert.equal(f.calls[0].body.max_tokens, 1000);
 });
 
@@ -284,20 +285,20 @@ test('onCall sees every attempt; the ledger enforces the paid cap per role and c
   let t = Date.UTC(2026, 9, 7, 12);
   const ledger = createQuotaLedger({ now: () => t, warn: () => {} });
   const records = [];
-  const vars = env({ OPENROUTER_MODEL_TRANSLATE: 'p/paid,f/free:free:0', AI_PAID_DAILY_OUTPUT_TOKENS_TRANSLATE: '1000' });
+  const vars = env({ OPENROUTER_MODEL_SAMPLE: 'p/paid,f/free:free:0', AI_PAID_DAILY_OUTPUT_TOKENS_SAMPLE: '1000' });
   const { ai, fetch } = make(vars, () => answer('ok', { usage: { prompt_tokens: 10, completion_tokens: 600 } }), { ledger, now: () => t, onCall: (r) => records.push(r) });
-  await ai.chat('TRANSLATE', user('a'));
-  await ai.chat('TRANSLATE', user('b'));
-  await ai.chat('TRANSLATE', user('c'));
+  await ai.chat('SAMPLE', user('a'));
+  await ai.chat('SAMPLE', user('b'));
+  await ai.chat('SAMPLE', user('c'));
   assert.deepEqual(fetch.calls.map((c) => c.body.model), ['p/paid', 'p/paid', 'f/free:free'], 'paid model stops at the cap, :free keeps serving');
-  assert.equal(ai.paidTokensToday('TRANSLATE'), 1200);
+  assert.equal(ai.paidTokensToday('SAMPLE'), 1200);
   assert.equal(records.length, 3);
   assert.deepEqual(Object.keys(records[0]).sort(), ['completionTokens', 'cost', 'error', 'key', 'latencyMs', 'model', 'ok', 'promptTokens', 'provider', 'role', 'status', 'thoughtTokens']);
-  assert.equal(records[0].role, 'TRANSLATE');
+  assert.equal(records[0].role, 'SAMPLE');
   assert.equal(records[0].ok, true);
   t += 86400000;
   fetch.calls.length = 0;
-  await ai.chat('TRANSLATE', user('d'));
+  await ai.chat('SAMPLE', user('d'));
   assert.equal(fetch.calls[0].body.model, 'p/paid', 'a new UTC day resets the cap');
 });
 
@@ -321,24 +322,24 @@ test('OpenRouter daily 429 on a :free model parks every :free model of that key;
 });
 
 test('content_filter / truncation / accept() refusals end as kind content; a role without providers is unavailable', async () => {
-  const { ai } = make(env({ OPENROUTER_MODEL_TRANSLATE: 'a,b' }), (call) => (call.body.model === 'a'
+  const { ai } = make(env({ OPENROUTER_MODEL_SAMPLE: 'a,b' }), (call) => (call.body.model === 'a'
     ? { status: 200, body: { choices: [{ message: { content: 'x' }, finish_reason: 'content_filter' }] } }
     : answer('tiếng 中文')));
-  const error = await ai.chat('TRANSLATE', user('x'), { accept: (text) => { if (/[一-鿿]/.test(text)) throw Object.assign(new Error('stray CJK'), { permanent: true }); return text; } }).catch((e) => e);
+  const error = await ai.chat('SAMPLE', user('x'), { accept: (text) => { if (/[一-鿿]/.test(text)) throw Object.assign(new Error('stray CJK'), { permanent: true }); return text; } }).catch((e) => e);
   assert.equal(error.kind, 'content');
   assert.deepEqual(error.attempts.map((a) => a.reason), ['refused: content_filter', 'rejected: stray CJK']);
   const { ai: none } = make({}, () => answer('x'));
-  assert.equal(none.available('TRANSLATE'), false);
-  assert.equal((await none.chat('TRANSLATE', user('x')).catch((e) => e)).kind, 'unavailable');
+  assert.equal(none.available('SAMPLE'), false);
+  assert.equal((await none.chat('SAMPLE', user('x')).catch((e) => e)).kind, 'unavailable');
 });
 
 test('AI_FAKE=1 answers without network or keys', async () => {
   const ai = createAi({ env: { AI_FAKE: '1' } });
   assert.equal(ai.available('MATCH'), true);
   assert.equal((await ai.json('MATCH', user('x'))).data.fake, true);
-  assert.equal((await ai.chat('TRANSLATE', user('hello'))).text, 'fake: hello');
+  assert.equal((await ai.chat('SAMPLE', user('hello'))).text, 'fake: hello');
   const swapped = createAi({ env: env({ OPENROUTER_MODEL_PRIMARY: 'm' }), transport: fakeTransport() });
-  assert.equal((await swapped.chat('TRANSLATE', user('hi'))).text, 'fake: hi');
+  assert.equal((await swapped.chat('SAMPLE', user('hi'))).text, 'fake: hi');
 });
 
 test('util: models, JSON extraction, schema subset', () => {
@@ -391,12 +392,12 @@ test('a 429 auth lockout (Token Harbor after bad keys) disables the key at once,
   const { ai, fetch, warnings } = make(vars, (call) => (isPrimary(call)
     ? { status: 429, body: { error: { message: 'Too many failed authentication attempts. Try again later.', code: 'rate_limit_exceeded' } }, headers: { 'retry-after': '1496' } }
     : answer('ok')));
-  const r = await ai.chat('TRANSLATE', user('x'));
+  const r = await ai.chat('SAMPLE', user('x'));
   assert.equal(r.provider, 'openrouter');
   assert.deepEqual(r.attempts.map((a) => a.reason), ['http 429 (auth lockout)', 'ok']);
   assert.equal(fetch.calls.filter(isPrimary).length, 1);
   assert.ok(warnings.some((w) => /llm\.example k1 \([0-9a-f]{6}\) disabled: too many failed/.test(w)));
-  await ai.chat('TRANSLATE', user('x'));
+  await ai.chat('SAMPLE', user('x'));
   assert.equal(fetch.calls.filter(isPrimary).length, 1, 'the key stays off for Retry-After');
 });
 
@@ -406,12 +407,12 @@ test('a spent Token Harbor free allowance parks the whole key until the stated r
   const { ai, fetch, warnings } = make(vars, (call) => (isPrimary(call)
     ? { status: 429, body: { error: { message, code: 'free_tier_limit_reached' } }, headers: { 'retry-after': '3600' } }
     : answer('ok')));
-  const r = await ai.chat('TRANSLATE', user('x'));
+  const r = await ai.chat('SAMPLE', user('x'));
   assert.equal(r.provider, 'openrouter');
   assert.deepEqual(r.attempts.map((a) => a.reason), ['http 429 (free allowance used up)', 'ok']);
   assert.equal(fetch.calls.filter(isPrimary).length, 1, 'the second primary model is not tried');
   assert.ok(warnings.some((w) => /free allowance used up .*parked until 2026-10-10T01:00:00\.000Z/.test(w)));
-  await ai.chat('TRANSLATE', user('x'));
+  await ai.chat('SAMPLE', user('x'));
   assert.equal(fetch.calls.filter(isPrimary).length, 1, 'no probe before the reset');
 });
 
@@ -423,8 +424,8 @@ test('AI_REASONING overrides the caller and reaches both providers', async () =>
     if (seen.length === 1) return new Response('{}', { status: 500 });
     return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }], usage: {} }), { status: 200, headers: { 'content-type': 'application/json' } });
   };
-  const ai = createAi({ env: { LLM_BASE_URL: 'https://p.example/v1', LLM_API_KEY: 'k', MODEL_PRIMARY: 'm', OPENROUTER_API_KEY: 'o', OPENROUTER_MODEL_TRANSLATE: 'x/y', AI_REASONING: 'medium', AI_RETRIES: '0' }, transport, sleep: async () => {}, warn: () => {} });
-  await ai.chat('TRANSLATE', [{ role: 'user', content: 'hi' }], { reasoning: 'off' });
+  const ai = createAi({ env: { LLM_BASE_URL: 'https://p.example/v1', LLM_API_KEY: 'k', MODEL_PRIMARY: 'm', OPENROUTER_API_KEY: 'o', OPENROUTER_MODEL_SAMPLE: 'x/y', AI_REASONING: 'medium', AI_RETRIES: '0' }, transport, sleep: async () => {}, warn: () => {} });
+  await ai.chat('SAMPLE', [{ role: 'user', content: 'hi' }], { reasoning: 'off' });
   assert.equal(seen[0].body.reasoning_effort, 'medium');
   assert.equal(seen[0].body.reasoning, undefined);
   assert.deepEqual(seen[1].body.reasoning, { effort: 'medium' });

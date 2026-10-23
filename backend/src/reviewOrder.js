@@ -39,9 +39,7 @@ export function reviewCard(row) {
     content: row.content,
     createdAt: row.createdAt,
     url: row.url,
-    hasSpoiler: Boolean(row.hasSpoiler),
-    // Null unless a translation of the current English text exists.
-    contentVi: typeof row.contentVi === 'string' && row.contentVi ? row.contentVi : null
+    hasSpoiler: Boolean(row.hasSpoiler)
   };
 }
 

@@ -83,7 +83,6 @@ TMDB user reviews sit in a block below the cast (hidden when a title has none):
 - Heading with the review count.
 - Two-column grid of text cards: author initial in a circle (never an avatar image, so the two-variant image rule holds), rating, date, body clamped to 4 lines with "Đọc tiếp", and a "Xem trên TMDB" link.
 - A "Xem thêm đánh giá" button loads 2 more at a time (`PAGE_SIZE` in `components/ReviewList.tsx`; page 1 arrives with the detail payload).
-- When a review has a Vietnamese translation (`contentVi`) it is shown by default with a small "Đã dịch tự động" label and a "Xem bản gốc" toggle (which flips to "Xem bản dịch"); reviews without one show the English text and no toggle.
 - Reviews flagged as spoilers sort first and carry a red "Spoiler" label; they are deliberately not blurred or collapsed (product decision).
 
 ## Search and lists

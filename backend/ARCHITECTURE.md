@@ -121,7 +121,7 @@ TMDB reviews.
 | --- | --- |
 | Query | `page` (1-based, default 1), `limit` (default 10, max 20) |
 | Response | no `status`/`data` envelope: `{ reviews: [...], reviewCount, page, limit, totalPages }` |
-| Review fields | `id`, `author`, `rating` (0-10 or null), `content` (plain text, English), `contentVi` (plain-text Vietnamese machine translation, or null when none exists for the current `content`), `createdAt`, `url` (themoviedb.org or null), `hasSpoiler` |
+| Review fields | `id`, `author`, `rating` (0-10 or null), `content` (plain text, English), `createdAt`, `url` (themoviedb.org or null), `hasSpoiler` |
 | Unknown slug | 404 `{ error: 'Movie not found' }` |
 | Order | `hasSpoiler` first, then score band, then a shuffle stable per slug and UTC day, so all pages of one run agree; computed per request from stored rows, TMDB is never called here |
 | Cache | key `reviews:<slug>:<page>:<limit>` only, TTL 60s; never `returnTo`, cookies or user agent. 200 sends `public, max-age=60, stale-while-revalidate/stale-if-error=<stale window>` plus `x-blueflare-cache`; 404 sends `public, max-age=30, stale-while-revalidate=60` |
@@ -129,9 +129,8 @@ TMDB reviews.
 
 Notes:
 
-- `hasSpoiler` and the ordering score are computed on the English `content`, never on the translation.
-- The worker fills `contentVi` asynchronously (AI module `src/ai/`, role `TRANSLATE`: primary provider then OpenRouter; any provider can be blocked), so clients must treat it as optional and fall back to `content`.
-- `content` and `contentVi` are plain text; clients must render them as text, not HTML.
+- `hasSpoiler` and the ordering score are computed on the English `content`.
+- `content` is plain text; clients must render it as text, not HTML.
 
 ## Deployment boundary
 

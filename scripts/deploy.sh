@@ -75,10 +75,10 @@ if [[ -n $new_migrations ]]; then
   sed 's/^/    /' <<<"$new_migrations"
 fi
 
-# 3. Every key .env.example documents must already be in the stack .env
+# 3. Every live (uncommented) key .env.example defines must already be in the stack .env
 #    (apply-env.sh enforces the same). Key names only, never values.
-missing=$(comm -23 <(grep -oE '^[A-Z_]+=' backend/.env.example | sort -u) \
-                   <(grep -oE '^[A-Z_]+=' "$STACK_DIR/.env" | sort -u) | tr -d '=' | tr '\n' ' ')
+missing=$(comm -23 <(grep -oE '^[A-Z][A-Z_0-9]*=' backend/.env.example | sort -u) \
+                   <(grep -oE '^[A-Z][A-Z_0-9]*=' "$STACK_DIR/.env" | sort -u) | tr -d '=' | tr '\n' ' ')
 [[ -z $missing ]] || gate "$STACK_DIR/.env lacks keys documented in backend/.env.example: $missing"
 
 if (( ${#services[@]} || compose_changed )); then

@@ -51,11 +51,6 @@ Five loops run outside the request path. None of them may be moved into the requ
 - **Ratings:** enriches approved visible rows with MDBList Rotten Tomatoes critic/audience scores under a per-key daily budget.
 - **TMDB recommendations and credits:** refreshes TMDB recommendation/similar id lists for the detail-page rail, and TMDB cast/director credits for rows with a verified TMDB identity.
 - **Reviews:** refreshes TMDB user reviews (`TMDB_REVIEWS_*`, table `movie_reviews`, verified identity only; the worker is the only caller, never a request path) and stores them as plain text. Reviews are re-fetchable from TMDB, not irreplaceable state.
-- **Translation:** a separate worker-only pass right after the reviews pass machine-translates stored English reviews to Vietnamese (`TRANSLATE_*`, columns `content_vi`/`translated_hash` on `movie_reviews`). It is sequential and never a request path; only public TMDB review text is sent; column `translate_provider` = `<provider>:<model>` (e.g. `openrouter:<model>`; older rows may say `google-gtx`).
-  - Provider `TRANSLATE_PROVIDER=ai` (the AI module, role `TRANSLATE`; `openrouter` is an old alias). The unofficial Google gtx endpoint was removed because Google blocked the VPS IP for good; `google-gtx` in the chain is skipped with a warning. Do not add it back.
-  - Paid cap: `AI_PAID_DAILY_OUTPUT_TOKENS_TRANSLATE` / `AI_PAID_DAILY_OUTPUT_TOKENS_MATCH` cap the completion tokens of all non-`:free` models of a role together per UTC day (column `output_tokens` of `ai_quota_ledger`, 033); `:free` models keep serving after it. There is deliberately no total daily token cap (`OPENROUTER_*_DAILY_TOKENS` were removed on purpose; do not reintroduce them).
-  - Time budget: `TRANSLATE_PASS_MAX_MS` (default 10 min) caps one pass; past it no review starts and the request in flight is aborted through its signal, so slow free models cannot push the cycle past its deadline.
-  - Batching: `TRANSLATE_BATCH_ENABLED` (default `false`) packs several reviews into one nonce-delimited request, validated and split on a bad answer (`translateBatch.js`).
 - **Duplicate merge:** `reconcileDuplicates` (`MERGE_DUPLICATES_MODE=off|dry-run|apply`, default `apply` in `config.js` and `.env.example`; `MERGE_BATCH_LIMIT`) runs inside the same cycle, before invalidation, and folds a NguonC-only row into the KKPhim-only row of the same work (`backend/src/duplicateMerge.js` plans, `duplicateMergeRepository.js` applies in one transaction). The KKPhim row survives; the dropped canonical slug is kept in `movie_slug_aliases` and `findMovie`/`listReadyBySlugs` resolve it; `movie_merges` snapshots the dropped row and its moved user rows for manual undo.
 - **TMDB identity chain:** separate from the AI match below. `TMDB_MATCH_ENABLED` runs the deterministic cast-verified match (`tmdbMatch.js`, writes `tmdb_match_*` only), and `promoteVerifiedMatches` (`TMDB_IDENTITY_MODE=off|dry-run|apply`, default `off`) turns those verified rows into a real `tmdb_id` through `tmdbIdentity.js`.
 - **TMDB season inference:** `refreshSeasonInference` (`TMDB_SEASON_INFER_MODE=off|dry-run|apply`, default `off`; `TMDB_SEASON_INFER_BATCH`) runs after the identity promotion. For tv rows with a verified TMDB tv id (AI run blocked `season-unknown`, or `tmdb_match_*`) but no `(Phần N)` marker and several TMDB seasons, it fetches `/tv/{id}` and picks the one season whose first-air year (+-1) and episode count agree (`inferSeasonFromTmdb`, rejects on conflicting title numbers, <3 episodes, gaps). Writes go through `assignTmdbIdentity` (source `inferred`, evidence `pass:'season-infer'`), so they are logged in `tmdb_identity_changes` and undoable; declines are logged and not retried for `BLOCK_RETRY_DAYS`.
@@ -63,13 +58,14 @@ Five loops run outside the request path. None of them may be moved into the requ
 
 ### TMDB AI match
 
-`worker`, its own loop every `TMDB_MATCH_AI_LOOP_MS` (`tmdbMatchAiLoop.js`; `TMDB_MATCH_AI_LOOP=false` folds it back into the sync cycle). For titles without a `tmdb_id`, it fetches real TMDB candidates and has a model rank them through the AI module (role `MATCH`), when `TMDB_MATCH_AI_ENABLED=true` and the role has keys and models (none = pass off; translation and match keep separate ledger scopes and separate paid output caps). Never a request path.
+`worker`, its own loop every `TMDB_MATCH_AI_LOOP_MS` (`tmdbMatchAiLoop.js`; `TMDB_MATCH_AI_LOOP=false` folds it back into the sync cycle). For titles without a `tmdb_id`, it fetches real TMDB candidates and has a model rank them through the AI module (role `MATCH`), when `TMDB_MATCH_AI_ENABLED=true` and the role has keys and models (none = pass off; each role keeps its own ledger scope and paid output cap). Never a request path.
 
 - At most 3 real attempts (`none`/`unverifiable`, not `error`) per title on the same title/original title/year (`tmdb_match_ai_runs.meta_key`, 035); a metadata change reopens it.
 - The model never supplies an id; an independent two-tier gate (`decideAiMatch`: T1 cast overlap + year, T2 exact name + year + size, no rival candidate) decides.
 - `TMDB_MATCH_AI_MODE=off|dry-run|apply`, default `dry-run` (verified in `backend/src/config.js`): dry-run only writes `tmdb_match_ai_runs`; apply writes `tmdb_id` with source `inferred` through `tmdbIdentity.js` (assign, or merge into the row already holding it).
 - Every assign/merge/blocked/conflict is logged in `tmdb_identity_changes` (030) and reversible with `backend/scripts/tmdb-identity-undo.mjs`.
 - Films are packed into token-budget batches. Quota is tracked per key+model per UTC day in `ai_quota_ledger` (031, renamed by 032; disposable).
+- Paid cap: `AI_PAID_DAILY_OUTPUT_TOKENS_<ROLE>` caps the completion tokens of all non-`:free` models of a role together per UTC day (column `output_tokens` of `ai_quota_ledger`, 033); `:free` models keep serving after it. There is deliberately no total daily token cap (`OPENROUTER_*_DAILY_TOKENS` were removed on purpose; do not reintroduce them).
 
 ### Catalog audit
 
@@ -151,8 +147,6 @@ The Cloudflare IP ranges in `lib/account-proxy.ts` are hardcoded; refresh them f
 | `tmdbReviews.js`, `tmdbReviewsSync.js` | plain-text normalising, score, spoiler flag; worker pass |
 | `reviewSpoiler.js`, `reviewOrder.js` | spoiler detection; display order + cache keys |
 | `ai/` (`index.js`, `config.js`, `client.js`, `util.js`) | the only AI client: roles, env + defaults, primary→OpenRouter fallback, retries, response_format downgrade, quota/paid cap via the ledger, UTC-day helpers (doc `backend/AI.md`) |
-| `translate.js`, `reviewTranslateSync.js` | chunking + `ai` provider + provider chain; worker translation pass |
-| `translateBatch.js` | batched translation requests |
 | `tmdbMatch.js` | cast-verified match |
 | `tmdbMatchAi.js`, `tmdbMatchAiSync.js`, `tmdbMatchAiLoop.js` | AI match: candidates, prompt, two-tier gate; pass engine (`tmdb_match_ai_runs`); fourth worker loop |
 | `catalogAudit.js`, `catalogAuditExtract.js`, `catalogAuditGate.js`, `catalogAuditApply.js` | weekly catalog audit: loop + run + model prompt and `catalogLock`; loader/detectors/groups; pure gate; apply/undo |
@@ -199,18 +193,16 @@ The two Caddy site blocks live inline in `bootstrap-vps.sh`, not as separate fil
 - Signup also verifies a Cloudflare Turnstile token (`backend/src/turnstile.js`, siteverify; body field `turnstileToken`) when `TURNSTILE_SECRET_KEY` is set on `api`; empty secret disables it. The public `TURNSTILE_SITE_KEY` is read by the signup page at runtime. Failure is 400 `captcha_failed`, siteverify outage is 503 `busy`.
 - The admin dashboard (`/admin`, `components/AdminDashboard.tsx`) talks to `/api/me/admin/users[/<uuid>[/sessions]]` through the same proxy allow-list; access is a session whose email is in `ADMIN_EMAILS` (api env, also in stack `.env`), everything else gets 404. Admin accounts cannot be deleted through it, because registration is unverified and a freed admin email could be claimed by anyone.
 - `GET /api/cards?slugs=` is public, cached 60s, keyed by the sorted slug list only.
-- scrypt shares the libuv threadpool with image I/O and sharp, so `AUTH_HASH_CONCURRENCY` (2) must stay well below `UV_THREADPOOL_SIZE` (8, set on `api` in `infra/compose.yml`). `AUTH_HASH_QUEUE` and `AUTH_REGISTER_GLOBAL_PER_HOUR` live in `backend/.env.example` and must also be in the stack `.env`.
+- scrypt shares the libuv threadpool with image I/O and sharp, so `AUTH_HASH_CONCURRENCY` (2) must stay well below `UV_THREADPOOL_SIZE` (8, set on `api` in `infra/compose.yml`). `AUTH_HASH_QUEUE` and `AUTH_REGISTER_GLOBAL_PER_HOUR` are documented in `backend/.env.example` as commented defaults.
 
 ### AI calls
 
-- Every model call goes through `backend/src/ai/` (`getAi().chat(role, …)` / `.json(role, …)`, doc `backend/AI.md`); no other file may call an LLM over HTTP, read AI env or implement fallback. Order: primary OpenAI-compatible provider (`LLM_BASE_URL`, `LLM_API_KEY`, `MODEL_<ROLE>` or `MODEL_PRIMARY`/`MODEL_FALLBACK`), then OpenRouter (`OPENROUTER_API_KEY`, `OPENROUTER_MODEL_<ROLE>`), next pair on 401/402/408/429/5xx, network error, timeout or a bad answer. Roles are registered in `src/ai/config.js` (`TRANSLATE`, `MATCH`, `DEDUPE`; `modelsFrom` lets a role borrow another's model lists); defaults live only there and `.env.example` mirrors them. Old `OPENROUTER_*` names still work with a deprecation warning.
+- Every model call goes through `backend/src/ai/` (`getAi().chat(role, …)` / `.json(role, …)`, doc `backend/AI.md`); no other file may call an LLM over HTTP, read AI env or implement fallback. Order: primary OpenAI-compatible provider (`LLM_BASE_URL`, `LLM_API_KEY`, `MODEL_<ROLE>` or `MODEL_PRIMARY`/`MODEL_FALLBACK`), then OpenRouter (`OPENROUTER_API_KEY`, `OPENROUTER_MODEL_<ROLE>`), next pair on 401/402/408/429/5xx, network error, timeout or a bad answer. Roles are registered in `src/ai/config.js` (`MATCH`, `DEDUPE`; `modelsFrom` lets a role borrow another's model lists); defaults live only there and `.env.example` mirrors them. Old `OPENROUTER_*` names still work with a deprecation warning.
 
-### Reviews and translation
+### Reviews
 
 - `GET /api/movies/:slug/reviews` is public and cached 60s, keyed `reviews:<slug>:<page>:<limit>` only (never cookies, user agent or `returnTo`); the browser "Xem thêm" button calls it on `img.bluesia.net` like other client catalog calls. Page 1 (2 reviews) rides along in `GET /api/movie/:slug`.
-- Each review carries `contentVi` (null unless a translation of the current English text exists).
-- A provider can be blocked at any time; it then goes into its own cooldown (`TRANSLATE_COOLDOWN_MS` / `AI_COOLDOWN_MS`), the next provider in the chain continues the same review, and the API fails open to English when none is left.
-- `hasSpoiler` and `score` are computed on the English text, never on the translation.
+- `hasSpoiler` and `score` are computed on the stored English text.
 
 ### Caching and revalidation
 
@@ -259,7 +251,8 @@ What it runs:
 | `build` | `cd frontend && npm run build` | `frontend/` changed |
 | `compose` | `docker compose -f infra/compose.yml config --quiet` with `BLUEFLARE_ENV_FILE=$PWD/backend/.env.example (absolute path)` | `infra/` or `.env.example` changed |
 | `shell` | `bash -n` on `scripts/*.sh`, `scripts/lib/*.sh`, `infra/scripts/*.sh`, `infra/backup/*.sh` | a shell script changed |
-| `env-keys` | every key of `backend/.env.example` exists in the stack `.env` | `.env.example` changed |
+| `env-keys` | every live (uncommented) key of `backend/.env.example` exists in the stack `.env` | `.env.example` changed |
+| `env-stray` | warning only: a stack `.env` key that `.env.example` documents neither live nor as a `# KEY=` line (dead key) | always |
 | `smoke` | against the running containers: `/healthz`, `/list/phim-le?page=2`, `/list/phim-le?page=3`, a non-existent `/person/<slug>` (404 ok, 5xx fails), `/api/movie/<slug>` and `/movie/<slug>` for a live slug, and `/person/<slug>` for a real cast member when credits exist | always |
 | `revalidate` | unauthenticated POST to `/api/internal/revalidate` must answer 401/403/404 | always |
 | `api-health` | `/api/health` status and worker; a warning only, not a failure | always |
@@ -278,9 +271,15 @@ Run `npm run build` and `npm test` (in `frontend/`) for frontend changes, and `(
 green. If `providers.test.js` fails with `Cannot find package 'pg'`, the directory
 is gone — run `npm ci` in `backend/`; do not skip or delete the test.
 
-When adding a key to `backend/.env.example`, add it to the stack `.env` too —
-`infra/scripts/apply-env.sh` fails the deploy if `.env` is missing anything the example
-documents.
+`backend/.env.example` is the catalogue, grouped by feature module. A `KEY=value` line
+is a key the stack `.env` must define (secrets, hosts, paths, `*_ENABLED`, `*_MODE`,
+values that differ from the code default); `infra/scripts/apply-env.sh` fails the deploy
+if `.env` is missing one. A `# KEY=value` line is a tuning knob at its code default: keep
+it out of the stack `.env` and uncomment it there only to change it. When adding a key,
+make it live only if the code has no safe default; never delete a non-default `*_MODE`
+from the stack `.env`, because the code default may be `off` or `dry-run`. `api` and
+`worker` load the whole `.env`; `frontend` and `backup` get only the keys listed under
+their `environment:` in `infra/compose.yml`, so a new frontend key needs an entry there.
 
 ## Documentation map
 

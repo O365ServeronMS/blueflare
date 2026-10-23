@@ -63,43 +63,23 @@ describe("ReviewsSection", () => {
   });
 });
 
-describe("review translation", () => {
-  test("contentVi is trimmed and mapped; blank or non-string is dropped", () => {
-    const out = normalizeReviews([
-      { ...base, id: "a", contentVi: "  Phim hay  " },
-      { ...base, id: "b", contentVi: "   " },
-      { ...base, id: "c", contentVi: 5 },
-      { ...base, id: "d", contentVi: null }
-    ]);
-    expect(out[0].contentVi).toBe("Phim hay");
-    expect(out[1].contentVi).toBeUndefined();
-    expect(out[2].contentVi).toBeUndefined();
-    expect(out[3].contentVi).toBeUndefined();
+describe("review text", () => {
+  test("contentVi from an older API is ignored", () => {
+    const out = normalizeReviews([{ ...base, id: "a", contentVi: "Phim hay" }]);
+    expect(out[0]).not.toHaveProperty("contentVi");
   });
-  test("shows translation by default with label, toggle and lang=vi", () => {
-    const html = renderToStaticMarkup(
-      <ReviewsSection slug="a" reviewCount={1} reviews={[{ ...base, content: "Great movie", contentVi: "Phim tuyệt vời" }]} />
-    );
-    expect(html).toContain("Phim tuyệt vời");
-    expect(html).not.toContain("Great movie");
-    expect(html).toContain("Đã dịch tự động");
-    expect(html).toContain("Xem bản gốc");
-    expect(html).toContain('lang="vi"');
-    expect(html).not.toContain('lang="en"');
-  });
-  test("falls back to English without label or toggle", () => {
+  test("renders the English text marked lang=en, without translation controls", () => {
     const html = renderToStaticMarkup(
       <ReviewsSection slug="a" reviewCount={1} reviews={[{ ...base, content: "Great movie" }]} />
     );
     expect(html).toContain("Great movie");
     expect(html).toContain('lang="en"');
-    expect(html).not.toContain("Đã dịch tự động");
     expect(html).not.toContain("Xem bản gốc");
     expect(html).not.toContain("Xem bản dịch");
   });
-  test("escapes translated text and clamps on the shown text", () => {
+  test("escapes the text and clamps long reviews", () => {
     const html = renderToStaticMarkup(
-      <ReviewsSection slug="a" reviewCount={1} reviews={[{ ...base, content: "short", contentVi: "<i>x</i> " + "a".repeat(300) }]} />
+      <ReviewsSection slug="a" reviewCount={1} reviews={[{ ...base, content: "<i>x</i> " + "a".repeat(300) }]} />
     );
     expect(html).toContain("&lt;i&gt;x&lt;/i&gt;");
     expect(html).not.toContain("<i>");

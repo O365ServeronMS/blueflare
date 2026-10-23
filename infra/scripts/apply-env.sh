@@ -38,10 +38,10 @@ echo "== validating $ENV_FILE against $EXAMPLE_FILE =="
 
 while IFS= read -r key; do
   if ! grep -qE "^${key}=" "$ENV_FILE"; then
-    echo "FAIL: $key is documented in .env.example but missing from .env" >&2
+    echo "FAIL: $key is a live (uncommented) key in .env.example but missing from .env" >&2
     fail=1
   fi
-done < <(grep -oE '^[A-Z_]+=' "$EXAMPLE_FILE" | tr -d '=' | sort -u)
+done < <(grep -oE '^[A-Z][A-Z_0-9]*=' "$EXAMPLE_FILE" | tr -d '=' | sort -u)
 
 for key in "${REQUIRED_SECRETS[@]}"; do
   value=$(env_value "$key" "$ENV_FILE")

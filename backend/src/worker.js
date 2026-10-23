@@ -8,7 +8,6 @@ import {
 import { config } from './config.js';
 import { mapLimit } from './concurrency.js';
 import { syncTmdbReviews } from './tmdbReviewsSync.js';
-import { syncReviewTranslations } from './reviewTranslateSync.js';
 import { closeDatabase, migrate } from './db.js';
 import { revalidateFrontend } from './frontendRevalidation.js';
 import { normalizeKkphim, normalizeNguonc } from './normalize.js';
@@ -822,12 +821,6 @@ async function syncCycle() {
   if (!stopping) {
     ratingChangedSlugs.push(...await syncTmdbReviews().catch((error) => {
       console.warn('[worker] tmdb reviews pass failed', error.message);
-      return [];
-    }));
-  }
-  if (!stopping) {
-    ratingChangedSlugs.push(...await syncReviewTranslations().catch((error) => {
-      console.warn('[worker] review translate pass failed', error.message);
       return [];
     }));
   }

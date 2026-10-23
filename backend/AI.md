@@ -1,8 +1,7 @@
 # AI module
 
 Every model call in the backend goes through `backend/src/ai/`. No other file talks to
-an LLM over HTTP, reads AI env variables or implements fallback. Callers today: review
-translation (role `TRANSLATE`, `translate.js`), the TMDB AI match (role `MATCH`,
+an LLM over HTTP, reads AI env variables or implements fallback. Callers today: the TMDB AI match (role `MATCH`,
 `tmdbMatchAi.js`) and the weekly catalog audit (role `DEDUPE`, `catalogAudit.js`).
 
 ## Calling it
@@ -13,7 +12,7 @@ import { getAi, imagePart, AiError } from './ai/index.js';
 const ai = getAi(); // process-wide instance; throws AiConfigError on a broken env
 
 // Text
-const r = await ai.chat('TRANSLATE', [{ role: 'system', content: 'Dịch sang tiếng Việt.' }, { role: 'user', content: text }],
+const r = await ai.chat('MATCH', [{ role: 'system', content: 'Answer in one word.' }, { role: 'user', content: text }],
   { maxTokens: 4000, temperature: 0.2, reasoning: 'off' });
 r.text; r.model; r.provider; r.usage; // usage.cost is null when the provider reports none
 
@@ -99,9 +98,9 @@ Defaults live in `src/ai/config.js` (`AI_DEFAULTS`, roles); `.env.example` mirro
 | `AI_FAKE` | empty | `1` = canned answers, no network |
 
 Old names still work and log a deprecation warning at worker start:
-`OPENROUTER_API_KEYS`→`OPENROUTER_API_KEY`, `OPENROUTER_{MATCH,TRANSLATE}_MODELS`→`OPENROUTER_MODEL_{MATCH,TRANSLATE}`,
-`OPENROUTER_{MATCH,TRANSLATE}_PAID_DAILY_OUTPUT_TOKENS`→`AI_PAID_DAILY_OUTPUT_TOKENS_{MATCH,TRANSLATE}`,
-`TMDB_MATCH_AI_TIMEOUT_MS`→`AI_TIMEOUT_MS_MATCH`, `OPENROUTER_TIMEOUT_MS`→`AI_TIMEOUT_MS_TRANSLATE`,
+`OPENROUTER_API_KEYS`→`OPENROUTER_API_KEY`, `OPENROUTER_MATCH_MODELS`→`OPENROUTER_MODEL_MATCH`,
+`OPENROUTER_MATCH_PAID_DAILY_OUTPUT_TOKENS`→`AI_PAID_DAILY_OUTPUT_TOKENS_MATCH`,
+`TMDB_MATCH_AI_TIMEOUT_MS`→`AI_TIMEOUT_MS_MATCH`,
 `OPENROUTER_COOLDOWN_MS`→`AI_COOLDOWN_MS`. `OPENROUTER_BASE_URL` and
 `TMDB_MATCH_AI_TRANSIENT_PARK_{MS,MAX_MS}` are now constants (a set value is still used, with a
 warning); `TMDB_MATCH_AI_RESERVE_PCT` is ignored.

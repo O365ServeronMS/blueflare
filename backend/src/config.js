@@ -88,19 +88,6 @@ export const config = Object.freeze({
   tmdbReviewsRefreshMs: integer('TMDB_REVIEWS_REFRESH_MS', 7 * 24 * 60 * 60 * 1000, 60 * 60 * 1000),
   tmdbReviewsRetryMs: integer('TMDB_REVIEWS_RETRY_MS', 6 * 60 * 60 * 1000, 60 * 1000),
   tmdbReviewsMaxPerMovie: integer('TMDB_REVIEWS_MAX_PER_MOVIE', 40, 1),
-  // English -> Vietnamese machine translation of stored reviews (worker only). Models, keys and
-  // timeouts of the `ai` provider live in src/ai/config.js (role TRANSLATE).
-  translateEnabled: boolean('TRANSLATE_ENABLED', false),
-  translateProvider: String(process.env.TRANSLATE_PROVIDER || 'ai'),
-  translateReviewsPerCycle: integer('TRANSLATE_REVIEWS_PER_CYCLE', 150, 1),
-  // Wall-clock budget of one translation pass; the rest waits for the next cycle.
-  translatePassMaxMs: integer('TRANSLATE_PASS_MAX_MS', 10 * 60 * 1000, 1000),
-  translateMaxConsecutiveErrors: integer('TRANSLATE_MAX_CONSECUTIVE_ERRORS', 5, 1),
-  translateCooldownMs: integer('TRANSLATE_COOLDOWN_MS', 60 * 60 * 1000, 1000),
-  // Several reviews per request (one free-tier request instead of one per review).
-  translateBatchEnabled: boolean('TRANSLATE_BATCH_ENABLED', false),
-  translateBatchMaxChars: integer('TRANSLATE_BATCH_MAX_CHARS', 8000, 500),
-  translateBatchMaxItems: integer('TRANSLATE_BATCH_MAX_ITEMS', 12, 1),
   // Score 0-100 = rating*10 (neutral 50 when unrated), length and recency parts.
   reviewScore: Object.freeze({
     ratingWeight: 0.6,

@@ -68,7 +68,6 @@ export function getRole(name) {
 export const roleNames = () => [...roles.keys()];
 
 registerRole('MATCH', { defaultOr: 'openrouter/free', timeoutMs: 180000, ledgerScope: 'tmdb-match' });
-registerRole('TRANSLATE', { ledgerScope: 'translate' });
 registerRole('DEDUPE', { modelsFrom: 'MATCH', timeoutMs: 180000, ledgerScope: 'catalog-audit' });
 
 // ---- env --------------------------------------------------------------------------------
@@ -77,11 +76,8 @@ registerRole('DEDUPE', { modelsFrom: 'MATCH', timeoutMs: 180000, ledgerScope: 'c
 export const RENAMED_ENV = Object.freeze({
   OPENROUTER_API_KEYS: 'OPENROUTER_API_KEY',
   OPENROUTER_MATCH_MODELS: 'OPENROUTER_MODEL_MATCH',
-  OPENROUTER_TRANSLATE_MODELS: 'OPENROUTER_MODEL_TRANSLATE',
   OPENROUTER_MATCH_PAID_DAILY_OUTPUT_TOKENS: 'AI_PAID_DAILY_OUTPUT_TOKENS_MATCH',
-  OPENROUTER_TRANSLATE_PAID_DAILY_OUTPUT_TOKENS: 'AI_PAID_DAILY_OUTPUT_TOKENS_TRANSLATE',
   TMDB_MATCH_AI_TIMEOUT_MS: 'AI_TIMEOUT_MS_MATCH',
-  OPENROUTER_TIMEOUT_MS: 'AI_TIMEOUT_MS_TRANSLATE',
   OPENROUTER_COOLDOWN_MS: 'AI_COOLDOWN_MS'
 });
 

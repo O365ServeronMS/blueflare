@@ -88,14 +88,24 @@ check_compose() {
   BLUEFLARE_ENV_FILE="$ROOT/backend/.env.example" docker compose -f infra/compose.yml config --quiet
 }
 
-# Mirrors infra/scripts/apply-env.sh: every key in .env.example must exist in the stack
+# Mirrors infra/scripts/apply-env.sh: every live (uncommented) key in .env.example must exist in the stack
 # .env, or the next deploy aborts. Prints key names only, never values.
 check_env_keys() {
   local key missing=0
   while IFS= read -r key; do
     grep -qE "^${key}=" "$STACK_ENV" || { echo "missing from $STACK_ENV: $key"; missing=1; }
-  done < <(grep -oE '^[A-Z_]+=' backend/.env.example | tr -d '=' | sort -u)
+  done < <(grep -oE '^[A-Z][A-Z_0-9]*=' backend/.env.example | tr -d '=' | sort -u)
   return "$missing"
+}
+
+# Stack .env keys that backend/.env.example does not document (neither as a live
+# nor as a commented `# KEY=` line) are dead: a removed feature or a typo. Names only.
+stray_env_keys() {
+  local key stray=()
+  while IFS= read -r key; do
+    grep -qE "^#? ?${key}=" backend/.env.example || stray+=("$key")
+  done < <(grep -oE '^[A-Z][A-Z_0-9]*=' "$STACK_ENV" | tr -d '=' | sort -u)
+  ((${#stray[@]} == 0)) || printf '%s\n' "${stray[*]}"
 }
 
 # shellcheck is not installed on the VPS; bash -n still catches the syntax
@@ -200,6 +210,11 @@ elif [[ ! -r "$STACK_ENV" ]]; then
   skip env-keys "$STACK_ENV not readable"
 else
   run env-keys check_env_keys
+fi
+
+if [[ -r "$STACK_ENV" ]] && stray=$(stray_env_keys) && [[ -n "$stray" ]]; then
+  printf 'WARN  %-13s        in the stack .env but not in .env.example: %s\n' env-stray "$stray"
+  warn=$((warn + 1))
 fi
 
 # The smoke test probes the deployed containers, not the working tree.

@@ -4,7 +4,7 @@ This directory owns the VPS origin and the self-hosted Next.js frontend for
 phim.bluesia.net. Architecture and invariants live in `/CLAUDE.md`; this file
 holds backend internals and the operations runbooks. `backend/.env.example` is the
 catalogue of every environment variable and its default; the tables below only
-explain what the TMDB, translation and OpenRouter variables do.
+explain what the TMDB and OpenRouter variables do.
 
 ## Contents
 
@@ -18,7 +18,6 @@ explain what the TMDB, translation and OpenRouter variables do.
   - [Image cache](#image-cache)
 - [TMDB](#tmdb)
   - [Reviews](#reviews)
-  - [Review translation](#review-translation)
   - [AI module](#ai-module)
   - [AI match](#ai-match)
   - [Identity audit and undo](#identity-audit-and-undo)
@@ -101,7 +100,8 @@ The worker imports the configured number of newest pages immediately, starting
 with NguonC and then filling gaps from KKPhim.
 
 Account hardening (auth rate limits, the scrypt concurrency cap and their
-variables, all of which must also be in the stack `.env`): see
+variables, documented as commented defaults in `backend/.env.example`; uncomment one in
+the stack `.env` only to change it): see
 `backend/ARCHITECTURE.md`.
 
 ## Sync and image jobs
@@ -191,8 +191,9 @@ one is added, keep its object keys aligned with the local cache layout,
 ## TMDB
 
 All TMDB passes are worker-only; no request path calls TMDB or a model. Each
-needs `TMDB_API_KEY` (and `TMDB_ENABLED` for the match passes). Add every new key
-to the stack `.env` as well.
+needs `TMDB_API_KEY` (and `TMDB_ENABLED` for the match passes). Add a new key to
+`backend/.env.example`; it goes in the stack `.env` only if it is live there (see the
+header of that file).
 
 ### Reviews
 
@@ -228,81 +229,6 @@ Reviews are re-fetchable, so they are not irreplaceable state.
 | `TMDB_REVIEWS_RETRY_MS` | Retry delay after a failure. |
 | `TMDB_REVIEWS_MAX_PER_MOVIE` | Reviews kept per title. |
 
-### Review translation
-
-Separate worker-only pass (`reviewTranslateSync.js`, right after the reviews
-pass in each sync cycle). It translates the English `content` to Vietnamese
-through an ordered provider chain (`TRANSLATE_PROVIDER`, `translate.js`): by
-`ai`, the AI module's role `TRANSLATE` (see [AI module](#ai-module)), the only
-provider. The free unofficial Google gtx endpoint was removed after Google blocked
-the VPS IP; a chain still naming `google-gtx` skips it with one warning. Only
-public TMDB review text is sent to a provider. A provider can start refusing us
-at any time (free quotas run out), so everything fails open: the API simply
-serves English.
-
-- Queue: reviews of ready rows with no fresh translation (`content_vi IS NULL`
-  or `translated_hash` differs from `content_hash`), skipping rows backing off
-  (`translate_retry_at`), at most `TRANSLATE_REVIEWS_PER_CYCLE` per cycle. Reviews
-  likely on page 1 of their title (spoiler-flagged and best score band first, the
-  display order of `reviewOrder.js` without the daily shuffle) go first, then
-  oldest first. Sequential; the AI module spaces each model by its own RPM.
-- Chunking: long text is split into chunks of at most 4000 chars on
-  paragraph/sentence boundaries and rejoined keeping line breaks; transient errors
-  retry twice with backoff.
-- Batching (`translateBatch.js`, `TRANSLATE_BATCH_ENABLED`): several reviews go
-  into one nonce-delimited AI request to save free-tier requests. The
-  answer is validated and split into reviews; on a bad answer the caller splits
-  the batch. A batch missing its end marker is accepted. Limits:
-  `TRANSLATE_BATCH_MAX_CHARS` / `TRANSLATE_BATCH_MAX_ITEMS`.
-- Backlog: after the first deploy every stored review is pending, so the
-  backlog drains over many cycles (150 per cycle by default), not at once. A
-  review whose translation equals the source is stored as `''` so it leaves the
-  queue without showing a translation.
-- Cooldown: a blocked provider cools down alone and the same review continues on the next provider in
-  the chain. The pass ends only when no provider is available, or after
-  `TRANSLATE_MAX_CONSECUTIVE_ERRORS` provider-level failures in a row (it then
-  pauses for `TRANSLATE_COOLDOWN_MS`). Cooldown state is in memory (a worker
-  restart retries once). A single failing review backs off for the same period
-  without blocking the rest.
-- Content refusals: a `content_filter`/truncated answer, or one with stray CJK
-  characters for a source without any, from one model is tried on the next model;
-  when all refuse (`TranslateContentError`) it is a per-review failure that does
-  NOT count toward the consecutive-error limit. Per-model state is in memory.
-  Without any AI key the `ai` provider is skipped silently (one warning is logged
-  if no provider is usable at all, so a chain with only `ai` and no key translates
-  nothing).
-- Log line: `[worker] review translate checked= ok= failed= blocked=
-  providers=ai:N models=<model id>:A,<model id>:B keys=<provider> k1:N`
-  (`keys=` only when the AI module answered). `translate_provider` stores
-  `<provider>:<model id>` (`api.orcarouter.ai:<model>`, `openrouter:<model>`); rows
-  written earlier may still say `google-gtx` or `gemini:<model>`.
-- Storage: migration `026_review_translation.sql` adds `content_vi`,
-  `translated_hash`, `translated_at`, `translate_failed_at`,
-  `translate_retry_at` to `movie_reviews`; migration
-  `027_review_translation_provider.sql` adds `translate_provider` (internal only,
-  never in the API, NULL for older rows). `content` stays the English source;
-  `has_spoiler` and `score` are computed on it, not on the translation. A
-  translation is only written (and served) while `translated_hash` equals the
-  current `content_hash`, so a TMDB refresh that rewrites the text hides the old
-  translation until it is retranslated.
-- API: each review has `contentVi` (string, or `null` when there is no fresh
-  translation); the contract is in `backend/ARCHITECTURE.md`. Changed titles
-  are invalidated the same way as a reviews change.
-
-| Variable | Meaning |
-| --- | --- |
-| `TRANSLATE_ENABLED` | Run the pass; off keeps reviews English. |
-| `TRANSLATE_PROVIDER` | Provider chain; only `ai` (`openrouter` = old alias). `google-gtx` was removed and is skipped with a warning. |
-| `TRANSLATE_REVIEWS_PER_CYCLE` | Reviews translated per cycle. |
-| `TRANSLATE_MAX_CONSECUTIVE_ERRORS` | Provider-level failures in a row before the pass pauses. |
-| `TRANSLATE_COOLDOWN_MS` | Pause / cooldown after a block or too many errors. |
-| `TRANSLATE_BATCH_ENABLED` | Pack several reviews per AI request. |
-| `TRANSLATE_BATCH_MAX_CHARS` | Characters per batch (minimum 500). |
-| `TRANSLATE_BATCH_MAX_ITEMS` | Reviews per batch. |
-
-Models, keys, timeout and paid cap of the `ai` provider: role `TRANSLATE` in
-[AI module](#ai-module).
-
 ### AI module
 
 `src/ai/` is the only code that calls a model; the call API, roles, routing, fallback
@@ -310,8 +236,8 @@ rules and the full env table are in [`AI.md`](AI.md). In short: a primary
 OpenAI-compatible provider (`LLM_BASE_URL`, `LLM_API_KEY`, `MODEL_<ROLE>` or
 `MODEL_PRIMARY`/`MODEL_FALLBACK`) is tried first, then OpenRouter
 (`OPENROUTER_API_KEY`, `OPENROUTER_MODEL_<ROLE>`), moving on at a 401/402/408/429/5xx,
-network error, timeout or bad answer. Roles: `TRANSLATE` (review translation) and
-`MATCH` (TMDB AI match). The worker reads the AI env at start; `LLM_BASE_URL` without
+network error, timeout or bad answer. Roles: `MATCH` (TMDB AI match) and
+`DEDUPE` (catalog audit). The worker reads the AI env at start; `LLM_BASE_URL` without
 `LLM_API_KEY` stops it with a clear error, and old variable names log a deprecation
 warning.
 
@@ -454,7 +380,7 @@ and re-gated under the lock the sync cycle holds.
 | `GET /api/movie/:canonicalSlug` | |
 | `GET /api/recommendations/:canonicalSlug` | |
 | `GET /api/person/:slug?role=&page=` | Cast/director credits. |
-| `GET /api/movies/:canonicalSlug/reviews?page=1&limit=10` | Public, cached 60s; contract in `backend/ARCHITECTURE.md` (`contentVi` null when untranslated; limit default 10, max 20; 404 for unknown slug). |
+| `GET /api/movies/:canonicalSlug/reviews?page=1&limit=10` | Public, cached 60s; contract in `backend/ARCHITECTURE.md` (limit default 10, max 20; 404 for unknown slug). |
 | `GET /api/categories` | |
 | `GET /api/countries` | |
 | `GET /api/cards?slugs=a,b` | Public, cached 60s, key = sorted slug list. |

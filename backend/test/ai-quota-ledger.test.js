@@ -22,7 +22,7 @@ test('utcDay follows UTC midnight', () => {
 });
 
 test('scopedFingerprint is 12 hex of a hash, differs per scope, and is not the key', () => {
-  const fp = scopedFingerprint('sk-or-secret-key', 'translate');
+  const fp = scopedFingerprint('sk-or-secret-key', 'sample');
   assert.match(fp, /^[0-9a-f]{12}$/);
   assert.ok(!'sk-or-secret-key'.includes(fp));
   assert.notEqual(fp, scopedFingerprint('sk-or-secret-key', 'tmdb-match'));

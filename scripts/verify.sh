@@ -54,7 +54,8 @@ check_backend() {
 
 # The tests gated on TEST_DATABASE_URL skip in check_backend. Here they run against a
 # throwaway PostgreSQL container on a loopback port, removed afterwards; production's
-# database is never touched. VERIFY_DB=0 skips this check.
+# database is never touched. The files share one database and some TRUNCATE it, so they
+# run one at a time (--test-concurrency=1). VERIFY_DB=0 skips this check.
 check_backend_db() {
   local name="bf-verify-pg-$$" port files i
   files=$(grep -l TEST_DATABASE_URL backend/test/*.test.js)
@@ -68,7 +69,7 @@ check_backend_db() {
   port=$(docker port "$name" 5432/tcp | head -n1 | sed 's/.*://')
   [[ -n "$port" ]] || { echo "throwaway postgres did not publish a port"; return 1; }
   cd backend && TEST_DATABASE_URL="postgres://postgres:verify@127.0.0.1:$port/bf_test" \
-    node --test $(sed 's#^backend/##' <<<"$files")
+    node --test --test-concurrency=1 $(sed 's#^backend/##' <<<"$files")
 }
 
 # vitest only runs what vitest.config.ts includes; a test file outside those

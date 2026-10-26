@@ -402,6 +402,27 @@ function sourceFingerprint(source) {
 }
 
 /**
+ * Deletes the summary source (provider_movie_id = provider_slug) under `slug` and hides its movie
+ * when no source is left (hidden, not deleted: user rows stay). Returns the hidden canonical slugs.
+ */
+async function dropSummarySource(client, provider, slug) {
+  const dropped = await client.query(
+    'DELETE FROM movie_provider_sources WHERE provider=$1 AND provider_slug=$2 AND provider_movie_id=$2 RETURNING movie_id',
+    [provider, slug]
+  );
+  if (!dropped.rows.length) return [];
+  const hidden = await client.query(
+    "UPDATE movies m SET catalog_state='unavailable', updated_at=now() WHERE m.id = ANY($1::uuid[]) " +
+    "AND m.catalog_state <> 'unavailable' " +
+    'AND NOT EXISTS (SELECT 1 FROM movie_provider_sources s WHERE s.movie_id = m.id) RETURNING m.canonical_slug',
+    [dropped.rows.map((row) => row.movie_id)]
+  );
+  console.warn('[repository] dropped summary source provider=' + provider + ' slug=' + slug +
+    ' hidden=' + (hidden.rows.map((row) => row.canonical_slug).join(',') || '-'));
+  return hidden.rows.map((row) => row.canonical_slug);
+}
+
+/**
  * `relocate`: ignore the row the record is attached to now and pick its row afresh (strong
  * identity, then title identity). The catalog audit uses it to move a record off a row of
  * another season; the ON CONFLICT below then re-points the source.
@@ -429,12 +450,24 @@ export async function upsertCanonical(incoming, { relocate = false } = {}) {
       [incoming.provider, incoming.providerSlug]
     )).rows[0];
     const reconciled = reconcileSourceIdentity(incoming, existingBySlug);
+    const hiddenSlugs = [];
     if (reconciled.rekeyFrom) {
-      await client.query(
-        'UPDATE movie_provider_sources SET provider_movie_id=$3, updated_at=now() ' +
-        'WHERE provider=$1 AND provider_movie_id=$2',
-        [incoming.provider, reconciled.rekeyFrom, reconciled.providerMovieId]
-      );
+      const holder = (await client.query(
+        'SELECT 1 FROM movie_provider_sources WHERE provider=$1 AND provider_movie_id=$2 LIMIT 1',
+        [incoming.provider, reconciled.providerMovieId]
+      )).rows[0];
+      if (holder && reconciled.rekeyFrom === incoming.providerSlug) {
+        // Provider renamed the slug and keeps the id: the row under the new slug is a summary
+        // (id = slug) written while its detail was 404, the real id still sits on the old slug's
+        // row. Drop the summary so the ON CONFLICT below re-slugs the real row.
+        hiddenSlugs.push(...await dropSummarySource(client, incoming.provider, incoming.providerSlug));
+      } else {
+        await client.query(
+          'UPDATE movie_provider_sources SET provider_movie_id=$3, updated_at=now() ' +
+          'WHERE provider=$1 AND provider_movie_id=$2',
+          [incoming.provider, reconciled.rekeyFrom, reconciled.providerMovieId]
+        );
+      }
     }
     incoming = { ...incoming, providerMovieId: reconciled.providerMovieId };
     const sourceMovie = relocate ? null : await findBySource(client, incoming);
@@ -486,7 +519,7 @@ export async function upsertCanonical(incoming, { relocate = false } = {}) {
     const changed = !previousFingerprint || previousFingerprint !== movieFingerprint(movie) ||
       sourceFingerprint(previousSource) !== sourceFingerprint(currentSourceResult.rows[0]);
     await client.query('COMMIT');
-    return { movie, changed };
+    return { movie, changed, hiddenSlugs };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
@@ -564,6 +597,17 @@ export async function healImageSourcesFromAlternate(batchSize = 1000) {
     cursor = rows.rows[rows.rows.length - 1].id;
   }
   return changed;
+}
+
+/** Slugs among `slugs` whose stored source of `provider` has no stream (a summary row). */
+export async function listStreamlessSourceSlugs(provider, slugs) {
+  if (!slugs.length) return [];
+  const result = await pool.query(
+    'SELECT provider_slug FROM movie_provider_sources WHERE provider=$1 AND provider_slug = ANY($2::text[]) ' +
+    'AND jsonb_array_length(streams) = 0',
+    [provider, slugs]
+  );
+  return result.rows.map((row) => row.provider_slug);
 }
 
 export async function listStoredSourceStates(provider, slugs) {

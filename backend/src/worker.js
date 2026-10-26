@@ -12,7 +12,7 @@ import { closeDatabase, migrate } from './db.js';
 import { revalidateFrontend } from './frontendRevalidation.js';
 import { normalizeKkphim, normalizeNguonc } from './normalize.js';
 import { collectHeroTrending } from './heroTrending.js';
-import { unchangedSlugs } from './syncSkip.js';
+import { allowSummaryFallback, unchangedSlugs } from './syncSkip.js';
 import { KkphimProvider } from './providers/KkphimProvider.js';
 import { NguoncProvider } from './providers/NguoncProvider.js';
 import {
@@ -59,6 +59,7 @@ import {
   getMdblistBackfillCursor,
   saveMdblistBackfillCursor,
   listStoredSourceStates,
+  listStreamlessSourceSlugs,
   healImageSourcesFromItems,
   healImageSourcesFromAlternate,
   loadImageHostHealth,
@@ -135,6 +136,9 @@ async function syncPage(provider, page) {
   const stored = await listStoredSourceStates(provider.name, items.map((item) => item.slug));
   const unchanged = unchangedSlugs(items, stored);
   const hasGoodSource = new Set(stored.map((row) => row.provider_slug));
+  const streamless = new Set(provider.name === 'nguonc'
+    ? await listStreamlessSourceSlugs(provider.name, items.map((item) => item.slug))
+    : []);
   // Unchanged items are skipped below, so this is what keeps their last_seen_at fresh.
   await touchSourcesSeen(provider.name, items.map((item) => item.slug)).catch((error) => {
     console.warn('[worker] ' + provider.name + ' touch last_seen_at failed', error.message);
@@ -155,13 +159,13 @@ async function syncPage(provider, page) {
         '[worker] ' + provider.name + ' detail failed for ' + item.slug,
         error.message
       );
-      // Fallback tóm tắt không có stream: không được ghi đè nguồn đã có dữ liệu tốt.
-      if (hasGoodSource.has(item.slug)) return;
+      if (!allowSummaryFallback(provider.name, item.slug, { goodSlugs: hasGoodSource, streamlessSlugs: streamless })) return;
       normalized = summaryFallback(provider, item);
     }
     try {
       const result = await upsertCanonical(normalized);
       if (result.changed) changedSlugs.push(result.movie.canonical_slug);
+      changedSlugs.push(...(result.hiddenSlugs ?? []));
       imported += 1;
     } catch (error) {
       failed += 1;

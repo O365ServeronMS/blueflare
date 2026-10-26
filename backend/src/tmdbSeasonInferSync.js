@@ -83,7 +83,7 @@ export async function refreshSeasonInference(deps = {}) {
     };
     if (!show) { await decline('tmdb-show-missing'); continue; }
     const inferred = inferSeasonFromTmdb(row, show);
-    if (inferred.season === null) { await decline(inferred.reason); continue; }
+    if (inferred.season === null) { await decline(inferred.reason, inferred.detail); continue; }
     const numberOfSeasons = Number(show.number_of_seasons) > 0 ? Number(show.number_of_seasons) : null;
     const evidence = { pass: PASS, season: inferred.season, tmdbSeason: inferred.tmdbSeason, ...(aiRun ? { aiRun } : {}) };
     const result = await assign(row.id, { ...input, numberOfSeasons, season: inferred.season }, { source: 'inferred', evidence, mode });

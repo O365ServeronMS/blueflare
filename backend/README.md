@@ -117,7 +117,10 @@ A list item whose `modified` time equals the stored `provider_updated_at` (and
 whose stored source already has streams) is skipped without a detail fetch; the
 head log reports it as `skippedUnchanged`. When a detail fetch fails, an existing
 source with streams is left untouched instead of being overwritten by the
-list-item summary. A stored source whose movie has no usable thumb (empty, or on a
+list-item summary. NguonC list items carry no provider id or category, so a NguonC
+summary is written only to refresh an existing streamless summary row
+(`syncSkip.allowSummaryFallback`); a NguonC slug with no row gets no movie until its
+detail answers. KKPhim keeps the plain fallback. A stored source whose movie has no usable thumb (empty, or on a
 host in `IMAGE_DEAD_HOSTS`) is never skipped.
 
 Catalog lists only expose `catalog_state=ready` rows. Their order is

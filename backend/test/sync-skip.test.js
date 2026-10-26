@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { itemModifiedMs, unchangedSlugs } from '../src/syncSkip.js';
+import { allowSummaryFallback, itemModifiedMs, unchangedSlugs } from '../src/syncSkip.js';
 
 const iso = '2026-09-30T03:08:30.000Z';
 
@@ -24,4 +24,14 @@ test('unchangedSlugs skips only items whose modified time matches the stored one
     { provider_slug: 'no-modified', provider_updated_at: new Date(iso) }
   ];
   assert.deepEqual([...unchangedSlugs(items, stored)], ['same']);
+});
+
+test('allowSummaryFallback: never over a streamed source; nguonc only refreshes an existing summary row', () => {
+  const sets = { goodSlugs: new Set(['good']), streamlessSlugs: new Set(['summary']) };
+  assert.equal(allowSummaryFallback('nguonc', 'good', sets), false);
+  assert.equal(allowSummaryFallback('nguonc', 'summary', sets), true);
+  // a renamed or brand-new nguonc slug whose detail is 404: no new movie from the list item
+  assert.equal(allowSummaryFallback('nguonc', 'new-slug', sets), false);
+  assert.equal(allowSummaryFallback('kkphim', 'good', sets), false);
+  assert.equal(allowSummaryFallback('kkphim', 'new-slug', sets), true);
 });

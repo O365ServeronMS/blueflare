@@ -19,3 +19,13 @@ export function unchangedSlugs(items, stored) {
   }
   return unchanged;
 }
+
+// Detail lỗi thì có được ghi bản tóm tắt (không stream) từ trang danh sách không. Không bao giờ
+// đè nguồn đã có stream. NguonC: item danh sách không có id và category, nên bản tóm tắt chỉ được
+// làm mới một hàng tóm tắt đã có, không được tạo movie/nguồn mới (lúc NguonC đổi slug nó sinh ra
+// movie rác kiểu series, id = slug, rồi va UNIQUE (provider, provider_movie_id) khi detail trở lại).
+export function allowSummaryFallback(providerName, slug, { goodSlugs, streamlessSlugs }) {
+  if (goodSlugs.has(slug)) return false;
+  if (providerName === 'nguonc') return streamlessSlugs.has(slug);
+  return true;
+}

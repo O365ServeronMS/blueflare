@@ -52,6 +52,7 @@ export async function refreshStaleSources({ mode, providers, deps, settings, isS
       stats.refreshed += 1;
       if (result.changed) stats.changedSlugs.push(result.movie.canonical_slug);
       else stats.unchanged += 1;
+      stats.changedSlugs.push(...(result.hiddenSlugs ?? []));
     } catch (error) {
       if (error?.code === '23505') {
         stats.conflicts += 1;

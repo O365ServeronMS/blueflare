@@ -32,8 +32,35 @@ test('zero candidates: no-season-fits; two candidates: ambiguous', () => {
   const near = show(season(1, 12, '2020-01-01'), season(2, 20, '2020-09-01'));
   // 16 vs 12 is 1.33 (> 1.25) but only 4 apart, so it is not a hard episode gap either
   assert.equal(inferSeasonFromTmdb(row({ episode_total: '16' }), show(season(1, 12, '2020-01-01'), season(2, 11, '2015-01-01'))).reason, 'no-season-fits');
-  assert.equal(inferSeasonFromTmdb(row({ episode_total: '12' }), show(season(1, 12, '2020-01-01'), season(2, 12, '2021-01-01'))).reason, 'ambiguous');
+  const twins = inferSeasonFromTmdb(row({ episode_total: '12' }), show(season(1, 12, '2020-01-01'), season(2, 12, '2020-07-01')));
+  assert.deepEqual([twins.reason, twins.detail], ['ambiguous', { candidates: [1, 2] }]);
   assert.equal(inferSeasonFromTmdb(row({ episode_total: '12' }), near).season, 1);
+});
+
+test('tie-break: the only season aired in the exact year wins, then the only exact episode count', () => {
+  // Working!! 2010, 13 eps: S1 2010/13, S2 2011/13, S3 2015/13
+  const working = show(season(1, 13, '2010-04-01'), season(2, 13, '2011-10-01'), season(3, 13, '2015-07-01'));
+  assert.equal(inferSeasonFromTmdb(row({ year: 2010, episode_total: '13' }), working).season, 1);
+  assert.equal(inferSeasonFromTmdb(row({ year: 2011, episode_total: '13' }), working).season, 2);
+  // Richie Rich 2015, 10 eps: S1 2015/10, S2 2015/11 -> same year, exact count decides
+  assert.equal(inferSeasonFromTmdb(row({ year: 2015, episode_total: '10' }), show(season(1, 10, '2015-02-01'), season(2, 11, '2015-08-01'))).season, 1);
+  // no season in the exact year: the exact count among the +-1 fits decides
+  assert.equal(inferSeasonFromTmdb(row({ year: 2021, episode_total: '12' }), show(season(1, 12, '2020-01-01'), season(2, 11, '2022-01-01'))).season, 1);
+  // same year, same count: still ambiguous
+  assert.equal(inferSeasonFromTmdb(row({ year: 2022, episode_total: '10' }), show(season(1, 10, '2022-01-01'), season(2, 10, '2022-09-01'))).reason, 'ambiguous');
+  // the pick still goes through the marker check
+  assert.equal(inferSeasonFromTmdb(row({ year: 2010, episode_total: '13', title: 'Working 2' }), working).reason, 'marker-conflict');
+});
+
+test('multi-season-span: consecutive seasons adding up to the row total are named, not assigned', () => {
+  // Dragon Ball Kai 2014, 61 eps = S5 2014/35 + S6 2014/26
+  const kai = show(season(1, 26, '2009-04-01'), season(2, 26, '2009-10-01'), season(3, 25, '2010-04-01'), season(4, 20, '2010-10-01'), season(5, 35, '2014-04-01'), season(6, 26, '2014-10-01'));
+  const out = inferSeasonFromTmdb(row({ year: 2014, episode_total: '61' }), kai);
+  assert.deepEqual([out.season, out.reason, out.detail], [null, 'multi-season-span', { span: [5, 6] }]);
+  // a sum that only nearly matches is still a plain episode gap
+  assert.equal(inferSeasonFromTmdb(row({ year: 2014, episode_total: '70' }), kai).reason, 'episode-gap');
+  // the first spanned season must air within the year window
+  assert.equal(inferSeasonFromTmdb(row({ year: 2020, episode_total: '24' }), show(season(1, 12, '2015-01-01'), season(2, 12, '2020-01-01'))).reason, 'episode-gap');
 });
 
 test('hard rejects: no year, too few episodes, year gap of 2-3, episode gap', () => {

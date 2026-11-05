@@ -58,6 +58,7 @@ All on `img.bluesia.net`. `<stale>` is `responseCacheStaleSeconds` of the API.
 | `infra/cloudflare/cloudflare-frontend-static-rule.json` | `phim.bluesia.net` `/_next/static/*` | edge and browser one year |
 | `infra/cloudflare/cloudflare-image-cache-rule.json` | `img.bluesia.net` `/i/*` (GET/HEAD) | edge and browser one year (the rule's `ref` is still `blueflare_signed_images`, a leftover name) |
 | `infra/cloudflare/cloudflare-cache-rule.json` | `img.bluesia.net` catalog API allowlist: `/api/home-data`, `/api/list`, `/api/genre`, `/api/country`, `/api/categories`, `/api/countries`, `/api/movie/*`, `/api/recommendations/*` | edge 5 min, browser 60 s (overrides origin) |
+| `infra/cloudflare/cloudflare-html-cache-rule.json` | `phim.bluesia.net` `/`, `/list/*`, `/movie/*`, `/person/*` (GET/HEAD), excluding `_rsc` and requests with `RSC`/`Next-Router-Prefetch`/`Next-Router-Segment-Prefetch` headers (Cloudflare ignores `Vary`) | respects origin (`s-maxage=600`, browser 60 s) |
 | `infra/cloudflare/cloudflare-auth-ratelimit-rule.json` | `/api/auth/*` rate limit (see below) | n/a |
 
 `cloudflare-cache-rule.json` does not list `/api/movies/:slug/reviews`,

@@ -1,3 +1,4 @@
+import { applyKeepAlive } from './keepAlive.js';
 import { timingSafeEqual } from 'node:crypto';
 import http from 'node:http';
 import {
@@ -395,6 +396,8 @@ const server = http.createServer((request, response) => {
     observeRequest(pathname, response.statusCode, Date.now() - started);
   });
 });
+
+applyKeepAlive(server);
 
 server.listen(config.port, '0.0.0.0', () => {
   console.log('[api] listening on 0.0.0.0:' + config.port);

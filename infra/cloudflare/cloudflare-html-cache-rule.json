@@ -1,0 +1,16 @@
+{
+  "action": "set_cache_settings",
+  "action_parameters": {
+    "cache": true,
+    "edge_ttl": {
+      "mode": "respect_origin"
+    },
+    "browser_ttl": {
+      "mode": "respect_origin"
+    }
+  },
+  "expression": "(http.host eq \"phim.bluesia.net\" and http.request.method in {\"GET\" \"HEAD\"} and (http.request.uri.path eq \"/\" or starts_with(http.request.uri.path, \"/list/\") or starts_with(http.request.uri.path, \"/movie/\") or starts_with(http.request.uri.path, \"/person/\")) and not any(http.request.uri.args.names[*] == \"_rsc\") and not any(lower(http.request.headers.names[*])[*] in {\"rsc\" \"next-router-prefetch\" \"next-router-segment-prefetch\"}))",
+  "description": "Blueflare public HTML documents: cache eligible, honour origin Cache-Control (s-maxage=600); RSC/prefetch requests bypass because Cloudflare ignores Vary",
+  "enabled": true,
+  "ref": "blueflare_public_html"
+}

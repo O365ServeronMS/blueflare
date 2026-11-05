@@ -137,6 +137,7 @@ The Cloudflare IP ranges in `lib/account-proxy.ts` are hardcoded; refresh them f
 | File(s) | Role |
 | --- | --- |
 | `server.js` | API + sweep scheduler |
+| `keepAlive.js` | API `keepAliveTimeout` 65 s (> Caddy upstream idle) |
 | `worker.js` | sync + rating enrichment + prewarm |
 | `mdblist.js`, `mdblistRatingsSync.js` | batched Rotten Tomatoes scores |
 | `images.js`, `imageStore.js` | image cache origin |
@@ -164,7 +165,7 @@ The Cloudflare IP ranges in `lib/account-proxy.ts` are hardcoded; refresh them f
 | Path | Role |
 | --- | --- |
 | `infra/compose.yml` | canonical compose file |
-| `infra/cloudflare/` | rules; `cloudflare-auth-ratelimit-rule.json` is applied by hand |
+| `infra/cloudflare/` | rules; the four cache rules are applied with `scripts/cf-apply-cache-rules.sh [--dry-run]` (`CF_API_TOKEN`), `cloudflare-auth-ratelimit-rule.json` by hand |
 | `infra/backup/` | backup service image |
 | `infra/scripts/` | `sync-stack.sh`, `apply-env.sh`, `backup-postgres.sh`, `bootstrap-vps.sh` |
 

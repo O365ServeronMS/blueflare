@@ -172,7 +172,7 @@ function main() {
 
   const start = (index, attempt) => {
     const upstream = upstreams[index];
-    const child = fork(serverEntry, [], { env: { ...process.env, PORT: String(upstream.port), HOSTNAME: "127.0.0.1" } });
+    const child = fork(serverEntry, [], { env: { ...process.env, PORT: String(upstream.port), HOSTNAME: "127.0.0.1", KEEP_ALIVE_TIMEOUT: "65000" } });
     children.set(index, child);
     void waitUntilListening(upstream, 60_000).then((ok) => {
       if (ok && children.get(index) === child) upstream.up = true;

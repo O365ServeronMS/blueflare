@@ -97,8 +97,8 @@ Frontend commands run from `frontend/` (or `npm --prefix frontend <cmd>`).
 | `npm run preview` | serve the standalone build |
 | `npm test` | vitest, frontend |
 | `cd backend && node --test` | backend suite |
-| `scripts/deploy.sh [--dry-run] [svc...\|all]` | build changed services, recreate, health gate, auto-rollback |
-| `scripts/rollback.sh [--dry-run] [svc...]` | swap services back to their previous (`:prev`) images |
+| `scripts/deploy.sh [--dry-run] [svc...\|all]` | build changed services, recreate, health gate, auto-rollback; prints an `ACTION (by hand)` reminder to purge the `phim.bluesia.net` Cloudflare cache when `frontend` is involved |
+| `scripts/rollback.sh [--dry-run] [svc...]` | swap services back to their previous (`:prev`) images; same purge reminder when `frontend` is among them |
 
 `scripts/deploy.sh` ships only a clean, pushed `main`, records the running rev in
 `/opt/stacks/blueflare/.last-deploy`, and tags each replaced image `:prev`. A
@@ -165,7 +165,7 @@ The Cloudflare IP ranges in `lib/account-proxy.ts` are hardcoded; refresh them f
 | Path | Role |
 | --- | --- |
 | `infra/compose.yml` | canonical compose file |
-| `infra/cloudflare/` | rules; the four cache rules are applied with `scripts/cf-apply-cache-rules.sh [--dry-run]` (`CF_API_TOKEN`), `cloudflare-auth-ratelimit-rule.json` by hand |
+| `infra/cloudflare/` | rules; the four cache rules are applied with `scripts/cf-apply-cache-rules.sh [--dry-run]` (`CF_API_TOKEN`, a temporary write token the user supplies and revokes; never stored), `cloudflare-auth-ratelimit-rule.json` by hand |
 | `infra/backup/` | backup service image |
 | `infra/scripts/` | `sync-stack.sh`, `apply-env.sh`, `backup-postgres.sh`, `bootstrap-vps.sh` |
 
@@ -209,6 +209,7 @@ The two Caddy site blocks live inline in `bootstrap-vps.sh`, not as separate fil
 
 - Next render-cache tags and Valkey/API cache keys must not vary by `returnTo`, cookies, authorization, user agent, or analytics parameters.
 - The frontend runs several Next processes and Next's `"use cache"` store is per process, so `cluster.mjs` replays every `/api/internal/revalidate` POST to all workers and answers 2xx only if all did (503 while one restarts). Never point the sync worker at a single worker port, and keep `FRONTEND_WORKERS`, `cpus` and the per-worker `--max-old-space-size` inside the container `mem_limit`.
+- Public HTML is HTTP 200 even when a stream errors (root `loading.tsx` streams the shell first), so Cloudflare can cache an error page. `movie`/`person` call `notFound()` only on an API 404 (`getMovieServer`/`getPersonServer` return `null`); any other API failure throws `CatalogHttpError` to `error.tsx`, which retries once on its own.
 - `/api/internal/revalidate` is POST-only, secret-protected, and not public through Caddy. The worker sends deduplicated tags in sequential batches of at most 32; the route hard-expires each tag so changed detail data cannot remain stale.
 
 ## Playback and loading

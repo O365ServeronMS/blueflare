@@ -6,12 +6,31 @@ import type { EpisodeServer, HomePayload, ListPayload, MovieCard, MovieDetail, P
 
 const INTERNAL_CATALOG_BASE = (process.env.INTERNAL_CATALOG_URL || process.env.CATALOG_BASE_URL || "https://img.bluesia.net").replace(/\/$/, "");
 
-async function fetchCatalog<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${INTERNAL_CATALOG_BASE}${path}`, {
+export class CatalogHttpError extends Error {
+  constructor(readonly status: number, readonly path: string) {
+    super(`Catalog API ${status}: ${path}`);
+    this.name = "CatalogHttpError";
+  }
+}
+
+async function catalogResponse(path: string, init?: RequestInit): Promise<Response> {
+  return fetch(`${INTERNAL_CATALOG_BASE}${path}`, {
     ...init,
     headers: { Accept: "application/json", ...(init?.headers || {}) }
   });
-  if (!response.ok) throw new Error(`Catalog API ${response.status}: ${path}`);
+}
+
+async function fetchCatalog<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await catalogResponse(path, init);
+  if (!response.ok) throw new CatalogHttpError(response.status, path);
+  return response.json() as Promise<T>;
+}
+
+// null on 404, CatalogHttpError on any other non-ok status.
+async function fetchCatalogOrNull<T>(path: string, init?: RequestInit): Promise<T | null> {
+  const response = await catalogResponse(path, init);
+  if (response.status === 404) return null;
+  if (!response.ok) throw new CatalogHttpError(response.status, path);
   return response.json() as Promise<T>;
 }
 
@@ -111,12 +130,18 @@ export async function searchServer(keyword: string, page = 1): Promise<ListPaylo
   );
 }
 
-export async function getMovieServer(slug: string): Promise<MovieDetail> {
+export async function getMovieServer(slug: string): Promise<MovieDetail | null> {
   "use cache";
   const safeSlug = String(slug || "").trim();
-  cacheLife({ stale: 900, revalidate: 900, expire: 86400 });
   cacheTag(`movie:${safeSlug}`);
-  const payload = await fetchCatalog<any>(`/api/movie/${encodeURIComponent(safeSlug)}`);
+  // 5xx/network errors throw before cacheLife, so they are never cached. A 404 is
+  // returned as null (not thrown: error classes may not survive "use cache").
+  const payload = await fetchCatalogOrNull<any>(`/api/movie/${encodeURIComponent(safeSlug)}`);
+  if (!payload) {
+    cacheLife({ stale: 60, revalidate: 60, expire: 300 });
+    return null;
+  }
+  cacheLife({ stale: 900, revalidate: 900, expire: 86400 });
   const movieRaw = payload?.movie || payload?.data?.item || payload?.data?.movie || {};
   const episodesRaw = payload?.episodes || movieRaw?.episodes || payload?.data?.episodes || [];
   const episodes: EpisodeServer[] = (Array.isArray(episodesRaw) ? episodesRaw : [])
@@ -160,16 +185,20 @@ export async function getRecommendationsServer(slug: string): Promise<MovieCard[
   return items.map(normalizeCard).filter((movie: MovieCard) => movie.slug);
 }
 
-export async function getPersonServer(slug: string, page = 1, role = "all"): Promise<PersonPayload> {
+export async function getPersonServer(slug: string, page = 1, role = "all"): Promise<PersonPayload | null> {
   "use cache";
   const safeSlug = String(slug || "").trim();
   const safePage = normalizePage(page);
   const safeRole = role === "cast" || role === "director" ? role : "all";
-  cacheLife({ stale: 900, revalidate: 3600, expire: 86400 });
   cacheTag(`person:${safeSlug}`, `page:${safePage}`);
-  const payload = await fetchCatalog<any>(
+  const payload = await fetchCatalogOrNull<any>(
     `/api/person/${encodeURIComponent(safeSlug)}?page=${safePage}&role=${safeRole}`
   );
+  if (!payload) {
+    cacheLife({ stale: 60, revalidate: 60, expire: 300 });
+    return null;
+  }
+  cacheLife({ stale: 900, revalidate: 3600, expire: 86400 });
   const list = toListPayload(payload, "Người", safePage);
   const person = payload?.data?.person || {};
   return {

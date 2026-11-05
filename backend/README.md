@@ -508,6 +508,11 @@ Caddyfile directly, then format, validate, and reload:
     sudo caddy validate --config /etc/caddy/Caddyfile
     sudo systemctl reload caddy
 
+Both `reverse_proxy` lines carry `transport http { keepalive 30s }`, so Caddy drops idle upstream
+sockets before Node's 65 s `keepAliveTimeout` does. An already-deployed Caddyfile does not pick
+this up from `bootstrap-vps.sh`: add the block by hand, then `caddy validate` and reload (only on
+request).
+
 Access logs are intentionally omitted from both blocks: a file-log block needs a
 writable `/var/log/caddy` owned by the `caddy` user, which turns reload into a
 two-step sudo dance and once caused a silent reload failure. `journalctl -u

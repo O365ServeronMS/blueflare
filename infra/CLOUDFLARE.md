@@ -17,12 +17,24 @@
 - `/_next/static/*`: immutable, fingerprinted assets; use the scoped cache rule
   in `infra/cloudflare/cloudflare-frontend-static-rule.json` (one year).
 - Public HTML (`/`, `/list/*`, `/movie/*`, `/person/*`): the origin decides. `next.config.ts` sends
-  `public, max-age=60, s-maxage=600` (10 min at the edge, 60 s in the browser) for full documents only;
+  `public, max-age=0, s-maxage=60, stale-while-revalidate=300, stale-if-error=3600, no-transform`
+  (60 s fresh at the edge, then served stale while revalidating for up to 5 min, and for up to 1 h if the
+  origin errors; the browser always revalidates) for full documents only;
   requests carrying `RSC`/`Next-Router-Prefetch` headers or a `_rsc` query keep `no-store`, as do search,
   login/signup, favorites/history and `/admin`. Cloudflare must honour the origin's Cache-Control for
   these paths (a Cache Rule "eligible for cache, use origin TTL"); with plain Standard cache level HTML is
   never stored and `CF-Cache-Status` stays `DYNAMIC`. After a sync the edge copy can lag by up to
-  10 minutes: Next tags are expired at the origin immediately, but the edge is not purged.
+  about a minute: Next tags are expired at the origin immediately, but the sync revalidate does not purge
+  the edge.
+  - Why the TTL is short: the root `loading.tsx` streams the shell first, so `notFound()` and `error.tsx`
+    are sent with HTTP 200 and the same `public` Cache-Control. A transient API error would otherwise
+    sit at the edge for the whole TTL. `src/app/error.tsx` therefore refreshes itself once per path
+    every 30 s, and `movie`/`person` call `notFound()` only on an API 404 (other errors reach `error.tsx`).
+  - A frontend deploy/rollback changes the `/_next/static` hashes, so the cached HTML must be purged.
+    No Cloudflare token is kept on the VPS on purpose: `scripts/deploy.sh` and `scripts/rollback.sh`
+    print an `ACTION (by hand)` line when `frontend` is involved, and the operator purges hostname
+    `phim.bluesia.net` in the dashboard (Caching > Configuration > Purge Cache > Custom Purge). Skipped,
+    the edge converges within the 60 s TTL. Rule changes are applied with a temporary write token.
 - `/i/m/*` and `/i/d/*`: owned by `img.bluesia.net`, path-only and keyed by
   `image_assets.id` (`/i/{m,d}/<image_assets.id>.webp`); retain its origin TTL and
   shared two-variant cache contract (rule: `infra/cloudflare/cloudflare-image-cache-rule.json`).
@@ -58,7 +70,7 @@ All on `img.bluesia.net`. `<stale>` is `responseCacheStaleSeconds` of the API.
 | `infra/cloudflare/cloudflare-frontend-static-rule.json` | `phim.bluesia.net` `/_next/static/*` | edge and browser one year |
 | `infra/cloudflare/cloudflare-image-cache-rule.json` | `img.bluesia.net` `/i/*` (GET/HEAD) | edge and browser one year (the rule's `ref` is still `blueflare_signed_images`, a leftover name) |
 | `infra/cloudflare/cloudflare-cache-rule.json` | `img.bluesia.net` catalog API allowlist: `/api/home-data`, `/api/list`, `/api/genre`, `/api/country`, `/api/categories`, `/api/countries`, `/api/movie/*`, `/api/recommendations/*` | edge 5 min, browser 60 s (overrides origin) |
-| `infra/cloudflare/cloudflare-html-cache-rule.json` | `phim.bluesia.net` `/`, `/list/*`, `/movie/*`, `/person/*` (GET/HEAD), excluding `_rsc` and requests with `RSC`/`Next-Router-Prefetch`/`Next-Router-Segment-Prefetch` headers (Cloudflare ignores `Vary`) | respects origin (`s-maxage=600`, browser 60 s) |
+| `infra/cloudflare/cloudflare-html-cache-rule.json` | `phim.bluesia.net` `/`, `/list/*`, `/movie/*`, `/person/*` (GET/HEAD), excluding `_rsc` and requests with `RSC`/`Next-Router-Prefetch`/`Next-Router-Segment-Prefetch` headers (Cloudflare ignores `Vary`) | respects origin (`s-maxage=60`, SWR 300, stale-if-error 3600, browser revalidates) |
 | `infra/cloudflare/cloudflare-auth-ratelimit-rule.json` | `/api/auth/*` rate limit (see below) | n/a |
 
 `cloudflare-cache-rule.json` does not list `/api/movies/:slug/reviews`,

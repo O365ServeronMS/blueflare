@@ -24,7 +24,7 @@ function first(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] || "" : value || "";
 }
 
-function toMovieCard(movie: Awaited<ReturnType<typeof getMovieServer>>): MovieCard {
+function toMovieCard(movie: NonNullable<Awaited<ReturnType<typeof getMovieServer>>>): MovieCard {
   return {
     name: movie.name,
     originName: movie.originName,
@@ -52,13 +52,14 @@ function toMovieCard(movie: Awaited<ReturnType<typeof getMovieServer>>): MovieCa
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
   try {
     const movie = await getMovieServer((await params).slug);
+    if (!movie) return { title: "Không tìm thấy phim — Blueflare" };
     return {
       title: `${movie.name} — Blueflare`,
       description: stripHtml(movie.content) || `Xem ${movie.name} trên Blueflare.`,
       openGraph: { title: movie.name, description: stripHtml(movie.content) || undefined, images: movie.poster ? [movie.poster] : undefined }
     };
   } catch {
-    return { title: "Không tìm thấy phim — Blueflare" };
+    return { title: "Blueflare" };
   }
 }
 
@@ -66,12 +67,8 @@ export default async function MoviePage({ params, searchParams }: { params: Para
   await connection();
   const { slug } = await params;
   const query = await searchParams;
-  let movie;
-  try {
-    movie = await getMovieServer(slug);
-  } catch {
-    notFound();
-  }
+  const movie = await getMovieServer(slug);
+  if (!movie) notFound();
 
   const urlParams = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) {

@@ -101,6 +101,16 @@ smoke() {
   return 1
 }
 
+# cf_purge_reminder [dry] — a frontend deploy/rollback changes the /_next/static
+# hashes, so Cloudflare's cached phim.bluesia.net HTML must be purged. The agent holds
+# no Cloudflare token on purpose: this only tells the operator to purge by hand.
+cf_purge_reminder() {
+  local msg="ACTION (by hand): Cloudflare dashboard > bluesia.net > Caching > Configuration > Purge Cache > Custom Purge > Hostname: phim.bluesia.net (until then edge HTML may point at old chunks for up to ~60s + SWR)"
+  if [[ ${1:-} == dry ]]; then printf 'WOULD REMIND %s\n' "$msg"; return 0; fi
+  log "$msg"
+  return 0
+}
+
 # swap_images <service...> — exchange :latest and :prev, so a second call undoes
 # the first. Checks every :prev exists before retagging anything.
 swap_images() {

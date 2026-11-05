@@ -221,7 +221,11 @@ phim.bluesia.net {
 	}
 	respond @authdirect 403
 
-	reverse_proxy 127.0.0.1:3100
+	reverse_proxy 127.0.0.1:3100 {
+		transport http {
+			keepalive 30s
+		}
+	}
 }
 CADDY
 
@@ -233,7 +237,11 @@ img.bluesia.net {
 	@account path /api/auth/* /api/me /api/me/*
 	respond @account 404
 
-	reverse_proxy 127.0.0.1:3200
+	reverse_proxy 127.0.0.1:3200 {
+		transport http {
+			keepalive 30s
+		}
+	}
 }
 CADDY
 

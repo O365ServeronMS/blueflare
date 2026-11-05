@@ -22,9 +22,10 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
   try {
     const { slug } = await params;
     const data = await getPersonServer(slug);
+    if (!data) return { title: "Không tìm thấy — Blueflare" };
     return { title: `${data.person.name} — Blueflare` };
   } catch {
-    return { title: "Không tìm thấy — Blueflare" };
+    return { title: "Blueflare" };
   }
 }
 
@@ -35,12 +36,8 @@ export default async function PersonPage({ params, searchParams }: { params: Par
   const page = normalizePage(first(query.page));
   const role = cleanRole(query.role);
 
-  let data;
-  try {
-    data = await getPersonServer(slug, page, role);
-  } catch {
-    notFound();
-  }
+  const data = await getPersonServer(slug, page, role);
+  if (!data) notFound();
 
   const urlParams = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) {

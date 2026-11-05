@@ -104,6 +104,7 @@ fi
 if (( dry )); then
   log "sync preview:"
   infra/scripts/sync-stack.sh --dry-run | grep '^WOULD' || echo "    stack files already current"
+  if has frontend; then cf_purge_reminder dry; fi
   exit 0
 fi
 
@@ -169,10 +170,12 @@ if (( ! ok )); then
     for s in "${services[@]}"; do wait_healthy "$s" || true; done
     smoke || log "still failing after the rollback: the fault is not only this change (run the prod-health skill)"
     (( compose_changed )) && log "compose.yml stays at the new version; revert that commit and deploy to undo it"
+    if has frontend; then cf_purge_reminder; fi
   fi
   die "deploy of ${rev:0:7} failed its health gate; $STATE_FILE still names ${prev_rev:0:7}"
 fi
 
 state_write "$rev" "$prev_rev" "${services[@]}"
+if has frontend; then cf_purge_reminder; fi
 docker image prune -f --filter label=com.docker.compose.project=blueflare >/dev/null || true
 log "deployed ${rev:0:7}: ${services[*]:-no image changes}"

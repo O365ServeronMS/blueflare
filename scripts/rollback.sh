@@ -31,7 +31,12 @@ for s in "${services[@]}"; do
     "$(img_id "blueflare-$s:latest")" \
     "${p:+$p (built $(docker image inspect --format '{{.Created}}' "blueflare-$s:prev" | cut -c1-16))}${p:-missing — nothing to roll back to}"
 done
-(( dry )) && exit 0
+has_frontend=0
+for s in "${services[@]}"; do [[ $s == frontend ]] && has_frontend=1; done
+if (( dry )); then
+  if (( has_frontend )); then cf_purge_reminder dry; fi
+  exit 0
+fi
 
 log "rolling back ${services[*]}"
 swap_images "${services[@]}"
@@ -42,5 +47,6 @@ for s in "${services[@]}"; do wait_healthy "$s" || ok=0; done
 if (( ok )); then log "smoke"; smoke || ok=0; fi
 (( ok )) || die "rollback failed its health gate; the fault is probably not the deploy (run the prod-health skill). Run this script again to roll forward."
 
+if (( has_frontend )); then cf_purge_reminder; fi
 if [[ -r $STATE_FILE ]]; then state_write "$prev" "$rev" "${services[@]}"; fi
 log "rolled back ${services[*]}; running rev is now ${prev:0:7}"

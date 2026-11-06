@@ -28,7 +28,7 @@ Same repo, same house: `backend/` owns provider sync, PostgreSQL, Valkey caching
 | 📡 Providers | NguonC primary, KKPhim fills the gaps |
 | 🗄️ Data/cache | PostgreSQL + Valkey + Next render cache |
 | 🖼️ Images | Two variants only: `/i/m/` portrait, `/i/d/` landscape |
-| 💾 Backup | Optional nightly dump to R2 (any S3-compatible store), on when `BACKUP_ENABLED=true` |
+| 💾 Backup | Optional nightly dump to R2 (any S3-compatible store), on once the `BACKUP_S3_*` credentials are set |
 | ▶️ Video | hls.js light (lazy) + provider embeds |
 
 ## 🏃 Run locally

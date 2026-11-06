@@ -69,7 +69,7 @@ the browser connects to the selected provider.
 | `postgres` | Canonical movies and provider provenance. |
 | `valkey` | Final JSON responses and cache-version invalidation. |
 | `image-cache-init` | One-shot `mkdir`+`chown` of the image cache directory. It exits 0 and stays exited; `api` waits for that completion because it runs as uid 1000 and cannot write a root-owned bind mount. |
-| `backup` | Scheduled dump to an S3-compatible store. Idles without backing up when `BACKUP_ENABLED=false`. |
+| `backup` | Scheduled dump to an S3-compatible store. On when the `BACKUP_S3_*` endpoint and keys are set; idles without backing up when they are missing or `BACKUP_ENABLED=false`. |
 
 The `frontend` service is covered under [Caddy](#caddy). Caddy is the public TLS
 boundary.
@@ -248,8 +248,8 @@ warning.
 - Keys: comma lists, trimmed and deduped. Logs name keys only as
   `<provider> k<n> (<first 6 hex of sha256(key)>)`; a key is sent only in the
   `authorization` header and never logged or put into an error.
-- Paid output cap: `AI_PAID_DAILY_OUTPUT_TOKENS_<ROLE>` caps the completion tokens of
-  all non-`:free` models of a role per UTC day, recorded in
+- Paid output cap: `AI_PAID_DAILY_OUTPUT_TOKENS_<ROLE>` (default 1000000 per
+  role, `0` = no cap) caps the completion tokens of all non-`:free` models of a role per UTC day, recorded in
   `ai_quota_ledger.output_tokens` (migration 033). At the cap paid models are blocked
   until the UTC reset; `:free` models keep serving. There is no overall token cap.
 - Quota ledger (`aiQuotaLedger.js` + `aiQuotaStore.js`, table `ai_quota_ledger`,
@@ -266,8 +266,8 @@ warning.
 For ready titles with no `tmdb_id` the pass fetches real TMDB candidates
 (`tmdbMatchAi.js`), has a model rank them (AI module, role `MATCH`), and lets an independent gate
 decide. The model never supplies an id, only picks among fetched candidates. It
-runs only with `TMDB_MATCH_AI_ENABLED=true`, a usable `MATCH` route (AI keys + models),
-`TMDB_MATCH_AI_MODE` other than `off`, and `TMDB_ENABLED` plus a TMDB key.
+runs only with `TMDB_MATCH_AI_MODE` other than `off` (default `off`), a usable `MATCH`
+route (AI keys + models), and `TMDB_ENABLED` plus a TMDB key.
 
 - Gate (`decideAiMatch`, pure): the model's pick is `verified` only if tier 1 holds
   (catalog cast >= 2 and >= 2 names overlap the candidate's cast, year and size
@@ -314,8 +314,7 @@ runs only with `TMDB_MATCH_AI_ENABLED=true`, a usable `MATCH` route (AI keys + m
 
 | Variable | Meaning |
 | --- | --- |
-| `TMDB_MATCH_AI_ENABLED` | Master switch. |
-| `TMDB_MATCH_AI_MODE` | `off` / `dry-run` / `apply`. |
+| `TMDB_MATCH_AI_MODE` | `off` (default) / `dry-run` / `apply`. The old `TMDB_MATCH_AI_ENABLED=false` still forces `off`. |
 | `TMDB_MATCH_AI_LOOP` | Own worker loop; `false` folds the pass into the sync cycle. |
 | `TMDB_MATCH_AI_LOOP_MS` | Loop wake interval (minimum 5000). |
 | `TMDB_MATCH_AI_WORKED_MS` | Pause between batches while a backlog remains (loop only). |
@@ -327,6 +326,9 @@ runs only with `TMDB_MATCH_AI_ENABLED=true`, a usable `MATCH` route (AI keys + m
 | `TMDB_MATCH_AI_BATCH_MAX` | Films per batch. |
 | `TMDB_MATCH_AI_THINK_T1` | Reasoning tokens for films with a cast; `0` = off. |
 | `TMDB_MATCH_AI_THINK_T2` | Reasoning tokens for films without a cast. |
+
+The THINK budgets are currently unused: the `MATCH` role sends reasoning effort `medium`
+by default (`AI_REASONING`, see [AI module](#ai-module)), which wins over the per-tier budget.
 
 Models, keys, timeout (`AI_TIMEOUT_MS_MATCH`, default 180000) and paid cap: role
 `MATCH` in [AI module](#ai-module).
@@ -455,8 +457,9 @@ Provider documentation verified during implementation:
 The `backup` service takes a scheduled offsite backup: `pg_dump -Fc`, verified
 with `pg_restore --list` before it counts as a backup, uploaded to an
 S3-compatible object store, then pruned on both ends (`BACKUP_KEEP_LOCAL` for
-fast local restores, `BACKUP_KEEP_REMOTE` for the actual backup). It is off
-unless `BACKUP_ENABLED=true`; when off it idles rather than exiting, so
+fast local restores, `BACKUP_KEEP_REMOTE` for the actual backup). It is on
+when `BACKUP_S3_ENDPOINT` and both `BACKUP_S3_*` keys are set (`BACKUP_ENABLED=false`
+pauses it, `true` forces it); when off it idles rather than exiting, so
 `restart: unless-stopped` neither loops nor loses the daemon after a reboot. The image cache is deliberately excluded: it rebuilds itself
 from `image_assets` and the worker prewarms it.
 

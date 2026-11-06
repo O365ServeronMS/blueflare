@@ -9,8 +9,10 @@ import { parseKeys, parseModels } from './util.js';
  *   OPENROUTER_MODEL_<ROLE>      OpenRouter models of a role; OPENROUTER_MODEL_PRIMARY, then the role default
  *   AI_TIMEOUT_MS[_<ROLE>]       per-request timeout; empty = the role default
  *   AI_MAX_TOKENS                default completion ceiling when a call names none
- *   AI_PAID_DAILY_OUTPUT_TOKENS_<ROLE>  completion tokens per UTC day over non-`:free` models; 0 = no cap
- *   AI_REASONING[_<ROLE>]        off|low|medium|high; overrides what the caller asks for; empty = the caller's choice
+ *   AI_PAID_DAILY_OUTPUT_TOKENS_<ROLE>  completion tokens per UTC day over non-`:free` models; empty = the
+ *                                role's `paidCap`, 0 = no cap
+ *   AI_REASONING[_<ROLE>]        off|low|medium|high; overrides what the caller asks for; empty = the role's
+ *                                `reasoning`, then the caller's choice
  *   AI_RETRIES, AI_COOLDOWN_MS   technical knobs (see AI_DEFAULTS)
  */
 
@@ -39,7 +41,8 @@ const roles = new Map();
 /**
  * One line per role. `vision`: the role may send images (models that cannot read them are
  * skipped). `defaultOr`: OpenRouter models when no env names any. Optional `timeoutMs`,
- * `maxTokens`, `ledgerScope` (quota counters; defaults to the lower-case name), `modelsFrom`
+ * `maxTokens`, `reasoning` (level when AI_REASONING names none), `paidCap` (daily paid output
+ * tokens when AI_PAID_DAILY_OUTPUT_TOKENS_<ROLE> is empty), `ledgerScope` (quota counters; defaults to the lower-case name), `modelsFrom`
  * (another role whose MODEL_/OPENROUTER_MODEL_ lists and default this role uses when its own
  * env names none; the paid cap and ledger scope stay this role's own).
  */
@@ -52,6 +55,8 @@ export function registerRole(name, spec = {}) {
     defaultOr: String(spec.defaultOr ?? ''),
     timeoutMs: Number(spec.timeoutMs) > 0 ? Number(spec.timeoutMs) : null,
     maxTokens: Number(spec.maxTokens) > 0 ? Number(spec.maxTokens) : null,
+    reasoning: spec.reasoning ? String(spec.reasoning) : null,
+    paidCap: Number(spec.paidCap) > 0 ? Number(spec.paidCap) : null,
     ledgerScope: String(spec.ledgerScope ?? key.toLowerCase()),
     modelsFrom: spec.modelsFrom ? String(spec.modelsFrom).toUpperCase() : null
   });
@@ -67,8 +72,9 @@ export function getRole(name) {
 
 export const roleNames = () => [...roles.keys()];
 
-registerRole('MATCH', { defaultOr: 'openrouter/free', timeoutMs: 180000, ledgerScope: 'tmdb-match' });
-registerRole('DEDUPE', { modelsFrom: 'MATCH', timeoutMs: 180000, ledgerScope: 'catalog-audit' });
+// Each role has its own paid cap: DEDUPE borrows MATCH's (partly paid) models, so it must not run uncapped.
+registerRole('MATCH', { defaultOr: 'openrouter/free', timeoutMs: 180000, reasoning: 'medium', paidCap: 1_000_000, ledgerScope: 'tmdb-match' });
+registerRole('DEDUPE', { modelsFrom: 'MATCH', timeoutMs: 180000, reasoning: 'medium', paidCap: 1_000_000, ledgerScope: 'catalog-audit' });
 
 // ---- env --------------------------------------------------------------------------------
 
@@ -193,18 +199,19 @@ export function roleTimeoutMs(cfg, roleName) {
   return positiveInt(cfg.view, 'AI_TIMEOUT_MS_' + role.name, null, () => {}, 1000) ?? cfg.timeoutMs ?? role.timeoutMs ?? AI_DEFAULTS.timeoutMs;
 }
 
-/** AI_PAID_DAILY_OUTPUT_TOKENS_<ROLE>; null = no cap. */
+/** AI_PAID_DAILY_OUTPUT_TOKENS_<ROLE>, else the role's paidCap; 0 = no cap (null). */
 export function rolePaidCap(cfg, roleName) {
-  const value = positiveInt(cfg.view, 'AI_PAID_DAILY_OUTPUT_TOKENS_' + getRole(roleName).name, 0, () => {}, 0);
+  const role = getRole(roleName);
+  const value = positiveInt(cfg.view, 'AI_PAID_DAILY_OUTPUT_TOKENS_' + role.name, role.paidCap ?? 0, () => {}, 0);
   return value > 0 ? value : null;
 }
 
 const REASONING_LEVELS = ['off', 'low', 'medium', 'high'];
 
-/** AI_REASONING_<ROLE>, then AI_REASONING; null = leave it to the caller. Throws on an unknown level. */
+/** AI_REASONING_<ROLE>, AI_REASONING, then the role's reasoning; null = leave it to the caller. Throws on an unknown level. */
 export function roleReasoning(cfg, roleName) {
-  const name = getRole(roleName).name;
-  const raw = text(cfg.view['AI_REASONING_' + name]) || text(cfg.view.AI_REASONING);
+  const role = getRole(roleName);
+  const raw = text(cfg.view['AI_REASONING_' + role.name]) || text(cfg.view.AI_REASONING) || text(role.reasoning);
   if (!raw) return null;
   const level = raw.toLowerCase();
   if (!REASONING_LEVELS.includes(level)) throw new AiConfigError('AI_REASONING must be one of ' + REASONING_LEVELS.join('|'));

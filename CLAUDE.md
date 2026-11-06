@@ -29,7 +29,7 @@ their designed finished state, not a failure:
 | `postgres` | canonical metadata, volume `postgres-data` |
 | `valkey` | JSON response cache, `allkeys-lru`, capped |
 | `image-cache-init` | one-shot `mkdir`+`chown` of the image cache dir, then `Exited (0)` |
-| `backup` | scheduled offsite dump (optional, `BACKUP_ENABLED`, default `false` in `.env.example`); idles (running, no-op) when `BACKUP_ENABLED=false` |
+| `backup` | scheduled offsite dump; on when the `BACKUP_S3_*` endpoint and keys are set (`BACKUP_ENABLED=false` pauses it); idles (running, no-op) when off |
 
 Host-side container names are pinned to `blueflare-<service>` without Compose's
 replica suffix. Service-to-service traffic still uses the stable service DNS names
@@ -58,14 +58,14 @@ Five loops run outside the request path. None of them may be moved into the requ
 
 ### TMDB AI match
 
-`worker`, its own loop every `TMDB_MATCH_AI_LOOP_MS` (`tmdbMatchAiLoop.js`; `TMDB_MATCH_AI_LOOP=false` folds it back into the sync cycle). For titles without a `tmdb_id`, it fetches real TMDB candidates and has a model rank them through the AI module (role `MATCH`), when `TMDB_MATCH_AI_ENABLED=true` and the role has keys and models (none = pass off; each role keeps its own ledger scope and paid output cap). Never a request path.
+`worker`, its own loop every `TMDB_MATCH_AI_LOOP_MS` (`tmdbMatchAiLoop.js`; `TMDB_MATCH_AI_LOOP=false` folds it back into the sync cycle). For titles without a `tmdb_id`, it fetches real TMDB candidates and has a model rank them through the AI module (role `MATCH`), when `TMDB_MATCH_AI_MODE` is not `off` and the role has keys and models (none = pass off; each role keeps its own ledger scope and paid output cap). Never a request path.
 
 - At most 3 real attempts (`none`/`unverifiable`, not `error`) per title on the same title/original title/year (`tmdb_match_ai_runs.meta_key`, 035); a metadata change reopens it.
 - The model never supplies an id; an independent two-tier gate (`decideAiMatch`: T1 cast overlap + year, T2 exact name + year + size, no rival candidate) decides.
-- `TMDB_MATCH_AI_MODE=off|dry-run|apply`, default `dry-run` (verified in `backend/src/config.js`): dry-run only writes `tmdb_match_ai_runs`; apply writes `tmdb_id` with source `inferred` through `tmdbIdentity.js` (assign, or merge into the row already holding it).
+- `TMDB_MATCH_AI_MODE=off|dry-run|apply`, default `off` (verified in `backend/src/config.js`; a legacy `TMDB_MATCH_AI_ENABLED=false` still forces off): dry-run only writes `tmdb_match_ai_runs`; apply writes `tmdb_id` with source `inferred` through `tmdbIdentity.js` (assign, or merge into the row already holding it).
 - Every assign/merge/blocked/conflict is logged in `tmdb_identity_changes` (030) and reversible with `backend/scripts/tmdb-identity-undo.mjs`.
 - Films are packed into token-budget batches. Quota is tracked per key+model per UTC day in `ai_quota_ledger` (031, renamed by 032; disposable).
-- Paid cap: `AI_PAID_DAILY_OUTPUT_TOKENS_<ROLE>` caps the completion tokens of all non-`:free` models of a role together per UTC day (column `output_tokens` of `ai_quota_ledger`, 033); `:free` models keep serving after it. There is deliberately no total daily token cap (`OPENROUTER_*_DAILY_TOKENS` were removed on purpose; do not reintroduce them).
+- Paid cap: `AI_PAID_DAILY_OUTPUT_TOKENS_<ROLE>` (default 1000000 per role in `src/ai/config.js`, `0` = no cap) caps the completion tokens of all non-`:free` models of a role together per UTC day (column `output_tokens` of `ai_quota_ledger`, 033); `:free` models keep serving after it. There is deliberately no total daily token cap (`OPENROUTER_*_DAILY_TOKENS` were removed on purpose; do not reintroduce them).
 
 ### Catalog audit
 
@@ -226,8 +226,8 @@ per-title watch history with the last episode (migrations 020, 021), the TMDB id
 `image_assets`; Valkey is disposable; the frontend is stateless.
 
 The `backup` service dumps, verifies with `pg_restore --list`, uploads to an
-S3-compatible store and prunes both ends. It is optional: it only runs when
-`BACKUP_ENABLED=true` (the `.env.example` default is `false`), then every
+S3-compatible store and prunes both ends. It is optional: it runs when the
+`BACKUP_S3_*` endpoint and keys are set (`BACKUP_ENABLED=false` pauses it), then every
 `BACKUP_INTERVAL_SECONDS` (86400 = daily). The target is generic on purpose —
 changing provider is an env change (`BACKUP_S3_*`), not a code change. The full
 rebuild-from-nothing runbook is in `backend/README.md`.
@@ -251,7 +251,7 @@ What it runs:
 | `vitest-scope` | every frontend test file is inside a `vitest.config.ts` include glob | `frontend/` changed |
 | `vitest` | `cd frontend && npx vitest run` | `frontend/` changed |
 | `build` | `cd frontend && npm run build` | `frontend/` changed |
-| `compose` | `docker compose -f infra/compose.yml config --quiet` with `BLUEFLARE_ENV_FILE=$PWD/backend/.env.example (absolute path)` | `infra/` or `.env.example` changed |
+| `compose` | `docker compose --env-file backend/.env.example -f infra/compose.yml config --quiet` with `BLUEFLARE_ENV_FILE=$PWD/backend/.env.example (absolute path)` | `infra/` or `.env.example` changed |
 | `shell` | `bash -n` on `scripts/*.sh`, `scripts/lib/*.sh`, `infra/scripts/*.sh`, `infra/backup/*.sh` | a shell script changed |
 | `env-keys` | every live (uncommented) key of `backend/.env.example` exists in the stack `.env` | `.env.example` changed |
 | `env-stray` | warning only: a stack `.env` key that `.env.example` documents neither live nor as a `# KEY=` line (dead key) | always |
@@ -266,7 +266,7 @@ deploy, `full` adds the security probe and background-job review) writes its rep
 aborts on host/health guardrails) and runs only when the user asks.
 
 Run `npm run build` and `npm test` (in `frontend/`) for frontend changes, and `(cd backend && node --test)` for backend changes. Validate the compose file with
-`BLUEFLARE_ENV_FILE=$PWD/backend/.env.example docker compose -f infra/compose.yml config --quiet`
+`BLUEFLARE_ENV_FILE=$PWD/backend/.env.example docker compose --env-file backend/.env.example -f infra/compose.yml config --quiet`
 (the absolute `BLUEFLARE_ENV_FILE` is required because the real `.env` only exists in the stack directory), and a container smoke test for `/healthz`, `/list/phim-le?page=2`, `/list/phim-le?page=3`, and protected revalidation. Run `git diff --check HEAD`.
 
 `backend/node_modules` is installed on the host, so `node --test` must be fully

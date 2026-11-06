@@ -127,15 +127,16 @@ export const config = Object.freeze({
   catalogAuditBatch: integer('CATALOG_AUDIT_BATCH', 8, 1),
   catalogAuditBatchTokens: integer('CATALOG_AUDIT_BATCH_TOKENS', 16000, 1000),
   catalogAuditMaxActions: integer('CATALOG_AUDIT_MAX_ACTIONS', 500, 1),
-  tmdbMatchEnabled: boolean('TMDB_MATCH_ENABLED', false),
+  // Cast-verified match; also needs TMDB_ENABLED + TMDB_API_KEY (worker.js), so a stack without a key stays off.
+  tmdbMatchEnabled: boolean('TMDB_MATCH_ENABLED', true),
   tmdbMatchLimit: integer('TMDB_MATCH_LIMIT', 60, 1),
   tmdbMatchConcurrency: integer('TMDB_MATCH_CONCURRENCY', 2, 1),
   tmdbMatchRefreshMs: integer('TMDB_MATCH_REFRESH_MS', 30 * 24 * 60 * 60 * 1000, 60 * 60 * 1000),
   tmdbMatchRetryMs: integer('TMDB_MATCH_RETRY_MS', 6 * 60 * 60 * 1000, 60 * 1000),
   // Primary-country slugs left unmatched on purpose (cast names do not transliterate).
   tmdbMatchSkipCountries: csv('TMDB_MATCH_SKIP_COUNTRIES', 'trung-quoc,hong-kong,nhat-ban,han-quoc,thai-lan'),
-  // AI candidate ranking for TMDB matching (role MATCH of src/ai: models, keys, timeout).
-  tmdbMatchAiEnabled: boolean('TMDB_MATCH_AI_ENABLED', false),
+  // AI candidate ranking for TMDB matching (role MATCH of src/ai: models, keys, timeout). Switched by
+  // TMDB_MATCH_AI_MODE alone; the old TMDB_MATCH_AI_ENABLED flag is gone (false there still means off).
   // Films are packed into one request until either limit.
   tmdbMatchAiBatchTokens: integer('TMDB_MATCH_AI_BATCH_TOKENS', 24000, 1000),
   tmdbMatchAiBatchMax: integer('TMDB_MATCH_AI_BATCH_MAX', 20, 1),
@@ -143,7 +144,9 @@ export const config = Object.freeze({
   tmdbMatchAiThinkT1: integer('TMDB_MATCH_AI_THINK_T1', 0, 0),
   tmdbMatchAiThinkT2: integer('TMDB_MATCH_AI_THINK_T2', 4096, 0),
   // Worker pass that applies the ranking: off | dry-run (audit rows only) | apply (assigns tmdb_id).
-  tmdbMatchAiMode: ['off', 'dry-run', 'apply'].includes(process.env.TMDB_MATCH_AI_MODE) ? process.env.TMDB_MATCH_AI_MODE : 'dry-run',
+  tmdbMatchAiMode: process.env.TMDB_MATCH_AI_ENABLED !== undefined && !boolean('TMDB_MATCH_AI_ENABLED')
+    ? 'off'
+    : ['off', 'dry-run', 'apply'].includes(process.env.TMDB_MATCH_AI_MODE) ? process.env.TMDB_MATCH_AI_MODE : 'off',
   tmdbMatchAiLimit: integer('TMDB_MATCH_AI_LIMIT', 100, 1),
   tmdbMatchAiRetryMs: integer('TMDB_MATCH_AI_RETRY_MS', 14 * 24 * 60 * 60 * 1000, 60 * 1000),
   tmdbMatchAiErrorRetryMs: integer('TMDB_MATCH_AI_ERROR_RETRY_MS', 6 * 60 * 60 * 1000, 60 * 1000),
@@ -157,8 +160,8 @@ export const config = Object.freeze({
   tmdbMatchAiFreshMs: integer('TMDB_MATCH_AI_FRESH_MS', 3 * 24 * 60 * 60 * 1000, 60 * 1000),
 
   // MDBList supplies both Rotten Tomatoes critic and audience percentages shown
-  // on cards. Gated by the key list being non-empty, like TMDB above.
-  mdblistEnabled: boolean('MDBLIST_ENABLED', false),
+  // on cards. On whenever a key is set; MDBLIST_ENABLED=false pauses it without removing the keys.
+  mdblistEnabled: boolean('MDBLIST_ENABLED', true),
   mdblistApiKeys: [...new Set([
     String(process.env.MDBLIST_API_KEY || '').trim(),
     ...csv('MDBLIST_API_KEYS')
@@ -268,12 +271,12 @@ export const config = Object.freeze({
   backfillStartPage: integer('BACKFILL_START_PAGE', 0, 0),
   // 0 = no ceiling; backfill runs until the provider reports it has no more pages.
   backfillEndPage: integer('BACKFILL_END_PAGE', 0, 0),
-  backfillPagesPerRun: integer('BACKFILL_PAGES_PER_RUN', 1, 1),
+  backfillPagesPerRun: integer('BACKFILL_PAGES_PER_RUN', 5, 1),
   backfillIntervalMs: integer('BACKFILL_INTERVAL_MS', 15 * 60 * 1000, 1000),
   backfillCooldownMs: integer('BACKFILL_COOLDOWN_MS', 0, 0),
   // A finished backfill walk restarts after this many days so list pages keep
   // refreshing last_seen_at / catching changed rows. 0 disables.
-  sweepCycleDays: integer('SWEEP_CYCLE_DAYS', 14, 0),
+  sweepCycleDays: integer('SWEEP_CYCLE_DAYS', 7, 0),
   // Stale-source refresh lane: re-fetch detail for sources not upserted for
   // staleSourceDays. Marking unavailable needs mode=apply and two 404s >= 7 days apart.
   // A failed attempt defers the source (stale_next_check_at), so it never holds the queue.

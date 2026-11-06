@@ -157,7 +157,8 @@ services:
       FEATURE_LOCAL_LIBRARY: ${FEATURE_LOCAL_LIBRARY:-true}
       HOME_SECTION_LIMIT: ${HOME_SECTION_LIMIT:-16}
       RAIL_SLIDE_DURATION_MS: ${RAIL_SLIDE_DURATION_MS:-300}
-      TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
+      # Public site key of the phim.bluesia.net widget (not a secret); the secret key is api-only.
+      TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-0x4AAAAAAFJ3empfh3F0NReh}
       NODE_ENV: production
       NODE_OPTIONS: --max-old-space-size=512
       # cluster.mjs: một Node chỉ dùng được ~1 core, nên chạy N worker sau một
@@ -230,8 +231,8 @@ services:
     build:
       context: ${BLUEFLARE_SRC:-/home/ubuntu/blueflare}/infra/backup
     # unless-stopped so the daemon survives a reboot: on SIGTERM the script
-    # exits 0, which `on-failure` treats as done. With BACKUP_ENABLED=false
-    # the script idles rather than exiting, so there is no restart loop.
+    # exits 0, which `on-failure` treats as done. When off (no S3 credentials, or
+    # BACKUP_ENABLED=false) the script idles rather than exiting, so there is no restart loop.
     restart: unless-stopped
     user: "1000:1000"
     # Only the keys infra/backup/*.sh reads (the script holds its own defaults, so
@@ -268,8 +269,9 @@ networks:
 
 volumes:
   postgres-data:
-    # Compose keeps the logical volume name stable while POSTGRES_VOLUME lets
-    # an upgrade restore into a new physical volume and retain the old one for
-    # rollback. The default matches the existing production volume name.
-    name: ${POSTGRES_VOLUME:-blueflare_postgres-data}
+    # Compose keeps the logical volume name stable while POSTGRES_VOLUME names the
+    # physical volume, so an upgrade restores into a new one and keeps the old for
+    # rollback. No default on purpose: a wrong or missing name would start an EMPTY
+    # database (and the backup would then upload empty dumps), so compose refuses.
+    name: ${POSTGRES_VOLUME:?POSTGRES_VOLUME must name the existing PostgreSQL volume (docker volume ls)}
   valkey-data:

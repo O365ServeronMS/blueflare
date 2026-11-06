@@ -137,7 +137,8 @@ test('rankBatch: one MATCH call; fences, <think> and {results} are accepted, a b
   assert.ok(meta.promptChars > 100);
   assert.deepEqual(bodies.map((b) => b.model), ['m/bad', 'm/good']);
   assert.deepEqual(bodies[0].response_format, { type: 'json_object' });
-  assert.deepEqual(bodies[0].reasoning, { enabled: false });
+  // The MATCH role's default reasoning (medium) wins over the caller's per-tier budget.
+  assert.deepEqual(bodies[0].reasoning, { effort: 'medium' });
 });
 
 test('compactCandidate flattens names, translations and the top cast', () => {

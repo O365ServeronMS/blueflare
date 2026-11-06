@@ -22,7 +22,7 @@ const fakeAi = (getRank, available = () => true) => ({
 });
 
 const settings = (over = {}) => ({
-  tmdbEnabled: true, tmdbApiKey: 'tmdb-test', tmdbMatchAiEnabled: true,
+  tmdbEnabled: true, tmdbApiKey: 'tmdb-test',
   tmdbMatchAiMode: 'dry-run', tmdbMatchAiLimit: 100, tmdbMatchAiRetryMs: 1000, tmdbMatchAiErrorRetryMs: 10,
   tmdbMatchAiBatchMax: 2, tmdbMatchConcurrency: 2, ...over
 });
@@ -55,7 +55,7 @@ function harness(rows, extra = {}) {
 }
 
 test('pass is off when mode off, AI unavailable, or TMDB disabled', async () => {
-  for (const config of [{ tmdbMatchAiMode: 'off' }, { tmdbMatchAiEnabled: false }, { aiAvailable: false }, { tmdbEnabled: false }, { tmdbApiKey: '' }]) {
+  for (const config of [{ tmdbMatchAiMode: 'off' }, { aiAvailable: false }, { tmdbEnabled: false }, { tmdbApiKey: '' }]) {
     const h = harness([movie(1)], { config, deps: { aiAvailable: config.aiAvailable } });
     assert.deepEqual(await refreshTmdbAiMatches(h.deps), []);
     assert.equal(h.runs.length, 0);

@@ -6,7 +6,7 @@ import { AiError } from '../src/ai/index.js';
 const blockedFor = (message, retryAfterMs) => new AiError(message, { kind: 'unavailable', retryAfterMs });
 
 const settings = (over = {}) => ({
-  tmdbEnabled: true, tmdbApiKey: 't', tmdbMatchAiEnabled: true, tmdbMatchAiMode: 'dry-run',
+  tmdbEnabled: true, tmdbApiKey: 't', tmdbMatchAiMode: 'dry-run',
   tmdbMatchAiLimit: 100, tmdbMatchAiRetryMs: 1, tmdbMatchAiErrorRetryMs: 1, tmdbMatchAiBatchMax: 3, tmdbMatchConcurrency: 2,
   tmdbMatchAiLoop: true, tmdbMatchAiLoopMs: 60000,tmdbMatchAiFreshMs: 1000, ...over
 });
@@ -46,7 +46,7 @@ test('the loop flag defaults on and only an explicit false hands the pass back t
 });
 
 test('tick is off without AI, keys or mode', async () => {
-  for (const config of [{ tmdbMatchAiMode: 'off' }, { noAi: true }, { tmdbMatchAiEnabled: false }]) {
+  for (const config of [{ tmdbMatchAiMode: 'off' }, { noAi: true }]) {
     const h = harness({ config, aiAvailable: !config.noAi, lists: { priority: [movie(1)] } });
     assert.equal((await tmdbMatchAiTick(h.deps)).status, 'off');
     assert.deepEqual(h.calls, []);

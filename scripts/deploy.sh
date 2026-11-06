@@ -122,7 +122,7 @@ if (( tests )); then
   fi
 fi
 if (( compose_changed )); then
-  BLUEFLARE_ENV_FILE="$ROOT/backend/.env.example" docker compose -f infra/compose.yml config --quiet \
+  BLUEFLARE_ENV_FILE="$ROOT/backend/.env.example" docker compose --env-file "$ROOT/backend/.env.example" -f infra/compose.yml config --quiet \
     || die "infra/compose.yml does not validate"
 fi
 

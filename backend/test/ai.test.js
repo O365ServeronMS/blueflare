@@ -445,6 +445,22 @@ test('DEDUPE borrows the MATCH models and keys unless it names its own, with its
   assert.equal(rolePaidCap(capped, 'MATCH'), 100);
 });
 
+test('MATCH and DEDUPE default to a 1M paid cap and medium reasoning; env overrides, 0 lifts the cap', async () => {
+  const { rolePaidCap, roleReasoning } = await import('../src/ai/config.js');
+  const bare = readAiConfig({ OPENROUTER_API_KEY: 'or' });
+  for (const role of ['MATCH', 'DEDUPE']) {
+    assert.equal(rolePaidCap(bare, role), 1_000_000);
+    assert.equal(roleReasoning(bare, role), 'medium');
+  }
+  assert.equal(rolePaidCap(bare, 'SAMPLE'), null);
+  assert.equal(roleReasoning(bare, 'SAMPLE'), null);
+  const set = readAiConfig({ OPENROUTER_API_KEY: 'or', AI_PAID_DAILY_OUTPUT_TOKENS_DEDUPE: '0', AI_REASONING: 'off', AI_REASONING_MATCH: 'high' });
+  assert.equal(rolePaidCap(set, 'DEDUPE'), null);
+  assert.equal(rolePaidCap(set, 'MATCH'), 1_000_000);
+  assert.equal(roleReasoning(set, 'MATCH'), 'high');
+  assert.equal(roleReasoning(set, 'DEDUPE'), 'off');
+});
+
 test('openrouter/free counts as a free model', () => {
   assert.equal(isFree('openrouter/free'), true);
   assert.equal(isFree('vendor/model:free'), true);

@@ -85,7 +85,7 @@ check_vitest_scope() {
 }
 
 check_compose() {
-  BLUEFLARE_ENV_FILE="$ROOT/backend/.env.example" docker compose -f infra/compose.yml config --quiet
+  BLUEFLARE_ENV_FILE="$ROOT/backend/.env.example" docker compose --env-file "$ROOT/backend/.env.example" -f infra/compose.yml config --quiet
 }
 
 # Mirrors infra/scripts/apply-env.sh: every live (uncommented) key in .env.example must exist in the stack

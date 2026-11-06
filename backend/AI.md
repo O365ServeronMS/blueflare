@@ -91,10 +91,10 @@ Defaults live in `src/ai/config.js` (`AI_DEFAULTS`, roles); `.env.example` mirro
 | `OPENROUTER_MODEL_PRIMARY` / `_<ROLE>` | role default | `id[:rpm[:rpd]]`, best first |
 | `AI_TIMEOUT_MS` / `AI_TIMEOUT_MS_<ROLE>` | role default (60000, MATCH and DEDUPE 180000) | per request |
 | `AI_MAX_TOKENS` | 8192 | completion ceiling when a call names none |
-| `AI_REASONING` / `AI_REASONING_<ROLE>` | empty | `off|low|medium|high`, overrides the caller's `reasoning`; empty = caller's choice. Sent as `reasoning` to OpenRouter and `reasoning_effort` to the primary |
+| `AI_REASONING` / `AI_REASONING_<ROLE>` | role's `reasoning` (MATCH, DEDUPE: `medium`) | `off|low|medium|high`, overrides the caller's `reasoning`; empty = the role's default, `off` = no reasoning; the caller's own `reasoning` applies only to a role without a default. Sent as `reasoning` to OpenRouter and `reasoning_effort` to the primary |
 | `AI_RETRIES` | 2 | extra tries of a pair on 429/5xx |
 | `AI_COOLDOWN_MS` | 3600000 | longest park of a key/model |
-| `AI_PAID_DAILY_OUTPUT_TOKENS_<ROLE>` | 0 | paid completion tokens per UTC day; 0 = no cap |
+| `AI_PAID_DAILY_OUTPUT_TOKENS_<ROLE>` | role's `paidCap` (MATCH, DEDUPE: 1000000) | paid completion tokens per UTC day; 0 = no cap |
 | `AI_FAKE` | empty | `1` = canned answers, no network |
 
 Old names still work and log a deprecation warning at worker start:

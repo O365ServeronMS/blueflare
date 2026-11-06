@@ -18,7 +18,12 @@
 # Usage: backup.sh [--once]
 set -euo pipefail
 
-ENABLED=${BACKUP_ENABLED:-false}
+# Unset = on exactly when the S3 credentials are there; BACKUP_ENABLED=false pauses it.
+if [[ -n "${BACKUP_S3_ENDPOINT:-}" && -n "${BACKUP_S3_ACCESS_KEY_ID:-}" && -n "${BACKUP_S3_SECRET_ACCESS_KEY:-}" ]]; then
+  ENABLED=${BACKUP_ENABLED:-true}
+else
+  ENABLED=${BACKUP_ENABLED:-false}
+fi
 INTERVAL=${BACKUP_INTERVAL_SECONDS:-86400}
 START_DELAY=${BACKUP_START_DELAY_SECONDS:-300}
 DIRECTORY=${BACKUP_DIR:-/backups}

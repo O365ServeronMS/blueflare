@@ -93,9 +93,9 @@ async function resolveAssign(deps) {
   return module.assignTmdbIdentity;
 }
 
-/** The pass can run at all: mode, TMDB_MATCH_AI_ENABLED, an AI provider for role MATCH, TMDB. */
+/** The pass can run at all: mode, an AI provider for role MATCH, TMDB. */
 export function aiPassAvailable(settings = config, ai = getAi()) {
-  return settings.tmdbMatchAiMode !== 'off' && Boolean(settings.tmdbMatchAiEnabled) && ai.available('MATCH') &&
+  return settings.tmdbMatchAiMode !== 'off' && ai.available('MATCH') &&
     Boolean(settings.tmdbEnabled) && Boolean(settings.tmdbApiKey);
 }
 

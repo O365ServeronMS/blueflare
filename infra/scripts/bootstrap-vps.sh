@@ -132,13 +132,11 @@ PY
   pg_pass=$(openssl rand -hex 24)
   img_secret=$(openssl rand -hex 32)
   reval_secret=$(openssl rand -hex 32)
-  metrics_token=$(openssl rand -hex 24)
 
   # Hex nên an toàn trong URL: compose tự ghép DATABASE_URL từ POSTGRES_*.
   set_kv POSTGRES_PASSWORD "$pg_pass"
   set_kv IMAGE_SIGNING_SECRET "$img_secret"
   set_kv FRONTEND_REVALIDATE_SECRET "$reval_secret"
-  set_kv METRICS_TOKEN "$metrics_token"
   # Head sync bật mặc định để có phim mới; backfill để bạn tự bật qua dockhand.
   set_kv BACKFILL_ENABLED "false"
 

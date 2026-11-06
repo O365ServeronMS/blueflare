@@ -12,7 +12,7 @@
 ## Runtime signals
 
 - `https://img.bluesia.net/api/health`: PostgreSQL/Valkey latency, provider health, cache version and the sync-worker heartbeat. It is `no-store`. A missing, failed or stale worker heartbeat makes the endpoint return `503`; a fresh `degraded` heartbeat remains live but needs investigation.
-- `https://img.bluesia.net/api/metrics`: in-process request, error, latency and Valkey cache-status counters. Set `METRICS_TOKEN` and send it as `x-blueflare-metrics`; the endpoint stays `no-store` and is disabled when the token is empty.
+- `https://img.bluesia.net/api/metrics`: in-process request, error, latency and Valkey cache-status counters. Set `METRICS_TOKEN` and send it as `x-blueflare-metrics`; the endpoint stays `no-store` and is disabled (404) when the token is empty, which is the default. The counters live in memory and reset on every api restart.
 - API response header `x-blueflare-cache`: `VALKEY-HIT`, `VALKEY-STALE-SERVED`, `VALKEY-HIT-AFTER-LOCK`, `VALKEY-REFRESH`, or `POSTGRES`.
 - Auth rate limits: if Valkey is unavailable, `[auth] rate-limit store unavailable, using memory counters` is logged (at most once per 5 s backoff) and login/signup limits fall back to per-process memory counters. A 503 `{error:"busy"}` from `/api/auth/*` means the scrypt `HashGate` is saturated (limits and buckets: `backend/ARCHITECTURE.md`).
 - Cloudflare: track `CF-Cache-Status`/`Age` separately for Next static assets, public HTML, catalog JSON and images. Do not blend search, health, metrics or video traffic into cache-hit targets.

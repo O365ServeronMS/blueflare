@@ -484,8 +484,7 @@ For a backup outside the schedule:
 The repository carries everything except secrets and data:
 
 1. Clone the repository and run `infra/scripts/bootstrap-vps.sh`. It regenerates
-   `POSTGRES_PASSWORD`, `IMAGE_SIGNING_SECRET`, `FRONTEND_REVALIDATE_SECRET`
-   and `METRICS_TOKEN`. `TMDB_API_KEY` (like the OpenRouter key list) cannot be regenerated,
+   `POSTGRES_PASSWORD`, `IMAGE_SIGNING_SECRET` and `FRONTEND_REVALIDATE_SECRET`. `TMDB_API_KEY` (like the OpenRouter key list) cannot be regenerated,
    so those keys have to be kept somewhere off the machine.
 2. Fill in the `BACKUP_S3_*` credentials and download the newest object under
    `s3://<bucket>/postgres/`.

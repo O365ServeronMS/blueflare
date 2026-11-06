@@ -124,6 +124,31 @@ dbTest('matched missing one score follows age cadence', async () => {
   } finally { await cleanup(); }
 });
 
+dbTest('new-title year boundary: this year - 1 is new, this year - 2 is not', async () => {
+  const { add, due, cleanup, id } = await setup();
+  try {
+    const opts = { ageDays: 5, checkedDays: 3 };
+    const lastYear = await add('yr-last', { ...opts, year: YEAR - 1, lookup: id() });
+    const twoAgo = await add('yr-two', { ...opts, year: YEAR - 2, lookup: id() });
+    const result = await due();
+    assert.ok(result.has(lastYear), 'year = current - 1 is new (2d cadence)');
+    assert.ok(!result.has(twoAgo), 'year = current - 2 keeps the flat cadence');
+  } finally { await cleanup(); }
+});
+
+dbTest('matched missing one score, created 45-90d: never slower than the age cadence', async () => {
+  const { add, due, cleanup, id } = await setup();
+  try {
+    // catalog_sort_at 10 days ago -> old logic retried after MDBLIST_REFRESH_NEW_MS (7d); the 45-90d band says 14d.
+    const base = { status: 'matched', ageDays: 60, sortAt: new Date(Date.now() - 10 * DAY), tomatoes: 80 };
+    const due8 = await add('band-due', { ...base, checkedDays: 8, lookup: id() });
+    const not5 = await add('band-not', { ...base, checkedDays: 5, lookup: id() });
+    const result = await due();
+    assert.ok(result.has(due8), 'checked 8d ago is due: not slower than 7d');
+    assert.ok(!result.has(not5), 'checked 5d ago is not due yet');
+  } finally { await cleanup(); }
+});
+
 dbTest('migration 038 resets only the tv-typed set', async () => {
   const { pool, add, cleanup, id } = await setup();
   try {

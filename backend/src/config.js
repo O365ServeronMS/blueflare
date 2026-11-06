@@ -181,8 +181,9 @@ export const config = Object.freeze({
   mdblistRefreshOldMs: integer('MDBLIST_REFRESH_OLD_MS', 45 * 24 * 60 * 60 * 1000, 60 * 1000),
   mdblistMissRetryMs: integer('MDBLIST_MISS_RETRY_MS', 90 * 24 * 60 * 60 * 1000, 60 * 1000),
   // New titles (created_at inside the window and year >= this year - 1) whose
-  // outside score may still be missing: retry sooner by age. Set the three
-  // *_MS values to MDBLIST_MISS_RETRY_MS (7776000000) to get the old behaviour.
+  // outside score may still be missing: retry sooner by age. Setting the three
+  // *_MS values to MDBLIST_MISS_RETRY_MS (7776000000) restores the 90-day cadence for unmatched /
+  // no-id rows; a matched row missing one score is capped by LEAST at its title-age cadence.
   mdblistNewWindowDays: integer('MDBLIST_NEW_WINDOW_DAYS', 90, 1),
   mdblistMissRetryFreshDays: integer('MDBLIST_MISS_RETRY_FRESH_DAYS', 14, 1),
   mdblistMissRetryMidDays: integer('MDBLIST_MISS_RETRY_MID_DAYS', 45, 1),

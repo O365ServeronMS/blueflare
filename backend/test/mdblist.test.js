@@ -208,6 +208,19 @@ test('one failed source records a partial result without clearing that source', 
   assert.equal(calls.results[0][1].audienceAttempted, false);
 });
 
+test('a valid id whose lookups all fail is never recorded as no-id and records nothing', async () => {
+  const { deps, calls } = harness({
+    listCandidates: async () => ([
+      { id: 'row-a', canonical_slug: 'a', media_type: 'movie', tmdb_id: 101, tmdb_media_type: 'movie', mdblist_tomatoes: null, mdblist_audience: null }
+    ]),
+    fetchRatings: async () => { throw new Error('socket hang up'); }
+  });
+  const stats = await syncMdblistRatings(SOURCES, deps);
+  assert.equal(stats.noId, 0);
+  assert.deepEqual(calls.misses, []);
+  assert.deepEqual(calls.results, [], 'mdblist_checked_at is left untouched');
+});
+
 test('rows without either provider id spend no MDBList request', async () => {
   const { deps, calls } = harness({
     listCandidates: async () => ([

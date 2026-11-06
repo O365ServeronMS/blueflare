@@ -1220,13 +1220,18 @@ const MDBLIST_NEW_MISS_MS_SQL =
   '      ELSE $10::bigint END)';
 // Must stay in step with lookupIdentity in mdblistRatingsSync.js.
 const MDBLIST_VALID_ID_SQL = "(tmdb_id > 0 OR imdb_id::text ~ '^tt[0-9]{7,}$' OR tmdb_lookup_id::text ~ '^[1-9][0-9]*$')";
+// Cadence of a matched row by title age; also the upper bound for a new one missing a score,
+// so such a row is never retried slower than before the age-band retry existed.
+const MDBLIST_MATCHED_AGE_MS_SQL =
+  '(CASE WHEN ' + MDBLIST_AGE_SQL + " >= now() - interval '90 days' THEN $2::bigint " +
+  '      WHEN ' + MDBLIST_AGE_SQL + " >= now() - interval '2 years' THEN $6::bigint " +
+  '      ELSE $7::bigint END)';
 export const MDBLIST_DUE_SQL =
   '(mdblist_checked_at IS NULL ' +
   "  OR (mdblist_status = 'matched' AND mdblist_checked_at < now() - (" +
-  '    CASE WHEN ' + MDBLIST_IS_NEW_SQL + ' AND ((mdblist_tomatoes IS NULL) <> (mdblist_audience IS NULL)) THEN ' + MDBLIST_NEW_MISS_MS_SQL +
-  '         WHEN ' + MDBLIST_AGE_SQL + " >= now() - interval '90 days' THEN $2::bigint " +
-  '         WHEN ' + MDBLIST_AGE_SQL + " >= now() - interval '2 years' THEN $6::bigint " +
-  "         ELSE $7::bigint END) * interval '1 millisecond') " +
+  '    CASE WHEN ' + MDBLIST_IS_NEW_SQL + ' AND ((mdblist_tomatoes IS NULL) <> (mdblist_audience IS NULL)) ' +
+  '         THEN LEAST(' + MDBLIST_NEW_MISS_MS_SQL + ', ' + MDBLIST_MATCHED_AGE_MS_SQL + ') ' +
+  '         ELSE ' + MDBLIST_MATCHED_AGE_MS_SQL + ' END) * interval \'1 millisecond\')' +
   "  OR (mdblist_status = 'unmatched' AND mdblist_checked_at < now() - (" +
   '    CASE WHEN ' + MDBLIST_IS_NEW_SQL + ' THEN ' + MDBLIST_NEW_MISS_MS_SQL +
   "         ELSE $3::bigint END) * interval '1 millisecond') " +

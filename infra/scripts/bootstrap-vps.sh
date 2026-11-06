@@ -6,8 +6,8 @@
 #   2. Clone codebase qua SSH về CODEBASE_DIR (bỏ qua nếu đã có).
 #   3. Dựng thư mục runtime STACK_DIR (mặc định /opt/stacks/blueflare để dockhand
 #      thấy) và sync compose.yml + infra/* từ repo vào đó (KHÔNG đụng .env/data).
-#   4. Tạo .env lần đầu từ .env.example: tự sinh các secret ngẫu nhiên, trỏ
-#      IMAGE_CACHE_HOST_DIR về STACK_DIR/data/images, và đặt BACKFILL_ENABLED=false
+#   4. Tạo .env lần đầu từ .env.example: tự sinh các secret ngẫu nhiên (hex, an
+#      toàn trong URL vì compose ghép DATABASE_URL từ POSTGRES_PASSWORD), và đặt BACKFILL_ENABLED=false
 #      (bạn bật tay sau qua dockhand). KHÔNG bao giờ ghi đè .env đã tồn tại.
 #   5. Cấp cho user hiện tại quyền ghi /etc/caddy/Caddyfile (chown root:$USER,
 #      664 — Caddy vẫn chạy bằng user `caddy`, không phải root) và chèn khối
@@ -134,15 +134,12 @@ PY
   reval_secret=$(openssl rand -hex 32)
   metrics_token=$(openssl rand -hex 24)
 
+  # Hex nên an toàn trong URL: compose tự ghép DATABASE_URL từ POSTGRES_*.
   set_kv POSTGRES_PASSWORD "$pg_pass"
-  # DATABASE_URL phải khớp POSTGRES_PASSWORD (user/db lấy từ .env.example: blueflare).
-  set_kv DATABASE_URL "postgres://blueflare:${pg_pass}@postgres:5432/blueflare"
   set_kv IMAGE_SIGNING_SECRET "$img_secret"
   set_kv FRONTEND_REVALIDATE_SECRET "$reval_secret"
   set_kv METRICS_TOKEN "$metrics_token"
-  set_kv IMAGE_CACHE_HOST_DIR "$STACK_DIR/data/images"
-  # Head sync bật để có phim mới; backfill để bạn tự bật qua dockhand.
-  set_kv SYNC_ENABLED "true"
+  # Head sync bật mặc định để có phim mới; backfill để bạn tự bật qua dockhand.
   set_kv BACKFILL_ENABLED "false"
 
   echo "Đã tạo $ENV_FILE (chmod 600) với secret ngẫu nhiên."

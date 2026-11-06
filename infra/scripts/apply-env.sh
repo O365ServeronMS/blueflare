@@ -54,6 +54,14 @@ for key in "${REQUIRED_SECRETS[@]}"; do
   fi
 done
 
+# compose builds DATABASE_URL from POSTGRES_PASSWORD unless .env sets it, so the
+# password must not need URL escaping (`openssl rand -hex` is fine, -base64 is not).
+if [[ -z "$(env_value DATABASE_URL "$ENV_FILE")" ]] && \
+   [[ ! "$(env_value POSTGRES_PASSWORD "$ENV_FILE")" =~ ^[A-Za-z0-9._~-]+$ ]]; then
+  echo "FAIL: POSTGRES_PASSWORD has URL-unsafe characters; set DATABASE_URL with it percent-encoded" >&2
+  fail=1
+fi
+
 if [[ "$fail" -ne 0 ]]; then
   echo "== validation failed, aborting before touching containers ==" >&2
   exit 1

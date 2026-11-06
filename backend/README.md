@@ -82,7 +82,8 @@ Create the runtime environment:
     cp .env.example .env
 
 Replace POSTGRES_PASSWORD and IMAGE_SIGNING_SECRET with independent random
-values. DATABASE_URL must contain the same PostgreSQL password. `IMAGE_SIGNING_SECRET`
+values; POSTGRES_PASSWORD must be URL-safe (hex), because compose builds
+DATABASE_URL from it. `IMAGE_SIGNING_SECRET`
 is still required (at least 32 characters in production) because it backs the
 legacy signed-image form, see [Image cache](#image-cache).
 

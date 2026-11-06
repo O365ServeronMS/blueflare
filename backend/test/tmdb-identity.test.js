@@ -333,3 +333,18 @@ dbTest('merge keeps the dropped row score when the survivor has none, and a self
   const survivor = await one('SELECT ratings FROM movies WHERE id=$1', [result.survivorId]);
   assert.deepEqual(survivor.ratings, { imdb: 8.2, imdb_count: 50, tmdb: 7.4, tmdb_count: 120, tmdb_src: 'movie:410' });
 });
+
+dbTest('merge drops a stale self-fetched score on the survivor instead of re-writing it', async () => {
+  await reset();
+  const holder = await movie({ slug: 'st-holder', tmdb_id: 411, tmdb_media_type: 'movie', tmdb_id_source: 'provider', tmdb_identity_status: 'verified',
+    ratings: JSON.stringify({ tmdb: 9.9, tmdb_count: 500, tmdb_src: 'tv:999' }) });
+  const target = await movie({ slug: 'st-target', ratings: JSON.stringify({ imdb: 7.0, imdb_count: 10 }) });
+  await source(holder.id, 'kkphim', 'st-holder');
+  await source(target.id, 'nguonc', 'st-target');
+  const result = await identity.assignTmdbIdentity(target.id, { tmdbId: 411, mediaType: 'movie' });
+  assert.equal(result.action, 'merged');
+  const survivor = await one('SELECT ratings FROM movies WHERE id=$1', [result.survivorId]);
+  assert.equal(survivor.ratings.tmdb, undefined);
+  assert.equal(survivor.ratings.tmdb_src, undefined);
+  assert.equal(survivor.ratings.imdb, 7);
+});

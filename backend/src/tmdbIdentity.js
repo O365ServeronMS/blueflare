@@ -245,7 +245,9 @@ function fillPlan(survivor, drop, sourcesAfter, identity) {
   } else if (!survivor.poster_asset_id && drop.poster_asset_id && survivor.poster_source_url === drop.poster_source_url) {
     values.poster_asset_id = drop.poster_asset_id;
   }
-  const ratings = mergeRatings(drop.ratings, survivor.ratings, { tmdbType: identity.mediaType, tmdbId: identity.id });
+  // Drop a self-fetched score whose tmdb_src names another title before it can win the merge.
+  const target = { tmdbType: identity.mediaType, tmdbId: identity.id };
+  const ratings = mergeRatings(drop.ratings, mergeRatings(survivor.ratings, null, target), target);
   if (JSON.stringify(ratings) !== JSON.stringify(survivor.ratings || {})) values.ratings = ratings;
   if (sourcesAfter.includes('nguonc') && survivor.primary_provider !== 'nguonc') values.primary_provider = 'nguonc';
   const later = (a, b) => (ts(a) >= ts(b) ? a : b);

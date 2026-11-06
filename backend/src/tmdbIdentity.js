@@ -14,6 +14,7 @@
  *
  * Request paths never call this; the worker does (and the report/undo scripts).
  */
+import { mergeRatings, hasStaleTmdbScore } from './ratings.js';
 import { config } from './config.js';
 import { pool } from './db.js';
 import { nguoncSeason } from './duplicateMerge.js';
@@ -228,7 +229,7 @@ async function setColumns(client, id, values) {
   );
 }
 
-function fillPlan(survivor, drop, sourcesAfter) {
+function fillPlan(survivor, drop, sourcesAfter, identity) {
   const values = {};
   for (const column of FILL_TEXT) if (blank(survivor[column]) && !blank(drop[column])) values[column] = drop[column];
   for (const column of FILL_JSON) if (blank(survivor[column]) && !blank(drop[column])) values[column] = drop[column];
@@ -244,7 +245,7 @@ function fillPlan(survivor, drop, sourcesAfter) {
   } else if (!survivor.poster_asset_id && drop.poster_asset_id && survivor.poster_source_url === drop.poster_source_url) {
     values.poster_asset_id = drop.poster_asset_id;
   }
-  const ratings = { ...(drop.ratings || {}), ...(survivor.ratings || {}) };
+  const ratings = mergeRatings(drop.ratings, survivor.ratings, { tmdbType: identity.mediaType, tmdbId: identity.id });
   if (JSON.stringify(ratings) !== JSON.stringify(survivor.ratings || {})) values.ratings = ratings;
   if (sourcesAfter.includes('nguonc') && survivor.primary_provider !== 'nguonc') values.primary_provider = 'nguonc';
   const later = (a, b) => (ts(a) >= ts(b) ? a : b);
@@ -319,7 +320,7 @@ async function mergeRows(client, plan, { source, evidence }) {
     }
   }
   const sourcesAfter = (await q('SELECT DISTINCT provider FROM movie_provider_sources WHERE movie_id=$1', [survivor.id])).rows.map((r) => r.provider);
-  const fill = fillPlan(survivor, drop, sourcesAfter);
+  const fill = fillPlan(survivor, drop, sourcesAfter, identity);
   const changedBefore = pickColumns(survivor, Object.keys(fill));
   await setColumns(client, survivor.id, fill);
 
@@ -349,6 +350,8 @@ async function runApply(movieId, input, { source, evidence }) {
     }
     if (plan.action === 'assign') {
       const before = pickColumns(plan.target, IDENTITY_COLUMNS);
+      // writeTmdbIdentity drops a self-fetched score of the old id; keep it in the snapshot for undo.
+      if (hasStaleTmdbScore(plan.target.ratings, plan.identity.mediaType, plan.identity.id)) before.ratings = plan.target.ratings;
       const row = await writeTmdbIdentity(client, movieId, { id: plan.identity.id, mediaType: plan.identity.mediaType, season: plan.season }, source);
       const changeId = await logChange(client, {
         movieId, kind: 'assign', source, tmdbId: plan.identity.id, mediaType: plan.identity.mediaType, season: plan.season, evidence, before
@@ -411,6 +414,7 @@ export async function rewriteTmdbIdentity(client, movieId, identity, { reason, e
   const row = (await client.query('SELECT * FROM movies WHERE id=$1 FOR UPDATE', [movieId])).rows[0];
   if (!row) return { action: 'noop', reason: 'row-missing' };
   const before = pickColumns(row, IDENTITY_COLUMNS);
+  if (hasStaleTmdbScore(row.ratings, identity?.mediaType, identity?.id)) before.ratings = row.ratings;
   let written;
   if (identity) {
     written = await writeTmdbIdentity(client, movieId, identity, row.tmdb_id_source || source);
@@ -418,7 +422,8 @@ export async function rewriteTmdbIdentity(client, movieId, identity, { reason, e
     written = (await client.query(
       'UPDATE movies SET tmdb_id=NULL, tmdb_media_type=NULL, tmdb_season_number=NULL, tmdb_id_source=NULL, ' +
       "tmdb_identity_status='ineligible', tmdb_identity_verified_at=NULL, tmdb_thumb_asset_id=NULL, tmdb_poster_asset_id=NULL, " +
-      'updated_at=now() WHERE id=$1 RETURNING *', [movieId]
+      'ratings=$2::jsonb, updated_at=now() WHERE id=$1 RETURNING *',
+      [movieId, JSON.stringify(mergeRatings(row.ratings, null))]
     )).rows[0];
   }
   const changeId = await logChange(client, {

@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { fetchTmdbCredits } from '../src/tmdb.js';
+import { fetchTmdbCredits, parseTmdbCredits } from '../src/tmdb.js';
 
 const BASE = 'https://tmdb.test/3';
 const IMG_BASE = 'https://img.test/t/p';
+
+// append_to_response=credits nests the /credits body under `credits`.
+function respondCredits(credits, extra = {}) {
+  return respond({ ...extra, credits });
+}
 
 function respond(payload, status = 200) {
   return async () => ({
@@ -18,7 +23,7 @@ test('fetchTmdbCredits: parses cast and directors, filters crew by job', async (
     apiKey: 'k',
     baseUrl: BASE,
     imageBaseUrl: IMG_BASE,
-    fetchImpl: respond({
+    fetchImpl: respondCredits({
       cast: [
         { id: 1, name: 'Andy Lau', character: 'Officer Yan', order: 0, profile_path: '/andy.jpg' }
       ],
@@ -48,7 +53,7 @@ test('fetchTmdbCredits: castLimit trims cast but never crew directors', async ()
     apiKey: 'k',
     baseUrl: BASE,
     castLimit: 2,
-    fetchImpl: respond({
+    fetchImpl: respondCredits({
       cast: [
         { id: 1, name: 'A', order: 0 },
         { id: 2, name: 'B', order: 1 },
@@ -69,7 +74,7 @@ test('fetchTmdbCredits: a duplicate cast id is kept once', async () => {
   const { cast } = await fetchTmdbCredits({ mediaType: 'movie', tmdbId: 7 }, {
     apiKey: 'k',
     baseUrl: BASE,
-    fetchImpl: respond({
+    fetchImpl: respondCredits({
       cast: [
         { id: 1, name: 'Andy Lau', character: 'Role A', order: 0 },
         { id: 1, name: 'Andy Lau', character: 'Role B', order: 1 }
@@ -85,7 +90,7 @@ test('fetchTmdbCredits: a null profile_path is kept as a null url, not dropped',
   const { cast } = await fetchTmdbCredits({ mediaType: 'movie', tmdbId: 7 }, {
     apiKey: 'k',
     baseUrl: BASE,
-    fetchImpl: respond({
+    fetchImpl: respondCredits({
       cast: [{ id: 1, name: 'Andy Lau', profile_path: null, order: 0 }],
       crew: []
     })
@@ -98,7 +103,7 @@ test('fetchTmdbCredits: entries missing an id or an empty name are dropped', asy
   const { cast, directors } = await fetchTmdbCredits({ mediaType: 'movie', tmdbId: 7 }, {
     apiKey: 'k',
     baseUrl: BASE,
-    fetchImpl: respond({
+    fetchImpl: respondCredits({
       cast: [{ id: null, name: 'No Id' }, { id: 5, name: '   ' }],
       crew: [{ id: null, name: 'No Id', job: 'Director' }, { id: 6, name: '', job: 'Director' }]
     })
@@ -113,7 +118,7 @@ test('fetchTmdbCredits: an empty body yields empty cast and directors', async ()
     baseUrl: BASE,
     fetchImpl: respond({})
   });
-  assert.deepEqual(result, { cast: [], directors: [] });
+  assert.deepEqual(result, { cast: [], directors: [], vote: { average: 0, count: 0 } });
 });
 
 test('fetchTmdbCredits: a 404 rejects with error.status === 404', async () => {
@@ -140,7 +145,7 @@ test('fetchTmdbCredits: an identity missing mediaType rejects without a request'
   );
 });
 
-test('fetchTmdbCredits: URLs hit /credits directly, no /season/ segment', async () => {
+test('fetchTmdbCredits: URLs append credits to the detail call, no /season/ segment', async () => {
   const calls = [];
   const fetchImpl = async (url, init) => {
     calls.push(url);
@@ -149,9 +154,37 @@ test('fetchTmdbCredits: URLs hit /credits directly, no /season/ segment', async 
   await fetchTmdbCredits({ mediaType: 'movie', tmdbId: 7 }, { apiKey: 'k', baseUrl: BASE, fetchImpl });
   await fetchTmdbCredits({ mediaType: 'tv', tmdbId: 42 }, { apiKey: 'k', baseUrl: BASE, fetchImpl });
   assert.equal(calls.length, 2);
-  assert.equal(calls[0].pathname, '/3/movie/7/credits');
-  assert.equal(calls[1].pathname, '/3/tv/42/credits');
+  assert.equal(calls[0].pathname, '/3/movie/7');
+  assert.equal(calls[0].searchParams.get('append_to_response'), 'credits');
+  assert.equal(calls[1].pathname, '/3/tv/42');
   for (const url of calls) {
     assert.doesNotMatch(url.pathname, /\/season\//);
   }
+});
+
+test('fetchTmdbCredits: append_to_response parses vote', async () => {
+  const result = await fetchTmdbCredits({ mediaType: 'movie', tmdbId: 7 }, {
+    apiKey: 'k',
+    baseUrl: BASE,
+    fetchImpl: respondCredits({ cast: [{ id: 1, name: 'A', order: 0 }], crew: [] }, { vote_average: 7.46, vote_count: 321 })
+  });
+  assert.deepEqual(result.vote, { average: 7.46, count: 321 });
+  assert.equal(result.cast.length, 1);
+});
+
+test('fetchTmdbCredits: a body with no vote fields yields a zero vote', async () => {
+  const result = await fetchTmdbCredits({ mediaType: 'movie', tmdbId: 7 }, {
+    apiKey: 'k', baseUrl: BASE, fetchImpl: respondCredits({ cast: [], crew: [] })
+  });
+  assert.deepEqual(result.vote, { average: 0, count: 0 });
+});
+
+test('parseTmdbCredits keeps /credits shape', () => {
+  const parsed = parseTmdbCredits({
+    cast: [{ id: 1, name: 'A', order: 0 }],
+    crew: [{ id: 3, name: 'D', job: 'Director' }]
+  });
+  assert.equal(parsed.cast.length, 1);
+  assert.equal(parsed.directors.length, 1);
+  assert.equal('vote' in parsed, false);
 });

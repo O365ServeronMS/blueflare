@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { config } from './config.js';
+import { hasStaleTmdbScore } from './ratings.js';
 
 function imageUrl(assetId, variant) {
   return assetId ? config.publicBaseUrl + '/i/' + variant + '/' + assetId + '.webp' : '';
@@ -38,7 +39,12 @@ function seasonTitle(row) {
   const baseTitle = String(row.title || '').replace(/(?:\s+\(Phần\s+\d+\))+$/u, '');
   return baseTitle + ' (Phần ' + season + ')';
 }
-  const ratings = row.ratings || {};
+  // Defense in depth: a self-fetched TMDB score marked for another identity is not shown.
+  const ratings = { ...(row.ratings || {}) };
+  if (hasStaleTmdbScore(ratings, row.tmdb_media_type, row.tmdb_id)) {
+    delete ratings.tmdb;
+    delete ratings.tmdb_count;
+  }
   return {
     _id: row.id,
     name: seasonTitle(row),

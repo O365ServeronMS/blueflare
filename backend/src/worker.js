@@ -8,6 +8,7 @@ import {
 import { config } from './config.js';
 import { mapLimit } from './concurrency.js';
 import { syncTmdbReviews } from './tmdbReviewsSync.js';
+import { refreshTmdbCredits } from './tmdbCreditsSync.js';
 import { closeDatabase, migrate } from './db.js';
 import { revalidateFrontend } from './frontendRevalidation.js';
 import { normalizeKkphim, normalizeNguonc } from './normalize.js';
@@ -22,7 +23,6 @@ import {
   listTmdbImageFallbackCandidates,
   listTmdbLookupCandidates,
   listTmdbRecommendationCandidates,
-  listTmdbCreditCandidates,
   listTmdbMatchCandidates,
   correctGuessedLookupIds,
   recordTmdbMatch,
@@ -30,7 +30,6 @@ import {
   recordTmdbLookup,
   recordTmdbRecommendations,
   recordTmdbCredits,
-  recordTmdbCreditsFailure,
   recordTmdbImageFailure,
   recordTmdbImageFallback,
   recordTmdbImageFallbackMiss,
@@ -84,7 +83,6 @@ import { promoteVerifiedMatches } from './tmdbIdentity.js';
 import { refreshSeasonInference } from './tmdbSeasonInferSync.js';
 import { backfillMdblistRatings, formatMdblistStats, syncMdblistRatings } from './mdblistRatingsSync.js';
 import {
-  fetchTmdbCredits,
   fetchTmdbRecommendations,
   fetchTrendingMovieIds,
   fetchVerifiedTmdbImages,
@@ -632,43 +630,6 @@ async function refreshTmdbMatches() {
 }
 
 /**
- * Fetch TMDB cast/director credits for the detail-page cast strip and the
- * person pages.
- *
- * Runs after the recommendations pass and uses the same shape. Returns nothing:
- * the person pages join credits to the catalog at read time and carry their own
- * TTL, and the detail payload picks the strip up on its existing movie:<slug>
- * expiry — so nothing here needs purging. That also keeps the first backfill,
- * which touches tens of thousands of people, from firing thousands of
- * revalidation batches at the frontend.
- */
-async function refreshTmdbCredits() {
-  if (!config.tmdbEnabled || !config.tmdbCreditsEnabled || !config.tmdbApiKey) return;
-  const candidates = await listTmdbCreditCandidates();
-  if (!candidates.length) return;
-
-  const counts = { ok: 0, empty: 0, not_found: 0, error: 0 };
-  await mapLimit(candidates, config.tmdbCreditsConcurrency, async (candidate) => {
-    const mediaType = candidate.media_type;
-    const tmdbId = Number(candidate.tmdb_id);
-    try {
-      const credits = await fetchTmdbCredits({ mediaType, tmdbId });
-      const status = credits.cast.length || credits.directors.length ? 'ok' : 'empty';
-      counts[status] += 1;
-      await recordTmdbCredits(mediaType, tmdbId, { ...credits, status });
-    } catch (error) {
-      const status = error.status === 404 ? 'not_found' : 'error';
-      counts[status] += 1;
-      await recordTmdbCreditsFailure(mediaType, tmdbId, status, error.message).catch(() => {});
-    }
-  });
-
-  console.log('[worker] tmdb credits checked=' + candidates.length +
-    ' ok=' + counts.ok + ' empty=' + counts.empty +
-    ' not_found=' + counts.not_found + ' error=' + counts.error);
-}
-
-/**
  * Warm the image cache for the catalog surfaces users land on first.
  *
  * The payloads come from the same viewmodels the API serves, so the prewarmer
@@ -818,9 +779,10 @@ async function syncCycle() {
     });
   }
   if (!stopping) {
-    await refreshTmdbCredits().catch((error) => {
+    ratingChangedSlugs.push(...await refreshTmdbCredits().catch((error) => {
       console.warn('[worker] tmdb credits pass failed', error.message);
-    });
+      return [];
+    }));
   }
   if (!stopping) {
     ratingChangedSlugs.push(...await syncTmdbReviews().catch((error) => {

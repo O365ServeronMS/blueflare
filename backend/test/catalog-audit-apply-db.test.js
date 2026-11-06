@@ -131,6 +131,31 @@ dbTest('catalog audit apply: rename_slug moves a slug naming the wrong season, t
   }
 });
 
+dbTest('catalog audit apply: clear_tmdb drops the self-fetched score, a null provider upsert cannot bring it back, undo restores it', async () => {
+  const { pool, repo, audit, cleanup, store } = await setup();
+  try {
+    const { movie: row } = await repo.upsertCanonical(incoming('auditapply-clearvote'));
+    const own = { tmdb: 7.4, tmdb_count: 120, tmdb_src: 'movie:970001', imdb: 8 };
+    await pool.query(
+      "UPDATE movies SET tmdb_id=970001, tmdb_media_type='movie', tmdb_id_source='inferred', ratings=$2::jsonb WHERE id=$1",
+      [row.id, JSON.stringify(own)]);
+    const ratingsOf = async () => (await pool.query('SELECT ratings FROM movies WHERE id=$1', [row.id])).rows[0].ratings;
+
+    const applied = await audit.applyAuditAction({ action: { type: 'clear_tmdb', movieId: row.id } });
+    assert.equal(applied.status, 'applied');
+    assert.deepEqual(await ratingsOf(), { imdb: 8 }, 'old identity score gone, other scores kept');
+
+    await repo.upsertCanonical({ ...incoming('auditapply-clearvote'), ratings: { tmdb: null, tmdb_count: 0 } });
+    assert.deepEqual(await ratingsOf(), { imdb: 8 });
+
+    const id = await store('clear_tmdb', { movieId: row.id }, applied);
+    assert.equal((await audit.undoAuditAction(id)).action, 'undone');
+    assert.deepEqual(await ratingsOf(), own, 'undo gives the score back with the identity');
+  } finally {
+    await cleanup();
+  }
+});
+
 dbTest('catalog audit apply: rename_slug undo refuses when the slug changed since', async () => {
   const { pool, repo, audit, cleanup, store, movie } = await setup();
   try {

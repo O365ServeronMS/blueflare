@@ -2,6 +2,7 @@ import { pool } from './db.js';
 import { planImageHeal } from './imageHeal.js';
 import { deadImageHosts } from './imageHostRegistry.js';
 import { config } from './config.js';
+import { mergeRatings } from './ratings.js';
 import {
   normalizeAllowedImageSourceUrl,
   sanitizeMovieImageSources
@@ -70,7 +71,10 @@ export async function writeTmdbIdentity(client, movieId, identity, source = null
     `tmdb_identity_status=CASE WHEN ${changed} THEN 'pending' ELSE tmdb_identity_status END, ` +
     `tmdb_identity_verified_at=CASE WHEN ${changed} THEN NULL ELSE tmdb_identity_verified_at END, ` +
     `tmdb_thumb_asset_id=CASE WHEN ${changed} THEN NULL ELSE tmdb_thumb_asset_id END, ` +
-    `tmdb_poster_asset_id=CASE WHEN ${changed} THEN NULL ELSE tmdb_poster_asset_id END ` +
+    `tmdb_poster_asset_id=CASE WHEN ${changed} THEN NULL ELSE tmdb_poster_asset_id END, ` +
+    // A self-fetched TMDB score belongs to its id: a new id/type drops it (a season-only change keeps it).
+    "ratings=CASE WHEN ratings ? 'tmdb_src' AND (tmdb_id IS DISTINCT FROM $2 OR tmdb_media_type IS DISTINCT FROM $3) " +
+    "THEN ratings - 'tmdb' - 'tmdb_count' - 'tmdb_src' ELSE ratings END " +
     'WHERE id=$1 RETURNING *',
     [movieId, identity.id, identity.mediaType, identity.season, ...(source ? [source] : [])]
   );
@@ -149,10 +153,10 @@ export function mergedMovie(current, incoming) {
     directors: choose(current.directors, incoming.directors, preferIncoming) || [],
     genres: choose(current.genres, incoming.genres, preferIncoming) || [],
     countries: choose(current.countries, incoming.countries, preferIncoming) || [],
-    ratings: {
-      ...(current.ratings || {}),
-      ...(incoming.ratings || {})
-    },
+    ratings: mergeRatings(current.ratings, incoming.ratings, {
+      tmdbType: current.tmdb_media_type,
+      tmdbId: choose(current.tmdb_id, incoming.tmdbId, false)
+    }),
     primaryProvider: incoming.provider === 'nguonc'
       ? 'nguonc'
       : current.primary_provider,
@@ -781,32 +785,69 @@ export async function recordTmdbRecommendations(mediaType, tmdbId, status, lists
 export async function listTmdbCreditCandidates(limit = config.tmdbCreditsLimit) {
   const result = await pool.query(
     'WITH ids AS (' +
-    '  SELECT m.tmdb_media_type AS media_type, m.tmdb_id, m.catalog_sort_at FROM movies m ' +
+    '  SELECT m.tmdb_media_type AS media_type, m.tmdb_id, m.catalog_sort_at, ' +
+    "    (m.created_at > now() - ($4::int * interval '1 day')) AS is_new, " +
+    "    (m.ratings->>'tmdb' IS NULL OR m.ratings->>'tmdb_src' IS DISTINCT FROM (m.tmdb_media_type || ':' || m.tmdb_id)) AS vote_missing " +
+    '  FROM movies m ' +
     "  WHERE m.catalog_state='ready' AND m.tmdb_id IS NOT NULL " +
     "    AND m.tmdb_media_type IN ('movie','tv') " +
     '  UNION ALL ' +
-    '  SELECT m.tmdb_match_media_type, m.tmdb_match_id, m.catalog_sort_at FROM movies m ' +
+    '  SELECT m.tmdb_match_media_type, m.tmdb_match_id, m.catalog_sort_at, ' +
+    "    (m.created_at > now() - ($4::int * interval '1 day')), false " +
+    '  FROM movies m ' +
     "  WHERE m.catalog_state='ready' AND m.tmdb_id IS NULL AND m.tmdb_match_status='verified' " +
     "    AND m.tmdb_match_media_type IN ('movie','tv') AND m.tmdb_match_id > 0" +
     '), keys AS (' +
-    '  SELECT DISTINCT ON (media_type, tmdb_id) media_type, tmdb_id, catalog_sort_at FROM ids ' +
-    '  ORDER BY media_type, tmdb_id, catalog_sort_at DESC NULLS LAST' +
+    '  SELECT media_type, tmdb_id, max(catalog_sort_at) AS catalog_sort_at, ' +
+    '    bool_or(is_new) AS is_new, bool_or(vote_missing) AS vote_missing FROM ids ' +
+    '  GROUP BY media_type, tmdb_id' +
     ') ' +
     'SELECT keys.media_type, keys.tmdb_id FROM keys ' +
     'LEFT JOIN tmdb_credits_sync s ON s.media_type=keys.media_type AND s.tmdb_id=keys.tmdb_id ' +
     'WHERE s.tmdb_id IS NULL ' +
     "  OR (s.status <> 'error' AND s.fetched_at < now() - ($1::bigint * interval '1 millisecond')) " +
     "  OR (s.status = 'error' AND s.fetched_at < now() - ($2::bigint * interval '1 millisecond')) " +
+    // New titles: TMDB often has no cast (or no votes) yet. Every fetch stamps
+    // fetched_at, so a title TMDB still answers empty for waits a full window.
+    "  OR (keys.is_new AND s.status = 'empty' AND s.fetched_at < now() - ($5::bigint * interval '1 millisecond')) " +
+    "  OR (keys.is_new AND keys.vote_missing AND s.status IN ('ok','empty') " +
+    "      AND s.fetched_at < now() - ($6::bigint * interval '1 millisecond')) " +
     'ORDER BY (s.tmdb_id IS NULL) DESC, keys.catalog_sort_at DESC NULLS LAST LIMIT $3',
-    [config.tmdbCreditsRefreshMs, config.tmdbCreditsRetryMs, Math.max(1, Math.floor(limit))]
+    [
+      config.tmdbCreditsRefreshMs, config.tmdbCreditsRetryMs, Math.max(1, Math.floor(limit)),
+      config.mdblistNewWindowDays, config.tmdbCreditsEmptyRetryMs, config.tmdbVoteRetryNewMs
+    ]
   );
   return result.rows;
 }
 
 /**
+ * Write TMDB's own vote_average/vote_count into movies.ratings for every row
+ * holding this identity. Zero votes are never written (the next retry decides).
+ * Returns the slugs whose displayed tmdb score changed, for invalidation.
+ */
+export async function recordTmdbVote(mediaType, tmdbId, vote) {
+  const average = Math.round(Number(vote?.average) * 10) / 10;
+  const count = Math.floor(Number(vote?.count));
+  if (!(average > 0) || !(count > 0)) return [];
+  const result = await pool.query(
+    'WITH old AS (' +
+    '  SELECT id, ratings AS before FROM movies WHERE tmdb_media_type=$1 AND tmdb_id=$2 FOR UPDATE' +
+    '), upd AS (' +
+    "  UPDATE movies m SET ratings = COALESCE(m.ratings, '{}'::jsonb) || " +
+    "    jsonb_build_object('tmdb', $3::numeric, 'tmdb_count', $4::int, 'tmdb_src', $1::text || ':' || $2::text) " +
+    '  FROM old WHERE m.id = old.id RETURNING m.canonical_slug, old.before' +
+    ") SELECT canonical_slug FROM upd WHERE (before->'tmdb') IS DISTINCT FROM to_jsonb($3::numeric) " +
+    "OR (before->'tmdb_count') IS DISTINCT FROM to_jsonb($4::int)",
+    [mediaType, tmdbId, average, count]
+  );
+  return result.rows.map((row) => row.canonical_slug);
+}
+
+/**
  * One fetch's cast and directors for one TMDB identity, replacing whatever was
  * stored before. Delete-then-insert so a person TMDB drops from the list also
- * disappears from movie_credits.
+ * disappears from movie_credits. Returns the slugs whose cast strip changed.
  */
 export async function recordTmdbCredits(mediaType, tmdbId, payload) {
   const client = await pool.connect();
@@ -840,6 +881,14 @@ export async function recordTmdbCredits(mediaType, tmdbId, payload) {
       });
     }
 
+    const shape = (list) => JSON.stringify(list.map((r) => JSON.stringify(
+      [r.personId ?? r.person_id, r.role, r.characterName ?? r.character_name ?? null, r.order ?? r.ord ?? 0]
+    )).sort());
+    const previous = (await client.query(
+      'SELECT person_id, role, character_name, ord FROM movie_credits WHERE media_type=$1 AND tmdb_id=$2', [mediaType, tmdbId]
+    )).rows;
+    const creditsChanged = shape(previous) !== shape(rows);
+
     await client.query('DELETE FROM movie_credits WHERE media_type=$1 AND tmdb_id=$2', [mediaType, tmdbId]);
     for (const row of rows) {
       await client.query(
@@ -857,7 +906,18 @@ export async function recordTmdbCredits(mediaType, tmdbId, payload) {
       [mediaType, tmdbId, allowed]
     );
 
+    let slugs = [];
+    if (creditsChanged) {
+      slugs = (await client.query(
+        "SELECT canonical_slug FROM movies WHERE catalog_state='ready' AND (" +
+        '(tmdb_media_type=$1 AND tmdb_id=$2) OR ' +
+        "(tmdb_id IS NULL AND tmdb_match_status='verified' AND tmdb_match_media_type=$1 AND tmdb_match_id=$2))",
+        [mediaType, tmdbId]
+      )).rows.map((row) => row.canonical_slug);
+    }
+
     await client.query('COMMIT');
+    return slugs;
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     throw error;

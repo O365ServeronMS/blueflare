@@ -316,8 +316,12 @@ export async function fetchTmdbCredits(identity, options = {}) {
   const tmdbId = validMovieId(identity?.tmdbId);
   const mediaType = validMediaType(identity?.mediaType);
   if (!tmdbId || !mediaType) throw new Error('TMDB identity is incomplete');
-  const body = await fetchTmdb('/' + mediaType + '/' + tmdbId + '/credits', options);
-  return parseTmdbCredits(body, options);
+  // One request carries both the credits and TMDB's own vote score.
+  const body = await fetchTmdb('/' + mediaType + '/' + tmdbId + '?append_to_response=credits', options);
+  return {
+    ...parseTmdbCredits(body?.credits, options),
+    vote: { average: Number(body?.vote_average) || 0, count: Number(body?.vote_count) || 0 }
+  };
 }
 
 /**

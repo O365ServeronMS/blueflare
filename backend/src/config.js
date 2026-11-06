@@ -79,6 +79,9 @@ export const config = Object.freeze({
   tmdbCreditsCastLimit: integer('TMDB_CREDITS_CAST_LIMIT', 12, 1),
   tmdbCreditsRefreshMs: integer('TMDB_CREDITS_REFRESH_MS', 90 * 24 * 60 * 60 * 1000, 60 * 60 * 1000),
   tmdbCreditsRetryMs: integer('TMDB_CREDITS_RETRY_MS', 6 * 60 * 60 * 1000, 60 * 1000),
+  // New titles (created within MDBLIST_NEW_WINDOW_DAYS): TMDB often has no cast or votes yet.
+  tmdbCreditsEmptyRetryMs: integer('TMDB_CREDITS_EMPTY_RETRY_MS', 7 * 24 * 60 * 60 * 1000, 60 * 60 * 1000),
+  tmdbVoteRetryNewMs: integer('TMDB_VOTE_RETRY_NEW_MS', 2 * 24 * 60 * 60 * 1000, 60 * 60 * 1000),
 
   // TMDB user reviews for the detail page, per catalog row with a verified TMDB
   // identity. Plain text only; spoiler flag and score are computed at write time.

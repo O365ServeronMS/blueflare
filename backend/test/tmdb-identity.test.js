@@ -319,3 +319,17 @@ dbTest('promoteVerifiedMatches applies a small batch, skips blocked titles on th
   assert.equal((await identity.listPromotionCandidates(10)).length, 0);
   assert.equal(bad.id.length > 0, true);
 });
+
+dbTest('merge keeps the dropped row score when the survivor has none, and a self-fetched tmdb score wins', async () => {
+  await reset();
+  const holder = await movie({ slug: 'rt-holder', tmdb_id: 410, tmdb_media_type: 'movie', tmdb_id_source: 'provider', tmdb_identity_status: 'verified',
+    ratings: JSON.stringify({ tmdb: 3.1, tmdb_count: 2, imdb: null }) });
+  const target = await movie({ slug: 'rt-target',
+    ratings: JSON.stringify({ imdb: 8.2, imdb_count: 50, tmdb: 7.4, tmdb_count: 120, tmdb_src: 'movie:410' }) });
+  await source(holder.id, 'kkphim', 'rt-holder');
+  await source(target.id, 'nguonc', 'rt-target');
+  const result = await identity.assignTmdbIdentity(target.id, { tmdbId: 410, mediaType: 'movie' });
+  assert.equal(result.action, 'merged');
+  const survivor = await one('SELECT ratings FROM movies WHERE id=$1', [result.survivorId]);
+  assert.deepEqual(survivor.ratings, { imdb: 8.2, imdb_count: 50, tmdb: 7.4, tmdb_count: 120, tmdb_src: 'movie:410' });
+});

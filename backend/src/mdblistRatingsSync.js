@@ -33,11 +33,11 @@ function validImdbId(value) {
 }
 
 function lookupIdentity(movie) {
-  const mediaType = movie.tmdb_media_type === 'movie' || movie.media_type === 'movie'
-    ? 'movie'
-    : 'show';
+  const toMdblist = (type) => (type === 'movie' ? 'movie' : 'show');
+  const mediaType = toMdblist(movie.media_type);
   const tmdbId = validTmdbId(movie.tmdb_id);
-  if (tmdbId) return { provider: 'tmdb', mediaType, id: tmdbId };
+  // A tmdb id only means something under the type TMDB itself gave it.
+  if (tmdbId) return { provider: 'tmdb', mediaType: toMdblist(movie.tmdb_media_type ?? movie.media_type), id: tmdbId };
   const imdbId = validImdbId(movie.imdb_id);
   if (imdbId) return { provider: 'imdb', mediaType, id: imdbId };
   // Last resort: an id guessed from the title. Good enough to look a rating up
@@ -121,6 +121,7 @@ async function prepareRun(options = {}) {
     enabled: options.enabled ?? (config.mdblistEnabled && keys.length > 0)
   };
   const stats = newStats(keys.length);
+  const headroom = Boolean(options.headroom);
   const triedKeys = new Set();
   const startedAt = Date.now();
   const done = () => {
@@ -128,7 +129,7 @@ async function prepareRun(options = {}) {
     stats.durationMs = Date.now() - startedAt;
     return stats;
   };
-  return { keys, deps, stats, triedKeys, done };
+  return { keys, deps, stats, triedKeys, headroom, done };
 }
 
 /**
@@ -142,10 +143,14 @@ async function processCandidates(candidates, ctx) {
   stats.batches += tasks.length;
 
   async function fetchWithKeys(task) {
+    let heldBack = false;
     for (const apiKey of keys) {
       if (apiKey.drained) continue;
-      const budget = await deps.reserveBudget(apiKey.id, 1);
-      if (!budget.granted) continue;
+      const budget = await deps.reserveBudget(apiKey.id, 1, { headroom: ctx.headroom });
+      if (!budget.granted) {
+        if (budget.heldBack) heldBack = true;
+        continue;
+      }
       stats.reserved += 1;
       triedKeys.add(apiKey.id);
       try {
@@ -162,6 +167,7 @@ async function processCandidates(candidates, ctx) {
         if (error?.code === 'MDBLIST_QUOTA' || error?.code === 'MDBLIST_AUTH') {
           if (!apiKey.drained) stats.keysDrained += 1;
           apiKey.drained = true;
+          // Full ceiling, never the headroom-reduced one: the key is spent for everybody.
           await deps.reserveBudget(apiKey.id, budget.ceiling).catch(() => {});
           continue;
         }
@@ -169,7 +175,7 @@ async function processCandidates(candidates, ctx) {
       }
     }
     const error = new Error('MDBList daily budget is exhausted');
-    error.code = 'MDBLIST_BUDGET';
+    error.code = heldBack ? 'MDBLIST_HEADROOM' : 'MDBLIST_BUDGET';
     throw error;
   }
 
@@ -184,11 +190,14 @@ async function processCandidates(candidates, ctx) {
         }
       }
     } catch (error) {
-      const reason = error?.code === 'MDBLIST_BUDGET'
+      const reason = error?.code === 'MDBLIST_HEADROOM'
+        ? 'headroom'
+        : error?.code === 'MDBLIST_BUDGET'
         ? 'budget'
         : error?.name === 'TimeoutError' ? 'timeout' : String(error?.message || error);
       stats.errors[reason] = (stats.errors[reason] || 0) + 1;
-      if (error?.code === 'MDBLIST_BUDGET') stats.declined = 'budget-exhausted';
+      if (error?.code === 'MDBLIST_HEADROOM') stats.declined = 'headroom';
+      else if (error?.code === 'MDBLIST_BUDGET') stats.declined = 'budget-exhausted';
     }
   });
 
@@ -266,7 +275,7 @@ export async function syncMdblistRatings(sources, options = {}) {
  * everything checked recently, so it costs one indexed query and no API call.
  */
 export async function backfillMdblistRatings(options = {}) {
-  const ctx = await prepareRun(options);
+  const ctx = await prepareRun({ ...options, headroom: true });
   const { deps, stats, done } = ctx;
   const listBackfill = options.listBackfill ?? deps.listBackfill;
   if (!deps.enabled) {

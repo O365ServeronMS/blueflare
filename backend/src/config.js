@@ -170,6 +170,9 @@ export const config = Object.freeze({
   // The API quota is counted per HTTP request and resets at 00:00 UTC.
   mdblistDailyBudget: integer('MDBLIST_DAILY_BUDGET', 1000, 0),
   mdblistBudgetReserve: integer('MDBLIST_BUDGET_RESERVE', 50, 0),
+  // The full-catalog backfill stops this many requests short of the ceiling so
+  // the visible-page pass always has quota left.
+  mdblistBackfillHeadroom: integer('MDBLIST_BACKFILL_HEADROOM', 200, 0),
   mdblistBatchLimit: integer('MDBLIST_BATCH_LIMIT', 60, 1),
   mdblistConcurrency: integer('MDBLIST_CONCURRENCY', 2, 1),
   // Matched rows refresh by title age (catalog_sort_at): new < 90 days, mid < 2 years, old beyond.
@@ -177,6 +180,15 @@ export const config = Object.freeze({
   mdblistRefreshMs: integer('MDBLIST_REFRESH_MS', 14 * 24 * 60 * 60 * 1000, 60 * 1000),
   mdblistRefreshOldMs: integer('MDBLIST_REFRESH_OLD_MS', 45 * 24 * 60 * 60 * 1000, 60 * 1000),
   mdblistMissRetryMs: integer('MDBLIST_MISS_RETRY_MS', 90 * 24 * 60 * 60 * 1000, 60 * 1000),
+  // New titles (created_at inside the window and year >= this year - 1) whose
+  // outside score may still be missing: retry sooner by age. Set the three
+  // *_MS values to MDBLIST_MISS_RETRY_MS (7776000000) to get the old behaviour.
+  mdblistNewWindowDays: integer('MDBLIST_NEW_WINDOW_DAYS', 90, 1),
+  mdblistMissRetryFreshDays: integer('MDBLIST_MISS_RETRY_FRESH_DAYS', 14, 1),
+  mdblistMissRetryMidDays: integer('MDBLIST_MISS_RETRY_MID_DAYS', 45, 1),
+  mdblistMissRetryFreshMs: integer('MDBLIST_MISS_RETRY_FRESH_MS', 2 * 24 * 60 * 60 * 1000, 60 * 1000),
+  mdblistMissRetryMidMs: integer('MDBLIST_MISS_RETRY_MID_MS', 7 * 24 * 60 * 60 * 1000, 60 * 1000),
+  mdblistMissRetryNewMs: integer('MDBLIST_MISS_RETRY_NEW_MS', 14 * 24 * 60 * 60 * 1000, 60 * 1000),
   mdblistErrorRetryMs: integer('MDBLIST_ERROR_RETRY_MS', 60 * 60 * 1000, 60 * 1000),
   // Full-catalog backfill: walks the movies table by id cursor to reach rows the
   // demand-driven pass never sees. On by default; reset re-walks from the start.

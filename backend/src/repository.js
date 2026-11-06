@@ -1199,31 +1199,56 @@ function utcDay() {
 }
 
 /**
- * "Due for an MDBList re-check" predicate shared by both candidate queries.
- * Params: $2 refresh-new, $3 miss retry, $4 error retry, $6 refresh-mid, $7 refresh-old
+ * "Due for an MDBList re-check" predicate shared by all candidate queries.
+ * Params: $2 refresh-new, $3 miss retry, $4 error retry, $6 refresh-mid, $7 refresh-old,
+ * $8/$9/$10 new-title miss retry (fresh/mid/new age band), $11 new window days,
+ * $12 current year, $13/$14 fresh/mid age band limits in days
  * ($1 and $5 are each query's own cursor/slugs and limit).
  * Matched rows refresh faster while the title is new: age counts from
  * catalog_sort_at, falling back to a January 1 of `year`, then to 'old'.
+ * A "new" title for the miss retry is judged on created_at (catalog_sort_at moves
+ * whenever a provider edits an old film) and a year no older than last year. A NULL
+ * year is never new: COALESCE turns the unknown comparison into false, so such
+ * rows keep the flat $3 cadence.
  */
 const MDBLIST_AGE_SQL = 'COALESCE(catalog_sort_at, CASE WHEN year BETWEEN 1800 AND 2200 ' +
   "THEN make_timestamptz(year, 1, 1, 0, 0, 0, 'UTC') END)";
+const MDBLIST_IS_NEW_SQL = "COALESCE(created_at >= now() - ($11::int * interval '1 day') AND year >= $12::int - 1, false)";
+const MDBLIST_NEW_MISS_MS_SQL =
+  "(CASE WHEN created_at >= now() - ($13::int * interval '1 day') THEN $8::bigint " +
+  "      WHEN created_at >= now() - ($14::int * interval '1 day') THEN $9::bigint " +
+  '      ELSE $10::bigint END)';
+// Must stay in step with lookupIdentity in mdblistRatingsSync.js.
+const MDBLIST_VALID_ID_SQL = "(tmdb_id > 0 OR imdb_id::text ~ '^tt[0-9]{7,}$' OR tmdb_lookup_id::text ~ '^[1-9][0-9]*$')";
 export const MDBLIST_DUE_SQL =
   '(mdblist_checked_at IS NULL ' +
   "  OR (mdblist_status = 'matched' AND mdblist_checked_at < now() - (" +
-  '    CASE WHEN ' + MDBLIST_AGE_SQL + " >= now() - interval '90 days' THEN $2::bigint " +
+  '    CASE WHEN ' + MDBLIST_IS_NEW_SQL + ' AND ((mdblist_tomatoes IS NULL) <> (mdblist_audience IS NULL)) THEN ' + MDBLIST_NEW_MISS_MS_SQL +
+  '         WHEN ' + MDBLIST_AGE_SQL + " >= now() - interval '90 days' THEN $2::bigint " +
   '         WHEN ' + MDBLIST_AGE_SQL + " >= now() - interval '2 years' THEN $6::bigint " +
   "         ELSE $7::bigint END) * interval '1 millisecond') " +
-  "  OR (mdblist_status IN ('unmatched', 'no-id') AND mdblist_checked_at < now() - ($3::bigint * interval '1 millisecond')) " +
+  "  OR (mdblist_status = 'unmatched' AND mdblist_checked_at < now() - (" +
+  '    CASE WHEN ' + MDBLIST_IS_NEW_SQL + ' THEN ' + MDBLIST_NEW_MISS_MS_SQL +
+  "         ELSE $3::bigint END) * interval '1 millisecond') " +
+  "  OR (mdblist_status = 'no-id' AND (" + MDBLIST_VALID_ID_SQL +
+  "       OR mdblist_checked_at < now() - ($3::bigint * interval '1 millisecond'))) " +
   "  OR (mdblist_status IN ('partial', 'error') AND mdblist_checked_at < now() - ($4::bigint * interval '1 millisecond')))";
 
-function mdblistDueParams(limit) {
+export function mdblistDueParams(limit, year = new Date().getUTCFullYear()) {
   return [
     config.mdblistRefreshNewMs,
     config.mdblistMissRetryMs,
     config.mdblistErrorRetryMs,
     Math.max(1, Math.floor(limit)),
     config.mdblistRefreshMs,
-    config.mdblistRefreshOldMs
+    config.mdblistRefreshOldMs,
+    config.mdblistMissRetryFreshMs,
+    config.mdblistMissRetryMidMs,
+    config.mdblistMissRetryNewMs,
+    config.mdblistNewWindowDays,
+    year,
+    config.mdblistMissRetryFreshDays,
+    config.mdblistMissRetryMidDays
   ];
 }
 
@@ -1344,11 +1369,23 @@ export async function recordMdblistMiss(movieId, status = 'no-id') {
 }
 
 /** Claim one or more MDBList HTTP requests from this key's UTC-day budget. */
-export async function reserveMdblistBudget(keyId, requested) {
+/** Headroom kept back from the backfill; always strictly below the ceiling so a small budget never blocks it for good. */
+export function mdblistEffectiveHeadroom(ceiling, headroom = config.mdblistBackfillHeadroom) {
+  return Math.max(0, Math.min(Math.floor(headroom), Math.max(0, ceiling - 1)));
+}
+
+/**
+ * `options.headroom` (backfill only) caps grants at ceiling - headroom and flags
+ * `heldBack` when that cap is what refused the request. `ceiling` in the answer
+ * is always the full one: a key found drained must be marked drained at the full
+ * ceiling, or the visible-page pass would keep calling it.
+ */
+export async function reserveMdblistBudget(keyId, requested, options = {}) {
   const key = String(keyId || '').trim();
   const want = Math.max(0, Math.floor(requested));
   const ceiling = Math.max(0, config.mdblistDailyBudget - config.mdblistBudgetReserve);
   if (!key || !want || !ceiling) return { granted: 0, used: 0, ceiling };
+  const cap = options.headroom ? ceiling - mdblistEffectiveHeadroom(ceiling) : ceiling;
 
   const client = await pool.connect();
   try {
@@ -1363,7 +1400,8 @@ export async function reserveMdblistBudget(keyId, requested) {
       [key]
     );
     const used = Number(locked.rows[0]?.used ?? 0);
-    const granted = Math.max(0, Math.min(want, ceiling - used));
+    const granted = Math.max(0, Math.min(want, cap - used));
+    const heldBack = granted < want && cap < ceiling && ceiling - used >= want;
     if (granted > 0) {
       await client.query(
         'UPDATE mdblist_budget SET used=used+$2, updated_at=now() ' +
@@ -1372,7 +1410,7 @@ export async function reserveMdblistBudget(keyId, requested) {
       );
     }
     await client.query('COMMIT');
-    return { granted, used: used + granted, ceiling };
+    return { granted, used: used + granted, ceiling, heldBack };
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     throw error;

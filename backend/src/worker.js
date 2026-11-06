@@ -1020,7 +1020,10 @@ async function refreshMdblistBackfill() {
 
   stats.overdue = await countMdblistOverdue().catch(() => undefined);
   const line = '[worker] mdblist backfill ' + formatMdblistStats(stats);
-  if (stats.declined || Object.keys(stats.errors).length) console.warn(line);
+  // Stopping at the headroom is the designed steady state, not a problem.
+  const realErrors = Object.keys(stats.errors).filter((reason) => reason !== 'headroom');
+  if (stats.declined === 'headroom' && !realErrors.length) console.info(line);
+  else if (stats.declined || realErrors.length) console.warn(line);
   else console.log(line);
   return stats.changedSlugs;
 }

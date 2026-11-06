@@ -6,6 +6,8 @@ import {
   mdblistKeyId,
   parseMdblistRatings
 } from '../src/mdblist.js';
+import { mdblistEffectiveHeadroom, reserveMdblistBudget } from '../src/repository.js';
+import { pool } from '../src/db.js';
 import { backfillMdblistRatings, formatMdblistStats, syncMdblistRatings } from '../src/mdblistRatingsSync.js';
 
 const BASE = 'https://api.mdblist.com';
@@ -315,4 +317,108 @@ test('stats format as a single greppable line', () => {
   assert.match(line, /batches=4 reserved=4 spent=4 matched=9/);
   assert.match(line, /keys=2\/3 drained=1/);
   assert.match(line, /errors=timeoutx1/);
+});
+
+test('mdblist uses tmdb_media_type for tmdb lookups', async () => {
+  const fetches = [];
+  const rows = [
+    // typed movie by the provider, tv by TMDB: the tmdb id belongs to the tv section
+    { id: 'x1', canonical_slug: 'x1', media_type: 'movie', tmdb_id: 11, tmdb_media_type: 'tv', imdb_id: null },
+    // imdb lookup keeps media_type
+    { id: 'x2', canonical_slug: 'x2', media_type: 'movie', tmdb_id: null, tmdb_media_type: 'tv', imdb_id: 'tt1234567' },
+    // no tmdb_media_type: falls back to media_type
+    { id: 'x3', canonical_slug: 'x3', media_type: 'movie', tmdb_id: 13, tmdb_media_type: null, imdb_id: null },
+    // tmdb_lookup_id guess keeps media_type
+    { id: 'x4', canonical_slug: 'x4', media_type: 'tv', tmdb_id: null, tmdb_media_type: null, imdb_id: null, tmdb_lookup_id: 14 }
+  ];
+  const { deps } = backfillHarness({
+    rows,
+    fetchRatings: async (request) => {
+      fetches.push(request);
+      return { ...request, ratings: [] };
+    }
+  });
+  await backfillMdblistRatings(deps);
+  const kinds = new Set(fetches.map((f) => f.provider + ':' + f.mediaType + ':' + f.ids.join()));
+  assert.deepEqual([...kinds].sort(), [
+    'imdb:movie:tt1234567', 'tmdb:movie:13', 'tmdb:show:11', 'tmdb:show:14'
+  ]);
+});
+
+test('backfill stops at headroom', async () => {
+  const seen = [];
+  const { deps, calls } = backfillHarness({
+    reserveBudget: async (keyId, requested, options) => {
+      seen.push(options);
+      return { granted: 0, used: 750, ceiling: 950, heldBack: true };
+    }
+  });
+  const stats = await backfillMdblistRatings(deps);
+  assert.equal(stats.declined, 'headroom');
+  assert.equal(stats.spent, 0);
+  assert.equal(calls.results.length, 0);
+  assert.equal(stats.cursor.next, '');
+  assert.ok(seen.length > 0 && seen.every((o) => o.headroom === true));
+});
+
+test('visible pass never asks for headroom', async () => {
+  const seen = [];
+  const h = harness({
+    reserveBudget: async (keyId, requested, options) => {
+      seen.push(options);
+      return { granted: requested, used: requested, ceiling: 950 };
+    }
+  });
+  await syncMdblistRatings(SOURCES, h.deps);
+  assert.ok(seen.length > 0 && seen.every((o) => !o.headroom));
+});
+
+test('drain uses full ceiling', async () => {
+  const reserves = [];
+  const { deps } = backfillHarness({
+    reserveBudget: async (keyId, requested, options) => {
+      reserves.push([requested, options]);
+      return { granted: requested, used: requested, ceiling: 950 };
+    },
+    fetchRatings: async () => { throw new MdblistQuotaError('quota'); }
+  });
+  const stats = await backfillMdblistRatings(deps);
+  assert.equal(stats.keysDrained, 1);
+  const drain = reserves.find(([requested]) => requested === 950);
+  assert.ok(drain, 'drain reserves the full ceiling');
+  assert.equal(drain[1], undefined, 'drain request carries no headroom option');
+});
+
+test('headroom clamped below ceiling', () => {
+  assert.equal(mdblistEffectiveHeadroom(950, 200), 200);
+  assert.equal(mdblistEffectiveHeadroom(150, 200), 149);
+  assert.equal(mdblistEffectiveHeadroom(1, 200), 0);
+  assert.equal(mdblistEffectiveHeadroom(0, 200), 0);
+});
+
+test('reserveMdblistBudget caps backfill at ceiling - headroom and flags it', async () => {
+  const original = pool.connect;
+  const used = { value: 750 };
+  pool.connect = async () => ({
+    release() {},
+    async query(sql) {
+      if (/FOR UPDATE/.test(sql)) return { rows: [{ used: used.value }] };
+      return { rows: [] };
+    }
+  });
+  // config defaults: budget 1000, reserve 50 -> ceiling 950, headroom 200 -> backfill cap 750
+  try {
+    const held = await reserveMdblistBudget('k', 1, { headroom: true });
+    assert.equal(held.granted, 0);
+    assert.equal(held.heldBack, true);
+    assert.equal(held.ceiling, 950);
+    const visible = await reserveMdblistBudget('k', 1);
+    assert.equal(visible.granted, 1);
+    used.value = 950;
+    const spent = await reserveMdblistBudget('k', 1, { headroom: true });
+    assert.equal(spent.granted, 0);
+    assert.notEqual(spent.heldBack, true);
+  } finally {
+    pool.connect = original;
+  }
 });

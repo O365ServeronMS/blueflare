@@ -31,6 +31,8 @@ The remaining signals are log lines, so `docker logs` is the whole interface.
 | --- | --- | --- |
 | `[worker] duplicate merge ok <drop> => <keep> evidence=… [rename=…]` | one merge applied | none |
 | `[worker] duplicate merge merged=… skipped=… remaining=… ambiguous=… evidence=… durationMs=…` | per-cycle merge summary | see the ALERT line |
+| `[worker] provider ids mode=… pages=… items=… claimsUpdated=… checked=… skipped=… assigned=… merged=… planned=… queued=… blocked=… conflict=… imdbFilled=… lookups=… deferred=… errors=… reasons=…` | per-cycle provider TMDB/IMDb id pass (`providerIdentitySync.js`) | `errors=` rising, or `deferred=` high for days (TMDB lookup budget or errors) |
+| `[worker] provider identity pass failed` / `[worker] provider ids <provider> page N failed` (warn) | pass or list walk failed | repeated: the walk is stuck |
 | `[worker] ALERT duplicate merge …` (warn) | failed/stale merges, ambiguous pairs, `remaining` above `MERGE_ALERT_PENDING` (200), or three cycles without progress | any occurrence |
 | `[worker] tmdb ai match mode=… scope=… requests=… checked=… verified=… unverifiable=… none=… error=… merged=… assigned=… tokens=prompt/output/thoughts models=…` | one ranked batch (the AI match loop, or the sync cycle when `TMDB_MATCH_AI_LOOP=false`) | none; watch `error=` rising |
 | `[worker] tmdb ai match loop: blocked\|idle` | logged only when the loop enters that state. `blocked`: the rotation has no usable key/model right now. `idle`: backlog empty | `blocked` for a long time |
@@ -78,7 +80,7 @@ Use `EXPLAIN (ANALYZE, BUFFERS)` against representative home/list/genre/country/
 - `provider_health.consecutive_failures` and `last_error` identify outage/schema drift.
 - A single detail/upsert failure is logged and counted without aborting the rest of the sync page.
 - HTTP retries are limited to timeouts, 408/425/429 and 5xx; permanent 4xx responses are not retried.
-- Strong TMDB/IMDb identity wins over a conflicting provider source, preventing duplicate-key conflicts from stopping canonical sync.
+- A provider source already attached to a row stays on that row. A TMDB/IMDb identity lookup picks a row only when no source is attached; a fill that another row already holds is skipped, not written, and the provider identity pass reports it in `provider_identity_reviews`.
 
 ## Suggested alerts
 

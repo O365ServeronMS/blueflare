@@ -47,6 +47,17 @@ test('detectors flag the mixed-season row and its season contradiction', () => {
   assert.ok(detectRow(row({ id: 'o', canonical_slug: 'o', title: 'O', sources: [source('nguonc', { title: 'O', slug: 'o', available: false })] })).includes('orphan'));
 });
 
+test('a NguonC source naming another id is a mismatch; a pending provider season review is flagged', () => {
+  const held = row({ id: 'n1', canonical_slug: 'x', title: 'X', tmdb_id: 5, tmdb_media_type: 'tv', tmdb_season_number: 1,
+    sources: [source('nguonc', { title: 'X', slug: 'x', tmdbId: 9, season: 1 })] });
+  assert.ok(detectRow(held).includes('tmdb-mismatch'));
+  const gone = { ...held, sources: [source('nguonc', { title: 'X', slug: 'x', tmdbId: 9, season: 1, available: false })] };
+  assert.ok(!detectRow(gone).includes('tmdb-mismatch'), 'an unavailable record does not count');
+  const queued = row({ id: 'n2', canonical_slug: 'y', title: 'Y', provider_review: 'season-disagree', sources: [source('nguonc', { title: 'Y', slug: 'y' })] });
+  assert.deepEqual(detectRow(queued), ['provider-season']);
+  assert.deepEqual(detectRow({ ...queued, provider_review: 'providers-disagree' }), []);
+});
+
 test('analyseCatalog groups the seasons of one series and needs the model for a mixed row', () => {
   const { s3, s4 } = diplomat();
   const { groups, counts, family, holderOf } = analyseCatalog([s3, s4]);

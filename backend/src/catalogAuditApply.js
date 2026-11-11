@@ -34,7 +34,7 @@ async function setSeason(action, { evidence }) {
     const row = (await client.query('SELECT * FROM movies WHERE id=$1 FOR UPDATE', [action.movieId])).rows[0];
     if (!row || row.tmdb_media_type !== 'tv' || row.tmdb_id === null) return blocked('row-changed');
     const identity = { id: Number(row.tmdb_id), mediaType: 'tv', season: Number(action.season) };
-    const written = await rewriteTmdbIdentity(client, row.id, identity, { reason: 'catalog-audit:set_season', evidence });
+    const written = await rewriteTmdbIdentity(client, row.id, identity, { reason: 'catalog-audit:set_season', evidence, pin: true });
     return {
       status: 'applied', before: written.before, after: { tmdb_season_number: identity.season },
       identityChangeId: written.changeId, slugs: [row.canonical_slug]
@@ -46,7 +46,7 @@ async function clearTmdb(action, { evidence }) {
   return inTransaction(async (client) => {
     const row = (await client.query('SELECT * FROM movies WHERE id=$1 FOR UPDATE', [action.movieId])).rows[0];
     if (!row || row.tmdb_id === null || row.tmdb_id_source !== 'inferred') return blocked('row-changed');
-    const written = await rewriteTmdbIdentity(client, row.id, null, { reason: 'catalog-audit:clear_tmdb', evidence });
+    const written = await rewriteTmdbIdentity(client, row.id, null, { reason: 'catalog-audit:clear_tmdb', evidence, pin: true });
     return { status: 'applied', before: written.before, after: { tmdb_id: null }, identityChangeId: written.changeId, slugs: [row.canonical_slug] };
   });
 }
@@ -56,7 +56,7 @@ async function mergeRows(action, detail, { evidence }) {
   if (!holder || holder.tmdb_id === null) return blocked('row-changed');
   const result = await assignTmdbIdentity(detail.without, {
     tmdbId: Number(holder.tmdb_id), mediaType: holder.tmdb_media_type, season: holder.tmdb_season_number ?? null
-  }, { source: 'inferred', evidence, mode: 'apply' });
+  }, { source: 'inferred', evidence, mode: 'apply', pin: true });
   if (result.action !== 'merged') return blocked('identity:' + result.action + (result.reason ? ':' + result.reason : ''));
   return {
     status: 'applied', before: { keepId: result.survivorId, dropId: result.dropId, dropSlug: result.dropSlug },

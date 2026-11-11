@@ -294,6 +294,16 @@ export async function collectAiCandidates(inputRow, client, options = {}) {
     if (lang && !isLatinName(query)) await search(primary, query, '', lang);
   }
   const chosen = rankHits([...pool.values()], facts, options.maxCandidates ?? MAX_AI_CANDIDATES);
+  // Ids a provider named (providerIdentitySync review queue) always reach the model, as ordinary
+  // candidates fetched from TMDB: nothing tells the prompt or the gate where they came from.
+  const chosenKeys = new Set(chosen.map((hit) => hit.type + ':' + hit.id));
+  for (const extra of Array.isArray(options.extraCandidates) ? options.extraCandidates : []) {
+    const id = Number(extra?.id);
+    const type = extra?.type === 'tv' || extra?.type === 'movie' ? extra.type : null;
+    if (!Number.isSafeInteger(id) || id <= 0 || !type || chosenKeys.has(type + ':' + id)) continue;
+    chosenKeys.add(type + ':' + id);
+    chosen.push({ id, type });
+  }
   const candidates = [];
   for (const hit of chosen) {
     const detail = await client.get('/' + hit.type + '/' + hit.id + '?append_to_response=alternative_titles,translations,credits', { language: 'en-US' });

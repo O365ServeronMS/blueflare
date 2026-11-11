@@ -32,6 +32,10 @@ function fakeDatabase(movies, { sourceRow = null } = {}) {
         return reply(movies.filter((m) => m.tmdb_id === params[0] && m.tmdb_media_type === params[1] &&
           (m.tmdb_season_number ?? null) === (params[2] ?? null)));
       }
+      if (sql.startsWith('SELECT 1 FROM movies WHERE id<>$1 AND tmdb_id=$2')) {
+        return reply(movies.filter((m) => m.id !== params[0] && m.tmdb_id === params[1] && m.tmdb_media_type === params[2] &&
+          (params[2] === 'movie' || (m.tmdb_season_number ?? null) === (params[3] ?? null))));
+      }
       if (sql.includes('WHERE imdb_id = $1 AND media_type = $2')) {
         // Worst case for the old LIMIT 1: the season 2 row comes first.
         return reply(movies.filter((m) => m.imdb_id === params[0] && m.media_type === params[1])
@@ -137,4 +141,50 @@ test('identityConflict rejects another season or another TMDB title, accepts unk
   assert.equal(identityConflict(diplomatRow('s4', 4, 2026, 'x'), season4, identity), null);
   assert.equal(identityConflict({ media_type: 'tv', title: 'Nhà Ngoại Giao', canonical_slug: 'nha-ngoai-giao' }, season4, identity), null);
   assert.equal(identityConflict({ media_type: 'movie', tmdb_id: 5, tmdb_media_type: 'movie' }, { mediaType: 'movie' }, null), null);
+});
+
+test('a record already on a row stays there when its TMDB tuple names another row (no orphan)', async () => {
+  // Row A carries the KKPhim record; KKPhim now says season 3, which row s3 holds. Moving the record
+  // used to leave A ready with no source; the provider pass merges A into s3 instead.
+  const movies = [
+    { ...diplomatRow('a', 3, 2025, 'nha-ngoai-giao-3-kk'), tmdb_id: null, tmdb_media_type: null, tmdb_season_number: null, imdb_id: null },
+    diplomatRow('s3', 3, 2025, 'nha-ngoai-giao-phan-3-2')
+  ];
+  const record = { ...season4, providerMovieId: 'kk-diplomat-3', providerSlug: 'nha-ngoai-giao-3-kk', tmdbSeasonNumber: 3, imdbId: null };
+  const { client, statements, sources } = fakeDatabase(movies, { sourceRow: 'a' });
+  const { movie } = await withFakePool(client, () => upsertCanonical(record));
+  assert.equal(movie.id, 'a');
+  assert.deepEqual(sources.map((s) => s.movie_id), ['a']);
+  assert.equal(movies[0].tmdb_id, null, 'the tuple s3 holds is not written onto A');
+  assert.equal(statements.some((s) => s.sql.startsWith('UPDATE movies SET tmdb_id=$2')), false);
+});
+
+test('the upsert never overwrites a stored tuple; it fills an empty row or an empty season only', async () => {
+  const other = [{ ...diplomatRow('a', 4, 2026, 'nha-ngoai-giao-phan-4'), tmdb_id: 999, tmdb_media_type: 'tv', tmdb_season_number: 4 }];
+  const kept = fakeDatabase(other, { sourceRow: 'a' });
+  await withFakePool(kept.client, () => upsertCanonical(season4));
+  assert.equal(other[0].tmdb_id, 999);
+
+  const nullSeason = [{ ...diplomatRow('a', 4, 2026, 'nha-ngoai-giao-phan-4'), tmdb_season_number: null }];
+  const filled = fakeDatabase(nullSeason, { sourceRow: 'a' });
+  await withFakePool(filled.client, () => upsertCanonical(season4));
+  assert.equal(nullSeason[0].tmdb_season_number, 4);
+  const write = filled.statements.find((s) => s.sql.startsWith('UPDATE movies SET tmdb_id=$2'));
+  assert.equal(write.params[4], 'provider', 'fills are marked tmdb_id_source provider');
+});
+
+test('NguonC ids stay out of the upsert until the fill tier is on, but are kept in the source metadata', async () => {
+  const nguonc = {
+    ...season4, provider: 'nguonc', providerMovieId: 'nc-x', providerSlug: 'nha-ngoai-giao-phan-4', priority: 10,
+    metadata: { tmdb_id: 203857, tmdb_type: 'tv', tmdb_season: 4, imdb_id: 'tt17491088' }
+  };
+  const movies = [{ ...diplomatRow('a', 4, 2026, 'nha-ngoai-giao-phan-4'), tmdb_id: null, tmdb_media_type: null, tmdb_season_number: null, imdb_id: null }];
+  const { client, statements } = fakeDatabase(movies, { sourceRow: 'a' });
+  await withFakePool(client, () => upsertCanonical(nguonc));
+  assert.equal(movies[0].tmdb_id, null);
+  assert.equal(statements.some((s) => s.sql.startsWith('UPDATE movies SET tmdb_id=$2')), false);
+  const update = statements.find((s) => s.sql.startsWith('UPDATE movies SET title='));
+  assert.equal(update.params[9], null, 'imdb_id is not filled from NguonC either');
+  const source = statements.find((s) => s.sql.startsWith('INSERT INTO movie_provider_sources'));
+  assert.equal(JSON.parse(source.params[5]).tmdb_id, 203857);
 });

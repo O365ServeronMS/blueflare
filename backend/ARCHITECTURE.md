@@ -55,7 +55,7 @@ Browser
 
 ### Accounts architecture
 
-User accounts, sessions and the last watched episode per title (`user_history`) live in PostgreSQL (migrations 020, 021). The TMDB identity audit/undo log `tmdb_identity_changes` (migration 030) is irreplaceable state in the same dump; `ai_quota_ledger` (031) is disposable.
+User accounts, sessions and the last watched episode per title (`user_history`) live in PostgreSQL (migrations 020, 021). The TMDB identity audit/undo log `tmdb_identity_changes` (migration 030), `movie_merges` and the pin column `movies.tmdb_identity_pinned` (039) are irreplaceable state in the same dump; `ai_quota_ledger` (031) and `provider_identity_reviews` (039) are disposable.
 `auth.js` handles password hashing and sessions; `meApi.js` serves `/api/auth/*`
 and `/api/me/*`, never response-cached (Valkey is used only for auth rate-limit counters). Browsers reach them only through the
 Next proxy on `phim.bluesia.net` (`bf_session` cookie, HttpOnly, SameSite=Lax);
@@ -93,10 +93,10 @@ that account out of login for up to an hour.
 each entry `{ name, slug, character, photo }`. It is populated only when the
 canonical row carries a **verified** TMDB identity (`tmdb_id` + `tmdb_media_type`,
 not the looser recommendation/image-fallback ids). That identity may come from the
-provider, from the worker's AI match pass (an OpenRouter model ranks real TMDB candidates, an
+provider (the sync upsert's fill of an empty tuple, or the provider id pass `providerIdentitySync.js`, source `provider`), from the worker's AI match pass (which also settles queued provider disagreements) (an OpenRouter model ranks real TMDB candidates, an
 independent gate decides, source `inferred`), or from promotion of a cast-verified
 match; `tmdbIdentity.js` assigns, merges into the row already holding it, or promotes,
-and every change is logged in `tmdb_identity_changes` and can be undone; most of the catalog has empty
+and every assign, merge and overwrite is logged in `tmdb_identity_changes` and can be undone (the sync upsert's fill of an empty row or season is written directly, without a log row); most of the catalog has empty
 arrays here, and the existing plain-text `actor`/`director` fields stay populated
 either way.
 

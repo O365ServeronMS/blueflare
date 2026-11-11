@@ -28,9 +28,16 @@ function tmdbMediaType(value) {
   return type === 'movie' || type === 'tv' ? type : null;
 }
 
+// Season 0 is TMDB's "Specials" bucket, never a canonical season: treat it as unknown.
 function seasonNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
   const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+  return Number.isInteger(parsed) && parsed >= 1 ? parsed : null;
+}
+
+function imdbIdentifier(raw) {
+  const text = String(raw ?? '').trim().toLowerCase();
+  return /^tt\d{5,}$/.test(text) ? text : null;
 }
 
 function people(raw) {
@@ -122,7 +129,7 @@ function canonical(input) {
     displayType,
     year: number(input.year),
     tmdbId: number(input.tmdbId),
-    imdbId: value(input.imdbId),
+    imdbId: imdbIdentifier(input.imdbId),
     tmdbMediaType: tmdbMediaType(input.tmdbMediaType),
     tmdbSeasonNumber: seasonNumber(input.tmdbSeasonNumber),
     overview: value(input.overview),
@@ -154,9 +161,11 @@ function compactMetadata(input) {
     original_title: input.originalTitle,
     year: input.year,
     type: input.displayType,
-    tmdb_id: input.tmdbId,
-    tmdb_type: input.tmdbMediaType,
-    tmdb_season: input.tmdbSeasonNumber,
+    // The provider's own claim, normalized: the identity pass reads these back later.
+    tmdb_id: number(input.tmdbId),
+    tmdb_type: tmdbMediaType(input.tmdbMediaType),
+    tmdb_season: seasonNumber(input.tmdbSeasonNumber),
+    imdb_id: imdbIdentifier(input.imdbId),
     quality: input.quality,
     language: input.language,
     status: input.status,
@@ -184,6 +193,10 @@ export function normalizeNguonc(payload) {
     originalTitle: movie.original_name,
     displayType,
     year: movie.year || yearFromGroup,
+    tmdbId: movie.tmdb?.id,
+    tmdbMediaType: movie.tmdb?.type,
+    tmdbSeasonNumber: movie.tmdb?.season,
+    imdbId: movie.imdb?.id,
     overview: movie.description,
     thumbSourceUrl: movie.thumb_url,
     posterSourceUrl: movie.poster_url,

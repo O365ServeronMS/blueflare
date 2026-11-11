@@ -3,6 +3,7 @@ import { config } from './config.js';
 import { pool } from './db.js';
 import { mapLimit } from './concurrency.js';
 import { getAi } from './ai/index.js';
+import { AI_REVIEW_REASONS } from './providerIdentity.js';
 import {
   RANK_PROMPT_OVERHEAD_CHARS, calibrateTokens, catalogFacts, collectAiCandidates, createTmdbClient, createTokenCalibration,
   decideAiMatch, DEFAULT_AI_POLICY, estimateTokens, matchInput, promptEntry, rankBatch
@@ -70,6 +71,43 @@ export async function listAiMatchCandidates({ mode, limit, retryMs, errorRetryMs
   return result.rows;
 }
 
+/**
+ * Rows the provider pass queued for the AI (provider_identity_reviews, reason in AI_REVIEW_REASONS):
+ * the providers disagree, or one provider names another id than the row holds. They may already
+ * hold an id. Each review is ranked once per decision (decided_at): a run made after it counts,
+ * an errored one only for errorRetryMs, and in apply mode a dry-run 'verified' run does not.
+ * `review_candidates` are the ids in question; they join the TMDB search results as candidates.
+ */
+export async function listProviderReviewCandidates({ mode, limit, errorRetryMs }) {
+  try {
+    const result = await pool.query(
+      'SELECT m.id, m.canonical_slug, m.title, m.original_title, m.year, m.media_type, m.display_type, ' +
+      'm.countries, m.actors, m.episode_total, m.duration, m.overview, m.tmdb_id, m.tmdb_media_type, ' +
+      'p.candidates AS review_candidates, p.reason AS review_reason FROM provider_identity_reviews p ' +
+      'JOIN movies m ON m.id = p.movie_id ' +
+      "WHERE p.status = 'pending' AND p.reason = ANY($4::text[]) AND m.catalog_state = 'ready' " +
+      '  AND NOT EXISTS (SELECT 1 FROM tmdb_match_ai_runs r WHERE r.movie_id = m.id AND r.created_at > p.decided_at ' +
+      "    AND (r.outcome IS DISTINCT FROM 'error' OR r.created_at > now() - $1::bigint * interval '1 millisecond') " +
+      "    AND ($2::text = 'dry-run' OR r.mode = 'apply' OR r.outcome IS DISTINCT FROM 'verified')) " +
+      'ORDER BY p.decided_at LIMIT $3',
+      [errorRetryMs, mode, Math.max(1, Math.floor(limit)), [...AI_REVIEW_REASONS]]
+    );
+    return result.rows;
+  } catch (error) {
+    if (error?.code === '42P01') return []; // migration 039 not applied yet
+    throw error;
+  }
+}
+
+/** Closes a provider review the AI match settled (apply mode); dry-run only notes the outcome. */
+export async function resolveProviderReview(movieId, outcome, { mode }) {
+  await pool.query(
+    "UPDATE provider_identity_reviews SET outcome=$2, status=CASE WHEN $3::text = 'apply' THEN 'done' ELSE status END, " +
+    "resolved_at=CASE WHEN $3::text = 'apply' THEN now() ELSE resolved_at END WHERE movie_id=$1 AND status='pending'",
+    [movieId, outcome, mode]
+  );
+}
+
 const compactForStore = (candidates) => candidates.map((c) => ({
   key: c.key, title: c.title, originalTitle: c.originalTitle, year: c.year, type: c.type
 }));
@@ -131,10 +169,17 @@ export async function runAiMatchPass(deps = {}, options = {}) {
   const conc = Math.min(4, settings.tmdbMatchConcurrency ?? 2);
   const list = deps.list ?? listAiMatchCandidates;
   const record = deps.record ?? recordAiRun;
-  const rows = await list({
-    mode, limit: options.rowLimit ?? settings.tmdbMatchAiLimit, retryMs: settings.tmdbMatchAiRetryMs, errorRetryMs: settings.tmdbMatchAiErrorRetryMs,
+  const rowLimit = options.rowLimit ?? settings.tmdbMatchAiLimit;
+  // Provider reviews first: they are few and each settles a real disagreement.
+  const listReviews = deps.listReviews ?? (deps.list ? async () => [] : listProviderReviewCandidates);
+  const resolveReview = deps.resolveReview ?? resolveProviderReview;
+  const reviews = await listReviews({ mode, limit: rowLimit, errorRetryMs: settings.tmdbMatchAiErrorRetryMs });
+  const listed = reviews.length >= rowLimit ? [] : await list({
+    mode, limit: rowLimit - reviews.length, retryMs: settings.tmdbMatchAiRetryMs, errorRetryMs: settings.tmdbMatchAiErrorRetryMs,
     scope: options.scope ?? 'all', freshMs: settings.tmdbMatchAiFreshMs
   });
+  const reviewIds = new Set(reviews.map((row) => row.id));
+  const rows = [...reviews, ...listed.filter((row) => !reviewIds.has(row.id))];
   out.listed = rows.length;
   if (!rows.length) return out;
 
@@ -153,9 +198,20 @@ export async function runAiMatchPass(deps = {}, options = {}) {
     const evidence = { tier: decision.tier ?? null, reason: decision.reason ?? null, ...decision.evidence };
     let status = RUN_STATUS[decision.status];
     let runMovieId = row.id; // a merge may delete this row: the run is then kept on the survivor
-    if (decision.status === 'verified' && mode === 'apply') {
+    const review = reviewIds.has(row.id);
+    const holds = review && pick && row.tmdb_id !== null && row.tmdb_id !== undefined &&
+      Number(row.tmdb_id) === Number(pick.id) && row.tmdb_media_type === pick.type;
+    if (review) evidence.providerReview = row.review_reason ?? true;
+    if (decision.status === 'verified' && holds) {
+      // The gate verified the id the row already holds: the dissenting provider id loses.
+      evidence.action = 'confirmed';
+      if (mode === 'apply') status = 'applied';
+    } else if (decision.status === 'verified' && mode === 'apply') {
       try {
-        const result = await assign(row.id, { tmdbId: pick.id, mediaType: pick.type, numberOfSeasons: pick.seasons ?? null }, { source: 'inferred', evidence: { ...evidence, candidate: pick.key, model, aiRun: runId } });
+        // A review row may hold another id: the verified pick replaces it (never a pinned row,
+        // and a merge still passes mergeGuard). Undoable like every assign.
+        const reviewOptions = review ? { replace: true, respectPin: true, guard: true, reason: 'provider-review:' + (row.review_reason ?? '') } : {};
+        const result = await assign(row.id, { tmdbId: pick.id, mediaType: pick.type, numberOfSeasons: pick.seasons ?? null }, { source: 'inferred', evidence: { ...evidence, candidate: pick.key, model, aiRun: runId }, ...reviewOptions });
         evidence.action = result?.action ?? null;
         if (result?.reason) evidence.actionReason = result.reason;
         if (result?.action === 'assigned' || result?.action === 'merged' || result?.action === 'noop') status = 'applied';
@@ -175,6 +231,11 @@ export async function runAiMatchPass(deps = {}, options = {}) {
       }
     }
     if (decision.status === 'error') evidence.error = decision.reason;
+    if (review && decision.status !== 'error' && status !== 'error') {
+      const outcome = 'ai-' + (evidence.action ?? decision.status) + (evidence.actionReason ? ':' + evidence.actionReason : '');
+      await resolveReview(row.id, outcome, { mode })
+        .catch((error) => warn('[worker] tmdb ai match could not resolve provider review for ' + row.canonical_slug + ': ' + error.message));
+    }
     await record({
       runId, mode, movieId: runMovieId, candidates: compactForStore(candidates), chosenTmdbId: pick?.id, mediaType: pick?.type,
       confidence: evidence.confidence ?? null, evidence, status,
@@ -196,7 +257,7 @@ export async function runAiMatchPass(deps = {}, options = {}) {
     const prepared = await mapLimit(chunk, conc, async (row) => {
       const input = matchInput(row);
       try {
-        const { candidates } = await collectAiCandidates(input, client);
+        const { candidates } = await collectAiCandidates(input, client, { extraCandidates: row.review_candidates ?? [] });
         return { row, input, candidates };
       } catch (error) {
         return { row, input, candidates: [], failed: String(error.message).slice(0, 200) };

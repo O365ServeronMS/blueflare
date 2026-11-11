@@ -106,7 +106,8 @@ test('NguonC fields remain primary while KKPhim fills missing identifiers', () =
   const merged = mergedMovie(current, fallback);
   assert.equal(merged.title, primary.title);
   assert.equal(merged.overview, primary.overview);
-  assert.equal(merged.tmdbId, fallback.tmdbId);
+  // The TMDB tuple is written whole by fillTmdbIdentity, never as a lone tmdb_id column.
+  assert.equal(merged.tmdbId, null);
 
   assert.equal(merged.imdbId, fallback.imdbId);
   assert.equal(merged.primaryProvider, 'nguonc');

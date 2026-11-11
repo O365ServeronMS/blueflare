@@ -25,6 +25,7 @@ explain what the TMDB and OpenRouter variables do.
 - [Catalog audit (weekly)](#catalog-audit-weekly)
 - [API contract](#api-contract)
 - [Provider identity](#provider-identity)
+  - [Provider TMDB/IMDb ids](#provider-tmdbimdb-ids)
 - [Operations](#operations)
   - [Runtime/codebase split](#runtimecodebase-split)
   - [Verification](#verification)
@@ -263,7 +264,9 @@ warning.
 
 ### AI match
 
-For ready titles with no `tmdb_id` the pass fetches real TMDB candidates
+For ready titles with no `tmdb_id`, and for pending provider reviews (`providers-disagree`,
+`single-vs-existing`, `type-mismatch`; these may already hold an id, and the provider ids join
+the candidates), the pass fetches real TMDB candidates
 (`tmdbMatchAi.js`), has a model rank them (AI module, role `MATCH`), and lets an independent gate
 decide. The model never supplies an id, only picks among fetched candidates. It
 runs only with `TMDB_MATCH_AI_MODE` other than `off` (default `off`), a usable `MATCH`
@@ -285,7 +288,7 @@ route (AI keys + models), and `TMDB_ENABLED` plus a TMDB key.
 - Retry windows: `none`, `unverifiable` and verified-but-not-applied results are
   not re-examined for `TMDB_MATCH_AI_RETRY_MS`; errors wait
   `TMDB_MATCH_AI_ERROR_RETRY_MS`. Rows with a cast of two or more go first.
-- Attempt cap: each run stores `meta_key` = md5(title|original title|year) (migration 035).
+- Attempt cap (title scope only; provider reviews are ranked once per decision and not counted): each run stores `meta_key` = md5(title|original title|year) (migration 035).
   After 3 `none`/`unverifiable` runs on the current key a title is given up (obscure local
   titles often have no TMDB page; errors do not count). A changed title, original title or year
   is a new key: the title is listed again at once, with a fresh cap. Rows the catalog audit
@@ -399,6 +402,8 @@ Only image variants `m` (480 x 720) and `d` (1280 x 720) exist.
 
 Resolution order:
 
+0. an existing source attachment (provider + provider slug) keeps its row; steps 1-5 only pick a
+   row when none is attached, and the TMDB/IMDb steps only fill;
 1. exact TMDB ID plus media family;
 2. exact IMDb ID plus media family;
 3. normalized original title plus year plus media family;
@@ -408,6 +413,43 @@ Resolution order:
 NguonC wins presentation metadata. KKPhim fills missing fields and remains an
 alternate stream source. Every source retains provider ID, slug, priority,
 availability, raw metadata, streams, and success timestamps.
+
+A source already attached to a row stays on it: the upsert never re-points it through the
+identity lookup. The upsert only fills an empty TMDB identity (or the empty season of the same
+tv id), never overwrites one, and skips pinned rows, type conflicts and tuples another row holds.
+
+### Provider TMDB/IMDb ids
+
+Both providers now publish `tmdb {id, type, season}` and `imdb {id}` on list and detail
+records (NguonC since 2026-11; KKPhim back-filled its older records upstream). normalize.js
+stores them in source metadata (`tmdb_id`, `tmdb_type`, `tmdb_season` (>= 1, season 0 is
+null), `imdb_id`). The worker pass `providerIdentitySync.js` (overview in `CLAUDE.md`) turns
+them into row identities:
+
+- **List walk**, lane `provider-ids` in `crawl_checkpoints`: `PROVIDER_IDS_PAGES_PER_RUN`
+  pages per provider per cycle (NguonC ~3,400 pages, KKPhim ~1,300), refreshing only the
+  identity keys of `movie_provider_sources.metadata` (never `updated_at`). A finished walk
+  restarts after `PROVIDER_IDS_REWALK_DAYS`; delete the checkpoint rows to restart it now.
+- **Resolve**: `PROVIDER_TMDB_BATCH` ready rows per cycle in id order. Rules
+  (`providerIdentity.js`): two providers agreeing win; one provider fills an empty row;
+  disagreements, a single provider against a held id and a type contradiction are queued for
+  the AI match (provider ids join its candidates); season disagreements are queued for the
+  catalog audit (`provider-season`) or the monthly season batch; a stored season is rewritten
+  only on two agreeing signals; a provider null season never clears one.
+- **Tiers** (`PROVIDER_TMDB_MODE=apply` + `PROVIDER_TMDB_TIERS`): `fill` (empty row/season,
+  empty imdb_id), `season` (rewrite a stored season), `overwrite` (replace another id),
+  `merge` (fold into the row already holding the id). Season and overwrite together are capped
+  by `PROVIDER_TMDB_OVERWRITE_PER_DAY`. A season change resets the row's TMDB artwork like any
+  identity change. Writes are `source='provider'` rows of `tmdb_identity_changes`, undone with
+  `scripts/tmdb-identity-undo.mjs`; an undo pins the row (`tmdb_identity_pinned`).
+- **Review**: `provider_identity_reviews` holds one decision per row (status
+  pending/planned/done/blocked, outcome `would-assign`, `would-merge:<slug>`, `assigned`,
+  `imdb-conflict` …); an unchanged fingerprint (claims + row tuple + pin + mode/tiers) is not
+  re-decided. `node scripts/provider-identity-report.mjs <out.csv> [--status planned]
+  [--tier overwrite] [--reason R]` prints the counts and exports the rows (read-only).
+
+Rollout: run `dry-run` for a full walk, review the CSV, then enable tiers one at a time:
+`fill`, then `season,overwrite`, then `merge`.
 
 ## Operations
 
@@ -469,7 +511,9 @@ and region for R2, Backblaze B2, Wasabi, AWS S3 and MinIO.
 
 The dump also carries user accounts, sessions and per-title watch history (tables from
 migrations `020_users_sessions.sql` and `021_history_episode.sql`); a restore brings them back with the catalog.
-The TMDB identity audit/undo log `tmdb_identity_changes` (migration `030`) is in the dump too.
+The TMDB identity audit/undo log `tmdb_identity_changes` (migration `030`), `movie_merges` and the pin
+column `movies.tmdb_identity_pinned` (`039`) are in the dump too; `provider_identity_reviews` (`039`) is
+disposable (wiping it makes the provider pass re-decide every row once).
 `ai_quota_ledger` (migrations `031`/`032`, `output_tokens` from `033`) is disposable: after a
 restore without it the ledger counts from zero until the provider answers 429.
 

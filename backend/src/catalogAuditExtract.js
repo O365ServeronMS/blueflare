@@ -7,11 +7,13 @@
  *   season-marker    the row's TMDB season contradicts the "(Phần N)" / "Season N" in its own title
  *   slug-season      the canonical slug's "-phan-N" contradicts the row's season
  *   alias-wrong      an alias slug names another season than the row's
- *   tmdb-mismatch    a KKPhim source names another TMDB id/type than the row holds
+ *   tmdb-mismatch    a provider source (KKPhim or NguonC) names another TMDB id/type than the row holds
  *   type-mismatch    a series/single row carries a TMDB id of the other kind
  *   episode-mismatch sources of one row disagree widely on the episode count
  *   year-spread      sources of one row are more than a year apart
  *   orphan           no available source left (the row cannot play)
+ *   provider-season  the provider id pass queued a season question it could not settle
+ *                    (provider_identity_reviews pending, providerIdentity.js SEASON_REVIEW_REASONS)
  *   dup-same-season  (cross-row) a row without TMDB id has the same title, type, season and
  *                    year (+-1) as a row that has one
  * `tv-no-season` (TMDB tv id without a season) is only counted: the season inference pass owns it.
@@ -19,13 +21,14 @@
  * Never on a request path; the worker runs it once a week.
  */
 import { normalizeTitle, rowSeason, seasonInSlug, seasonInText } from './identity.js';
+import { SEASON_REVIEW_REASONS } from './providerIdentity.js';
 
 export const DETECTORS = Object.freeze(['multi-season', 'season-marker', 'slug-season', 'alias-wrong', 'tmdb-mismatch',
-  'type-mismatch', 'episode-mismatch', 'year-spread', 'orphan', 'dup-same-season']);
+  'type-mismatch', 'episode-mismatch', 'year-spread', 'orphan', 'dup-same-season', 'provider-season']);
 
 /** Detectors whose fix needs judgement: the group goes to the model. The others have a deterministic fix. */
 export const AI_DETECTORS = new Set(['multi-season', 'season-marker', 'tmdb-mismatch', 'type-mismatch',
-  'episode-mismatch', 'year-spread', 'dup-same-season']);
+  'episode-mismatch', 'year-spread', 'dup-same-season', 'provider-season']);
 
 const MAX_GROUP_ROWS = 10;
 const int = (value) => {
@@ -48,7 +51,7 @@ export function streamEpisodes(streams) {
 /** Episode count of a source: precomputed by loadCatalog, else counted from its streams. */
 export const sourceEpisodes = (source) => (Number.isInteger(source.episodes) ? source.episodes : streamEpisodes(source.streams));
 
-/** Season signals of one provider record: KKPhim TMDB season, title, original title, slug. */
+/** Season signals of one provider record: provider TMDB season, title, original title, slug. */
 export function sourceSignals(source) {
   const meta = source.metadata || {};
   const tmdb = meta.tmdb_type === 'tv' ? int(meta.tmdb_season) : null;
@@ -99,9 +102,11 @@ export function detectRow(row) {
     }
   }
 
+  if (isTv(row) && SEASON_REVIEW_REASONS.has(row.provider_review)) found.add('provider-season');
+
   if (has(row.tmdb_id)) {
     for (const source of sources) {
-      if (source.provider !== 'kkphim') continue;
+      if (source.availability === false) continue;
       const meta = source.metadata || {};
       const id = int(meta.tmdb_id);
       if (id && id > 0 && ['movie', 'tv'].includes(meta.tmdb_type) &&
@@ -278,7 +283,8 @@ function rowsQuery(where) {
     ") ORDER BY s.id) FROM movie_provider_sources s WHERE s.movie_id=m.id), '[]'::jsonb) AS sources, " +
     "COALESCE((SELECT jsonb_agg(jsonb_build_object('slug', a.slug) ORDER BY a.slug) FROM movie_slug_aliases a WHERE a.movie_id=m.id), '[]'::jsonb) AS aliases, " +
     '(SELECT count(*)::int FROM user_favorites f WHERE f.movie_id=m.id) AS favorites, ' +
-    '(SELECT count(*)::int FROM user_history h WHERE h.movie_id=m.id) AS history ' +
+    '(SELECT count(*)::int FROM user_history h WHERE h.movie_id=m.id) AS history, ' +
+    "(SELECT r.reason FROM provider_identity_reviews r WHERE r.movie_id=m.id AND r.status='pending') AS provider_review " +
     'FROM movies m WHERE ' + where;
 }
 

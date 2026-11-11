@@ -335,3 +335,34 @@ test('listAiMatchCandidates priority scope adds the fresh/retry filter and one p
   assert.match(sql, /e\.outcome = 'error'/);
   assert.equal(Math.max(...[...sql.matchAll(/\$(\d+)/g)].map((m) => Number(m[1]))), params.length);
 });
+
+test('provider reviews go first, their ids join the candidates, a verified pick replaces or confirms', async () => {
+  const calls = [];
+  const resolved = [];
+  const paths = [];
+  const reviewRow = (n, over) => movie(n, { review_reason: 'single-vs-existing', review_candidates: [{ id: 77, type: 'tv' }], ...over });
+  const h = harness([movie(3)], {
+    config: { tmdbMatchAiMode: 'apply' },
+    client: {},
+    deps: {
+      listReviews: async () => [reviewRow(1, { tmdb_id: 9, tmdb_media_type: 'tv' }), reviewRow(2, { tmdb_id: 1, tmdb_media_type: 'tv' })],
+      resolveReview: async (id, outcome, opts) => { resolved.push([id, outcome, opts.mode]); },
+      assign: async (id, identity, opts) => { calls.push({ id, identity, opts }); return { action: 'assigned', survivorSlug: 'slug-' + id.slice(2) }; }
+    }
+  });
+  const get = h.deps.client.get;
+  h.deps.client = { get: async (path, extra) => { paths.push(path); return get(path, extra); } };
+  await refreshTmdbAiMatches(h.deps);
+  // The provider id 77 was fetched as a candidate although search never returned it.
+  assert.ok(paths.some((p) => p.startsWith('/tv/77?')));
+  // Row 1 holds tmdb 9, the gate verified tv:1: replaced through the guarded, pin-respecting path.
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].id, 'id1');
+  assert.deepEqual([calls[0].opts.replace, calls[0].opts.respectPin, calls[0].opts.guard], [true, true, true]);
+  assert.equal(calls[0].opts.reason, 'provider-review:single-vs-existing');
+  // Row 2 already holds tv:1: confirmed, no write. Row 3 is an ordinary listing row.
+  assert.equal(calls[1].id, 'id3');
+  assert.equal(calls[1].opts.replace, undefined);
+  assert.deepEqual(resolved, [['id1', 'ai-assigned', 'apply'], ['id2', 'ai-confirmed', 'apply']]);
+  assert.equal(h.runs.find((r) => r.movieId === 'id2').evidence.action, 'confirmed');
+});

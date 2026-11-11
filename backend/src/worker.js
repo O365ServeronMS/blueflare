@@ -81,6 +81,7 @@ import { catalogLock, runCatalogAuditLoop } from './catalogAudit.js';
 import { getAi } from './ai/index.js';
 import { promoteVerifiedMatches } from './tmdbIdentity.js';
 import { refreshSeasonInference } from './tmdbSeasonInferSync.js';
+import { formatProviderIdentityStats, refreshProviderIdClaims, resolveProviderIdentities } from './providerIdentitySync.js';
 import { backfillMdblistRatings, formatMdblistStats, syncMdblistRatings } from './mdblistRatingsSync.js';
 import {
   fetchTmdbRecommendations,
@@ -455,6 +456,28 @@ async function healImageSources() {
   return [...new Set(changed)];
 }
 
+/**
+ * Provider TMDB/IMDb ids (providerIdentitySync.js): refresh the ids stored on provider records from
+ * the list pages, then decide and (in apply, per enabled tier) write each row's identity. Runs inside
+ * syncCycle, so under catalogLock, and before invalidation.
+ */
+async function providerIdentityPass() {
+  if (config.providerTmdbMode === 'off' || stopping) return [];
+  const walk = await refreshProviderIdClaims({
+    providers,
+    normalize: summaryFallback,
+    getCheckpoint: getCrawlCheckpoint,
+    saveCheckpoint: saveCrawlCheckpoint,
+    recordFailure: recordCrawlCheckpointFailure,
+    resetCheckpoint: resetCompletedCheckpoint,
+    totalPages,
+    stopping: () => stopping
+  });
+  const resolved = stopping ? { mode: config.providerTmdbMode, checked: 0, skipped: 0, slugs: [] } : await resolveProviderIdentities();
+  if (walk.pages || resolved.checked) console.log(formatProviderIdentityStats(walk, { assigned: 0, merged: 0, planned: 0, queued: 0, blocked: 0, conflict: 0, imdbFilled: 0, lookups: 0, capped: 0, errors: 0, reasons: {}, ...resolved }));
+  return resolved.slugs;
+}
+
 async function refreshTmdbImages() {
   if (!config.tmdbEnabled || !config.tmdbImageSyncEnabled || !config.tmdbApiKey) return [];
   const candidates = await listTmdbImageCandidates();
@@ -749,12 +772,17 @@ async function syncCycle() {
     console.warn('[worker] tmdb image fallback pass failed', error.message);
     return [];
   });
+  const providerIdSlugs = await providerIdentityPass().catch((error) => {
+    console.warn('[worker] provider identity pass failed', error.message);
+    return [];
+  });
   const mergedSlugs = await reconcileDuplicates().catch((error) => {
     console.warn('[worker] duplicate merge pass failed', error.message);
     return [];
   });
   const changedSlugs = [...new Set([
     ...mergedSlugs,
+    ...providerIdSlugs,
     ...staleSlugs,
     ...headResults.flatMap((result) => result.changedSlugs),
     ...backfillResults.flatMap((result) => result.changedSlugs),

@@ -17,6 +17,7 @@ import {
 import { mergeRecommendationIds, recommendationSource, combineRecommendationRows, RECOMMENDATION_LIMIT } from './recommendations.js';
 import { personSlug } from './people.js';
 import { episodeTotalsCompatible, nguoncSeason, slugsAgree } from './duplicateMerge.js';
+import { typeConflict, upsertIdentityView } from './providerIdentity.js';
 
 async function ensureImageAsset(client, sourceUrl) {
   const normalized = normalizeAllowedImageSourceUrl(sourceUrl);
@@ -47,14 +48,15 @@ function latest(left, right) {
   const b = right ? Date.parse(right) : 0;
   return a >= b ? left : right;
 }
+// The incoming record's full TMDB tuple, or null. NguonC ids only reach here once
+// upsertIdentityView lets them through (PROVIDER_TMDB_MODE=apply with the fill tier).
 function tmdbIdentity(incoming) {
-  if (incoming.provider !== 'kkphim') return null;
   const id = Number(incoming.tmdbId);
   const mediaType = incoming.tmdbMediaType;
   const season = Number(incoming.tmdbSeasonNumber);
   if (!Number.isSafeInteger(id) || id <= 0) return null;
   if (mediaType === 'movie') return { id, mediaType, season: null };
-  if (mediaType === 'tv' && Number.isInteger(season) && season >= 0) {
+  if (mediaType === 'tv' && Number.isInteger(season) && season >= 1) {
     return { id, mediaType, season };
   }
   return null;
@@ -81,25 +83,25 @@ export async function writeTmdbIdentity(client, movieId, identity, source = null
   return result.rows[0];
 }
 
-// The provider path only fills or confirms a TMDB tuple; findIdentity refuses rows whose
-// tuple contradicts the incoming one. Should one still be overwritten, it is logged so
-// it shows up in tmdb_identity_changes like every other identity write.
-async function persistTmdbIdentity(client, movie, incoming, existed) {
+// The sync upsert only fills: an empty row, or the empty season of the same tv id, and only
+// when no other row holds the tuple and the type fits the row. Everything else (another id,
+// another season, a tuple held elsewhere, a pinned row) is providerIdentitySync's to decide,
+// with its rules, tiers, merge guard and log.
+async function fillTmdbIdentity(client, movie, incoming) {
   const identity = tmdbIdentity(incoming);
-  if (!identity) return null;
-  const before = !existed || movie.tmdb_id === null || movie.tmdb_id === undefined ? null
-    : { tmdbId: Number(movie.tmdb_id), mediaType: movie.tmdb_media_type ?? null, season: movie.tmdb_season_number ?? null };
-  const written = await writeTmdbIdentity(client, movie.id, identity);
-  if (before && (before.tmdbId !== identity.id || before.mediaType !== identity.mediaType ||
-    (before.season === null ? null : Number(before.season)) !== identity.season)) {
-    await client.query(
-      'INSERT INTO tmdb_identity_changes (movie_id, kind, source, tmdb_id, media_type, season, reason, evidence, before) ' +
-      "VALUES ($1,'assign','provider',$2,$3,$4,'provider-overwrite',$5::jsonb,$6::jsonb)",
-      [movie.id, identity.id, identity.mediaType, identity.season,
-        JSON.stringify({ provider: incoming.provider, slug: incoming.providerSlug }), JSON.stringify(before)]
-    );
-  }
-  return written;
+  if (!identity || movie.tmdb_identity_pinned === true) return null;
+  const empty = movie.tmdb_id === null || movie.tmdb_id === undefined;
+  const seasonFill = !empty && identity.mediaType === 'tv' && Number(movie.tmdb_id) === identity.id &&
+    movie.tmdb_media_type === 'tv' && (movie.tmdb_season_number === null || movie.tmdb_season_number === undefined);
+  if (!empty && !seasonFill) return null;
+  if (empty && typeConflict(movie, identity.mediaType)) return null;
+  const taken = await client.query(
+    'SELECT 1 FROM movies WHERE id<>$1 AND tmdb_id=$2 AND tmdb_media_type=$3 AND ' +
+    "(tmdb_media_type='movie' OR tmdb_season_number IS NOT DISTINCT FROM $4) LIMIT 1",
+    [movie.id, identity.id, identity.mediaType, identity.season]
+  );
+  if (taken.rowCount) return null;
+  return writeTmdbIdentity(client, movie.id, identity, 'provider');
 }
 
 
@@ -122,7 +124,8 @@ export function mergedMovie(current, incoming) {
     mediaType: choose(current.media_type, incoming.mediaType, preferIncoming),
     displayType: choose(current.display_type, incoming.displayType, preferIncoming),
     year: choose(current.year, incoming.year, preferIncoming),
-    tmdbId: choose(current.tmdb_id, incoming.tmdbId, false),
+    // The TMDB tuple is written only by fillTmdbIdentity / tmdbIdentity.js, never column by column.
+    tmdbId: current.tmdb_id ?? null,
     imdbId: choose(current.imdb_id, incoming.imdbId, false),
     overview: choose(current.overview, incoming.overview, preferIncoming),
     thumbSourceUrl: choose(
@@ -302,7 +305,7 @@ async function insertMovie(client, incoming) {
       incoming.mediaType,
       incoming.displayType,
       incoming.year,
-      incoming.tmdbId,
+      null,
       incoming.imdbId,
       incoming.overview,
       incoming.thumbSourceUrl,
@@ -338,8 +341,21 @@ async function withoutTakenImdb(client, incoming) {
   return owner.rowCount ? { ...incoming, imdbId: null } : incoming;
 }
 
+// Filling imdb_id on an existing row: movies_imdb_identity_idx allows one season-less row per
+// imdb id and type, so a filled id another such row owns is left out (the provider pass reports it).
+async function imdbFillAllowed(client, current, imdbId) {
+  if (!imdbId || imdbId === current.imdb_id) return true;
+  if (current.tmdb_season_number !== null && current.tmdb_season_number !== undefined) return true;
+  const owner = await client.query(
+    'SELECT 1 FROM movies WHERE imdb_id=$1 AND media_type=$2 AND tmdb_season_number IS NULL AND id<>$3 LIMIT 1',
+    [imdbId, current.media_type, current.id]
+  );
+  return owner.rowCount === 0;
+}
+
 async function updateMovie(client, current, incoming) {
   const movie = mergedMovie(current, incoming);
+  if (!(await imdbFillAllowed(client, current, movie.imdbId))) movie.imdbId = current.imdb_id ?? null;
   const thumbAssetId = await ensureImageAsset(client, movie.thumbSourceUrl);
   const posterAssetId = await ensureImageAsset(client, movie.posterSourceUrl);
   const result = await client.query(
@@ -474,26 +490,25 @@ export async function upsertCanonical(incoming, { relocate = false } = {}) {
       }
     }
     incoming = { ...incoming, providerMovieId: reconciled.providerMovieId };
+    // Identity lookups and fills use only the ids this path may trust; the source metadata
+    // written below keeps every id the provider sent, for providerIdentitySync.
+    const lookup = upsertIdentityView(incoming, config);
+    // A record already attached to a row stays there (unless relocating): moving it because its
+    // TMDB tuple names another row left the old row ready with no source. providerIdentitySync
+    // merges the two rows instead, through tmdbIdentity.js (guard, log, alias, undo).
     const sourceMovie = relocate ? null : await findBySource(client, incoming);
-    const strongIdentityMovie = await findStrongIdentity(client, incoming);
-    const identity = tmdbIdentity(incoming);
-    const sourceMatchesIdentity = !sourceMovie || !identity || (
-      Number(sourceMovie.tmdb_id) === identity.id && sourceMovie.tmdb_media_type === identity.mediaType &&
-      Number(sourceMovie.tmdb_season_number) === Number(identity.season)
-    );
-    let movie = strongIdentityMovie || (sourceMatchesIdentity ? sourceMovie : null);
-    if (!movie && (!sourceMovie || sourceMatchesIdentity)) movie = await findIdentity(client, incoming);
+    let movie = sourceMovie;
+    if (!movie) movie = (await findStrongIdentity(client, lookup)) || (await findIdentity(client, lookup));
     const previousFingerprint = movie ? movieFingerprint(movie) : null;
     const previousSourceResult = await client.query(
       "SELECT provider_slug, priority, availability, metadata, streams, provider_updated_at FROM movie_provider_sources WHERE provider=$1 AND provider_movie_id=$2 LIMIT 1",
       [incoming.provider, incoming.providerMovieId]
     );
     const previousSource = previousSourceResult.rows[0] || null;
-    const existed = Boolean(movie);
     movie = movie
-      ? await updateMovie(client, movie, incoming)
-      : await insertMovie(client, await withoutTakenImdb(client, incoming));
-    movie = (await persistTmdbIdentity(client, movie, incoming, existed)) || movie;
+      ? await updateMovie(client, movie, lookup)
+      : await insertMovie(client, await withoutTakenImdb(client, lookup));
+    movie = (await fillTmdbIdentity(client, movie, lookup)) || movie;
 
     await client.query(
       'INSERT INTO movie_provider_sources (' +

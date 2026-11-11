@@ -232,3 +232,43 @@ test('KKPhim: compacts metadata excluding nulls', () => {
   assert.ok(!Object.values(movie.metadata).includes(undefined));
   assert.ok(!Object.values(movie.metadata).includes(''));
 });
+
+// --- Provider TMDB / IMDb identity (NguonC added these fields in 2026-11) ---
+
+test('NguonC: reads the tmdb and imdb blocks of list items and details', () => {
+  const movie = normalizeNguonc({ movie: {
+    id: 'bff5992111ba4c548364f2a68998634b', slug: 'nguoi-me-khac-2026', name: 'Người Mẹ Khác',
+    tmdb: { id: 1400837, type: 'movie', season: null, url: 'https://www.themoviedb.org/movie/1400837' },
+    imdb: { id: 'tt36586020', url: 'https://www.imdb.com/title/tt36586020/' }
+  } });
+  assert.equal(movie.tmdbId, 1400837);
+  assert.equal(movie.tmdbMediaType, 'movie');
+  assert.equal(movie.tmdbSeasonNumber, null);
+  assert.equal(movie.imdbId, 'tt36586020');
+  assert.equal(movie.metadata.tmdb_id, 1400837);
+  assert.equal(movie.metadata.tmdb_type, 'movie');
+  assert.equal(movie.metadata.imdb_id, 'tt36586020');
+  assert.equal('tmdb_season' in movie.metadata, false);
+});
+
+test('NguonC: a tv season is kept, season 0 (Specials) is treated as unknown', () => {
+  const tv = (season) => normalizeNguonc({ movie: { slug: 'x', name: 'X', tmdb: { id: '99', type: 'TV', season } } });
+  assert.equal(tv(3).tmdbSeasonNumber, 3);
+  assert.equal(tv(3).tmdbMediaType, 'tv');
+  assert.equal(tv(3).tmdbId, 99);
+  assert.equal(tv(0).tmdbSeasonNumber, null);
+  assert.equal(tv(0).metadata.tmdb_season, undefined);
+  assert.equal(tv('').tmdbSeasonNumber, null);
+});
+
+test('provider identity: junk ids are dropped, metadata stores the normalized claim', () => {
+  const kk = normalizeKkphim({ movie: { slug: 'y', name: 'Y', tmdb: { id: '0', type: 'serie', season: '2' }, imdb: { id: ' TT0111161 ' } } });
+  assert.equal(kk.tmdbId, null);
+  assert.equal(kk.tmdbMediaType, null);
+  assert.equal(kk.tmdbSeasonNumber, 2);
+  assert.equal(kk.imdbId, 'tt0111161');
+  assert.equal(kk.metadata.imdb_id, 'tt0111161');
+  assert.equal(kk.metadata.tmdb_season, 2);
+  assert.equal(normalizeKkphim({ movie: { slug: 'z', name: 'Z', imdb: { id: 'N/A' } } }).imdbId, null);
+  assert.equal(normalizeNguonc({ movie: { slug: 'z', name: 'Z', imdb: { id: '' }, tmdb: null } }).imdbId, null);
+});

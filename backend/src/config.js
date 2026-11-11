@@ -118,6 +118,16 @@ export const config = Object.freeze({
     ? process.env.TMDB_SEASON_INFER_MODE
     : 'off',
   tmdbSeasonInferBatch: integer('TMDB_SEASON_INFER_BATCH', 100, 1),
+  // TMDB/IMDb ids the providers publish (providerIdentitySync.js): off | dry-run (decide and record only) | apply.
+  providerTmdbMode: ['off', 'dry-run', 'apply'].includes(process.env.PROVIDER_TMDB_MODE) ? process.env.PROVIDER_TMDB_MODE : 'dry-run',
+  // Which writes apply mode may make, rolled out one at a time: fill (empty id/season, imdb), season (rewrite a
+  // stored season of the same id), overwrite (another id), merge (fold into the row already holding the id).
+  providerTmdbTiers: csv('PROVIDER_TMDB_TIERS', 'fill').filter((tier) => ['fill', 'season', 'overwrite', 'merge'].includes(tier)),
+  providerTmdbOverwritePerDay: integer('PROVIDER_TMDB_OVERWRITE_PER_DAY', 300, 0),
+  providerTmdbBatch: integer('PROVIDER_TMDB_BATCH', 2000, 1),
+  providerTmdbLookupsPerCycle: integer('PROVIDER_TMDB_LOOKUPS_PER_CYCLE', 200, 0),
+  providerIdsPagesPerRun: integer('PROVIDER_IDS_PAGES_PER_RUN', 200, 0),
+  providerIdsRewalkDays: integer('PROVIDER_IDS_REWALK_DAYS', 30, 1),
   // Weekly catalog audit (catalogAudit.js, fifth worker loop): off | dry-run (log proposals only) | apply.
   catalogAuditMode: ['off', 'dry-run', 'apply'].includes(process.env.CATALOG_AUDIT_MODE) ? process.env.CATALOG_AUDIT_MODE : 'dry-run',
   // Weekly slot in Vietnam time (UTC+7, no DST): day 0 = Sunday, hour 0-23. A missed slot is caught up at start.

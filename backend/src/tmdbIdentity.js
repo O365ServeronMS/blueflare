@@ -9,8 +9,10 @@
  *                                             favorites, history, aliases, reviews into it and
  *                                             delete it (action 'merged')
  * Every change is logged in tmdb_identity_changes (+ movie_merges for merges) so
- * undoTmdbIdentity can reverse it. Provider ids are never overwritten: a row that already
- * carries another identity is 'blocked'.
+ * undoTmdbIdentity can reverse it. A row that already carries another identity is 'blocked',
+ * unless the caller passes `replace` (provider ids two providers agree on, an AI re-judgement of
+ * a provider disagreement); `respectPin` then still blocks a row a person settled
+ * (tmdb_identity_pinned, set by catalog audit applies and undo; any caller pins with `pin: true`).
  *
  * Request paths never call this; the worker does (and the report/undo scripts).
  */
@@ -106,8 +108,8 @@ export function chooseSurvivor(rows) {
 }
 
 /** Folding an inferred identity into a holder is refused when the two rows plainly differ. */
-export function mergeGuard(target, holder, source) {
-  if (source !== 'inferred') return null;
+export function mergeGuard(target, holder, source, { force = false } = {}) {
+  if (source !== 'inferred' && !force) return null;
   if (target.imdb_id && holder.imdb_id && target.imdb_id !== holder.imdb_id) return 'imdb-differs';
   if (Number.isInteger(target.year) && Number.isInteger(holder.year) && Math.abs(target.year - holder.year) > 1) return 'year-differs';
   // Both titles name a season and they disagree: another page of the same series, whatever tmdb_season_number says.
@@ -126,19 +128,35 @@ async function providersOf(db, ids) {
 }
 
 /** Core planner. `lock` makes the reads FOR UPDATE (inside the apply transaction). */
-async function planWith(db, movieId, input, { source = 'inferred', lock = false } = {}) {
+/**
+ * Options beyond source/lock (all off by default, the existing callers keep their behaviour):
+ *   replace     a row holding another tuple is rewritten instead of blocked; its stored season is
+ *               ignored (the title marker, then input.season, then a one-season show decide)
+ *   guard       run mergeGuard whatever the source (the provider path)
+ *   allowMerge  false: a plan that would merge is blocked as 'merge-disabled'
+ *   respectPin  a pinned row is blocked as 'pinned'
+ */
+async function planWith(db, movieId, input, {
+  source = 'inferred', lock = false, replace = false, guard = false, allowMerge = true, respectPin = false
+} = {}) {
   const identity = validateIdentity(input);
   if (!identity) return { action: 'blocked', reason: 'invalid-identity', season: null };
   const suffix = lock ? ' FOR UPDATE' : '';
   const target = (await db.query('SELECT * FROM movies WHERE id=$1' + suffix, [movieId])).rows[0];
   if (!target) return { action: 'blocked', reason: 'row-missing', season: null };
   const base = { survivorId: target.id, survivorSlug: target.canonical_slug };
-  const resolved = resolveSeason(target, identity.mediaType, input.numberOfSeasons, input.season ?? null);
+  const seasonRow = replace ? { ...target, tmdb_season_number: null } : target;
+  const resolved = resolveSeason(seasonRow, identity.mediaType, input.numberOfSeasons, input.season ?? null);
   const season = resolved.season;
   if (resolved.blocked) return { ...base, action: 'blocked', reason: resolved.blocked, season };
   if (target.catalog_state !== 'ready') return { ...base, action: 'blocked', reason: 'not-ready', season };
+  const held = target.tmdb_id !== null && target.tmdb_id !== undefined;
+  const same = held && Number(target.tmdb_id) === identity.id && target.tmdb_media_type === identity.mediaType &&
+    (target.tmdb_season_number ?? null) === season;
+  if (same) return { ...base, action: 'noop', reason: 'already-assigned', season, target };
+  if (respectPin && target.tmdb_identity_pinned === true) return { ...base, action: 'blocked', reason: 'pinned', season };
 
-  if (target.tmdb_id !== null && target.tmdb_id !== undefined) {
+  if (held && !replace) {
     const same = Number(target.tmdb_id) === identity.id && target.tmdb_media_type === identity.mediaType &&
       (target.tmdb_season_number ?? null) === season;
     return same
@@ -156,8 +174,10 @@ async function planWith(db, movieId, input, { source = 'inferred', lock = false 
 
   const holder = holders[0];
   if (holder.catalog_state !== 'ready') return { ...base, action: 'blocked', reason: 'holder-not-ready', season };
-  const guard = mergeGuard(target, holder, source);
-  if (guard) return { ...base, action: 'blocked', reason: guard, season };
+  const refused = mergeGuard(target, holder, source, { force: guard });
+  if (refused) return { ...base, action: 'blocked', reason: refused, season };
+  if (!allowMerge) return { ...base, action: 'blocked', reason: 'merge-disabled', season, holderId: holder.id, holderSlug: holder.canonical_slug };
+  if (respectPin && holder.tmdb_identity_pinned === true) return { ...base, action: 'blocked', reason: 'holder-pinned', season };
   const providers = await providersOf(db, [target.id, holder.id]);
   const rows = [target, holder].map((row) => ({ ...row, providers: providers.get(row.id) || [] }));
   const { survivor, drops, reason } = chooseSurvivor(rows);
@@ -170,9 +190,10 @@ async function planWith(db, movieId, input, { source = 'inferred', lock = false 
 }
 
 function publicPlan(plan) {
-  const { action, survivorId, survivorSlug, dropId, dropSlug, season, reason } = plan;
+  const { action, survivorId, survivorSlug, dropId, dropSlug, season, reason, holderId, holderSlug } = plan;
   const out = { action, survivorId, survivorSlug, season };
   if (dropId) { out.dropId = dropId; out.dropSlug = dropSlug; }
+  if (holderId) { out.holderId = holderId; out.holderSlug = holderSlug; }
   if (reason) out.reason = reason;
   return out;
 }
@@ -211,6 +232,24 @@ async function logDeclined(kind, movieId, input, season, reason, source, evidenc
 /** Public handle on logDeclined for passes that decide not to assign before reaching the planner. */
 export function recordDeclinedIdentity(movieId, input, reason, { source = 'inferred', evidence = null, kind = 'blocked' } = {}) {
   return logDeclined(kind, movieId, input, null, reason, source, evidence);
+}
+
+/**
+ * Marks rows whose identity a person (or the catalog audit gate) settled: the provider pass never
+ * rewrites them. Best effort on the caller's transaction: before migration 039 the column is
+ * missing and the savepoint keeps the transaction usable.
+ */
+export async function pinRows(client, ids) {
+  const list = [...new Set(ids.filter(Boolean))];
+  if (!list.length) return;
+  await client.query('SAVEPOINT pin_rows');
+  try {
+    await client.query('UPDATE movies SET tmdb_identity_pinned=true WHERE id = ANY($1::uuid[])', [list]);
+    await client.query('RELEASE SAVEPOINT pin_rows');
+  } catch (error) {
+    await client.query('ROLLBACK TO SAVEPOINT pin_rows');
+    if (error?.code !== '42703') throw error;
+  }
 }
 
 async function tableExists(db, name) {
@@ -259,7 +298,7 @@ function fillPlan(survivor, drop, sourcesAfter, identity) {
 }
 
 /** Folds `plan.drop` into `plan.survivor` and gives the survivor the identity. Runs inside the caller's transaction. */
-async function mergeRows(client, plan, { source, evidence }) {
+async function mergeRows(client, plan, { source, evidence, reason = null }) {
   const { survivor, drop, holder, identity, season } = plan;
   const survivorIsHolder = survivor.id === holder.id;
   const q = (sql, params) => client.query(sql, params);
@@ -314,7 +353,7 @@ async function mergeRows(client, plan, { source, evidence }) {
   const identityBefore = pickColumns(survivor, IDENTITY_COLUMNS);
   if (!survivorIsHolder) {
     // The identity (and its verified image state) comes from the row that held it.
-    const heldSource = holder.tmdb_id_source || 'provider';
+    const heldSource = source === 'provider' ? 'provider' : (holder.tmdb_id_source || 'provider');
     await writeTmdbIdentity(client, survivor.id, { id: identity.id, mediaType: identity.mediaType, season }, heldSource);
     if (holder.tmdb_identity_status === 'verified') {
       await setColumns(client, survivor.id, pickColumns(holder, ['tmdb_identity_status', 'tmdb_identity_verified_at',
@@ -328,7 +367,7 @@ async function mergeRows(client, plan, { source, evidence }) {
 
   const changeId = await logChange(client, {
     movieId: survivor.id, kind: 'merge', source, tmdbId: identity.id, mediaType: identity.mediaType, season,
-    reason: plan.reason, evidence, before: identityBefore, mergeId: merge.id,
+    reason: reason ? reason + ';' + plan.reason : plan.reason, evidence, before: identityBefore, mergeId: merge.id,
     meta: {
       dropId: drop.id, dropSlug: drop.canonical_slug, survivorIsHolder, favoritesInserted, historyInserted,
       historyOverwritten, reviewIds, heroMoved, aliasSlugs, aiRuns, changedBefore
@@ -337,15 +376,15 @@ async function mergeRows(client, plan, { source, evidence }) {
   return { changeId, mergeId: merge.id };
 }
 
-async function runApply(movieId, input, { source, evidence }) {
+async function runApply(movieId, input, { source, evidence, reason = null, pin = false, planOptions = {} }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     // Lock every row the unlocked plan touches in id order, then plan again on the locked rows.
-    const preview = await planWith(client, movieId, input, { source });
+    const preview = await planWith(client, movieId, input, { ...planOptions, source });
     const ids = [preview.survivorId, preview.dropId, preview.target?.id, preview.holder?.id].filter(Boolean);
     if (ids.length) await client.query('SELECT id FROM movies WHERE id = ANY($1::uuid[]) ORDER BY id FOR UPDATE', [[...new Set(ids)]]);
-    const plan = await planWith(client, movieId, input, { source, lock: true });
+    const plan = await planWith(client, movieId, input, { ...planOptions, source, lock: true });
     if (plan.action === 'noop' || plan.action === 'blocked') {
       await client.query('ROLLBACK');
       return { plan };
@@ -356,12 +395,14 @@ async function runApply(movieId, input, { source, evidence }) {
       if (hasStaleTmdbScore(plan.target.ratings, plan.identity.mediaType, plan.identity.id)) before.ratings = plan.target.ratings;
       const row = await writeTmdbIdentity(client, movieId, { id: plan.identity.id, mediaType: plan.identity.mediaType, season: plan.season }, source);
       const changeId = await logChange(client, {
-        movieId, kind: 'assign', source, tmdbId: plan.identity.id, mediaType: plan.identity.mediaType, season: plan.season, evidence, before
+        movieId, kind: 'assign', source, tmdbId: plan.identity.id, mediaType: plan.identity.mediaType, season: plan.season, reason, evidence, before
       });
+      if (pin) await pinRows(client, [movieId]);
       await client.query('COMMIT');
       return { plan, changeId, row };
     }
-    const result = await mergeRows(client, plan, { source, evidence });
+    const result = await mergeRows(client, plan, { source, evidence, reason });
+    if (pin) await pinRows(client, [plan.survivorId]);
     await client.query('COMMIT');
     return { plan, ...result };
   } catch (error) {
@@ -377,17 +418,21 @@ async function runApply(movieId, input, { source, evidence }) {
  * mode 'dry-run' plans only and never writes; 'off' does nothing; anything else executes.
  * Never throws for data conflicts: a unique-index race returns action 'conflict'.
  */
-export async function assignTmdbIdentity(movieId, input, { source = 'inferred', evidence = null, mode } = {}) {
+export async function assignTmdbIdentity(movieId, input, {
+  source = 'inferred', evidence = null, mode, reason = null, pin = false,
+  replace = false, guard = false, allowMerge = true, respectPin = false
+} = {}) {
+  const planOptions = { replace, guard, allowMerge, respectPin };
   if (mode === 'off') return { action: 'noop', reason: 'mode-off', survivorId: movieId };
   if (mode === 'dry-run') {
-    const plan = await planWith(pool, movieId, input, { source });
+    const plan = await planWith(pool, movieId, input, { ...planOptions, source });
     const out = publicPlan(plan);
     if (plan.action === 'assign' || plan.action === 'merge') return { ...out, action: 'planned', plan: plan.action };
     return out;
   }
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      const { plan, changeId, mergeId } = await runApply(movieId, input, { source, evidence });
+      const { plan, changeId, mergeId } = await runApply(movieId, input, { source, evidence, reason, pin, planOptions });
       const out = publicPlan(plan);
       if (plan.action === 'noop') return out;
       if (plan.action === 'blocked') {
@@ -412,7 +457,7 @@ export async function assignTmdbIdentity(movieId, input, { source = 'inferred', 
  * 'ineligible' so the match passes pick it up again). Logged as kind 'assign' with the old columns in
  * `before`, so undoTmdbIdentity reverses it. Used by the catalog audit; the gate runs before this.
  */
-export async function rewriteTmdbIdentity(client, movieId, identity, { reason, evidence = null, source = 'inferred' } = {}) {
+export async function rewriteTmdbIdentity(client, movieId, identity, { reason, evidence = null, source = 'inferred', pin = false } = {}) {
   const row = (await client.query('SELECT * FROM movies WHERE id=$1 FOR UPDATE', [movieId])).rows[0];
   if (!row) return { action: 'noop', reason: 'row-missing' };
   const before = pickColumns(row, IDENTITY_COLUMNS);
@@ -432,6 +477,7 @@ export async function rewriteTmdbIdentity(client, movieId, identity, { reason, e
     movieId, kind: 'assign', source, tmdbId: identity?.id ?? null, mediaType: identity?.mediaType ?? null,
     season: identity?.season ?? null, reason, evidence, before
   });
+  if (pin) await pinRows(client, [movieId]);
   return { action: 'assigned', changeId, row: written, before };
 }
 
@@ -576,6 +622,8 @@ export async function undoTmdbIdentity(changeId) {
       if (meta.aliasSlugs?.length) await client.query('UPDATE movie_slug_aliases SET movie_id=$1 WHERE slug = ANY($2::text[])', [restoredId, meta.aliasSlugs]);
     }
     await client.query('UPDATE tmdb_identity_changes SET undone_at=now() WHERE id=$1', [changeId]);
+    // A person reversed this: the provider pass must not write the same identity straight back.
+    await pinRows(client, [row.id, restoredId]);
     for (const id of new Set([row.id, restoredId])) {
       await logChange(client, { movieId: id, kind: 'blocked', source: change.source, tmdbId: change.tmdb_id, mediaType: change.media_type, season: change.season, reason: 'undone' });
     }

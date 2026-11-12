@@ -18,7 +18,7 @@ The repository also owns `backend/`: API, provider sync worker, PostgreSQL, Valk
 
 ## The running stack
 
-Seven compose services. Two of them are *supposed* to sit at `Exited (0)` — that is
+Eight compose services. Two of them are *supposed* to sit at `Exited (0)` — that is
 their designed finished state, not a failure:
 
 | Service | Role |
@@ -29,6 +29,7 @@ their designed finished state, not a failure:
 | `postgres` | canonical metadata, volume `postgres-data` |
 | `valkey` | JSON response cache, `allkeys-lru`, capped |
 | `image-cache-init` | one-shot `mkdir`+`chown` of the image cache dir, then `Exited (0)` |
+| `opencode` | opencode v2 `serve` sidecar for the AI module (`http://opencode:4096`, basic auth `OPENCODE_SERVER_PASSWORD`, no published port); login imported from the stack's `opencode/credentials.json`, kept in volume `opencode-data` |
 | `backup` | scheduled offsite dump; on when the `BACKUP_S3_*` endpoint and keys are set (`BACKUP_ENABLED=false` pauses it); idles (running, no-op) when off |
 
 Host-side container names are pinned to `blueflare-<service>` without Compose's
@@ -74,7 +75,7 @@ Five loops run outside the request path. None of them may be moved into the requ
 `worker`, weekly at `CATALOG_AUDIT_DAY`/`CATALOG_AUDIT_HOUR` Vietnam time (default Sunday 03:00 = Saturday 20:00 UTC; `catalogAudit.js`), with an immediate catch-up when the current slot has no finished run in the current mode (so switching dry-run to apply reruns it) and fewer than 3 failed ones (a run cut off by a restart counts as failed). Never a request path. Goal: one row per TMDB movie or tv season, so more rows can get a TMDB id.
 
 - `catalogAuditExtract.js` loads every ready row with its sources/aliases, flags rows with fixed detector codes (multi-season, season-marker, slug-season, alias-wrong, tmdb-mismatch, type-mismatch, episode-mismatch, year-spread, orphan, dup-same-season, provider-season = a pending provider season review; tmdb-mismatch reads KKPhim sources, and NguonC too with provider-season only when `PROVIDER_TMDB_MODE=apply`, skipping a row whose review the AI match settled) and packs them into groups of at most 10 rows.
-- Proposals: deterministic rules (hide orphans, rename a slug or re-point an alias naming another season) and, for groups needing judgement, the AI module (role `DEDUPE`, borrows MATCH's models/keys unless `MODEL_DEDUPE`/`OPENROUTER_MODEL_DEDUPE` are set, own paid cap `AI_PAID_DAILY_OUTPUT_TOKENS_DEDUPE`). The model only names actions on ids of its group (`set_season`, `move_source`, `merge_rows`, `fix_alias`, `rename_slug`, `clear_tmdb`, `report`).
+- Proposals: deterministic rules (hide orphans, rename a slug or re-point an alias naming another season) and, for groups needing judgement, the AI module (role `DEDUPE`, borrows MATCH's models/keys unless `OPENCODE_MODEL_DEDUPE`/`OPENROUTER_MODEL_DEDUPE` are set, own paid cap `AI_PAID_DAILY_OUTPUT_TOKENS_DEDUPE`). The model only names actions on ids of its group (`set_season`, `move_source`, `merge_rows`, `fix_alias`, `rename_slug`, `clear_tmdb`, `report`).
 - `catalogAuditGate.js` (pure) checks every action against the row's own titles/slug/sources and TMDB `/tv` facts; a refused action refuses the rest of its group's proposal. `report` (e.g. wrong movie/series type) is never applied. Rows are hidden (`catalog_state='unavailable'`), never deleted.
 - `CATALOG_AUDIT_MODE=off|dry-run|apply`, default `dry-run`: dry-run only records. Apply writes through `catalogAuditApply.js` under `catalogLock`, the in-process lock `syncCycle` also holds, re-reading the group first; at most `CATALOG_AUDIT_MAX_ACTIONS` writes a run. TMDB season/merge writes go through `tmdbIdentity.js` (logged in `tmdb_identity_changes`); a moved source is re-ingested with `upsertCanonical(…, {relocate:true})`.
 - Every proposal lands in `catalog_audit_actions` (034, runs in `catalog_audit_runs`); `backend/scripts/catalog-audit-report.mjs` exports a run as CSV, `catalog-audit-undo.mjs <actionId>` reverses one applied action.
@@ -149,7 +150,7 @@ The Cloudflare IP ranges in `lib/account-proxy.ts` are hardcoded; refresh them f
 | `people.js` | cast/director slug + identity |
 | `tmdbReviews.js`, `tmdbReviewsSync.js` | plain-text normalising, score, spoiler flag; worker pass |
 | `reviewSpoiler.js`, `reviewOrder.js` | spoiler detection; display order + cache keys |
-| `ai/` (`index.js`, `config.js`, `client.js`, `util.js`) | the only AI client: roles, env + defaults, primary→OpenRouter fallback, retries, response_format downgrade, quota/paid cap via the ledger, UTC-day helpers (doc `backend/AI.md`) |
+| `ai/` (`index.js`, `config.js`, `client.js`, `util.js`) | the only AI client: roles, env + defaults, opencode→OpenRouter fallback, retries, response_format downgrade, quota/paid cap via the ledger, UTC-day helpers (doc `backend/AI.md`) |
 | `tmdbMatch.js` | cast-verified match |
 | `tmdbMatchAi.js`, `tmdbMatchAiSync.js`, `tmdbMatchAiLoop.js` | AI match: candidates, prompt, two-tier gate; pass engine (`tmdb_match_ai_runs`); fourth worker loop |
 | `catalogAudit.js`, `catalogAuditExtract.js`, `catalogAuditGate.js`, `catalogAuditApply.js` | weekly catalog audit: loop + run + model prompt and `catalogLock`; loader/detectors/groups; pure gate; apply/undo |
@@ -170,6 +171,7 @@ The Cloudflare IP ranges in `lib/account-proxy.ts` are hardcoded; refresh them f
 | `infra/compose.yml` | canonical compose file |
 | `infra/cloudflare/` | rules; the four cache rules are applied with `scripts/cf-apply-cache-rules.sh [--dry-run]` (`CF_API_TOKEN`, a temporary write token the user supplies and revokes; never stored), `cloudflare-auth-ratelimit-rule.json` by hand |
 | `infra/backup/` | backup service image |
+| `infra/opencode/` | opencode sidecar image (pinned npm binary, sha512-checked) + entrypoint that imports `credentials.json` |
 | `infra/scripts/` | `sync-stack.sh`, `apply-env.sh`, `backup-postgres.sh`, `bootstrap-vps.sh` |
 
 The two Caddy site blocks live inline in `bootstrap-vps.sh`, not as separate files.
@@ -201,7 +203,7 @@ The two Caddy site blocks live inline in `bootstrap-vps.sh`, not as separate fil
 
 ### AI calls
 
-- Every model call goes through `backend/src/ai/` (`getAi().chat(role, …)` / `.json(role, …)`, doc `backend/AI.md`); no other file may call an LLM over HTTP, read AI env or implement fallback. Order: primary OpenAI-compatible provider (`LLM_BASE_URL`, `LLM_API_KEY`, `MODEL_<ROLE>` or `MODEL_PRIMARY`/`MODEL_FALLBACK`), then OpenRouter (`OPENROUTER_API_KEY`, `OPENROUTER_MODEL_<ROLE>`), next pair on 401/402/408/429/5xx, network error, timeout or a bad answer. Roles are registered in `src/ai/config.js` (`MATCH`, `DEDUPE`; `modelsFrom` lets a role borrow another's model lists); defaults live only there and `.env.example` mirrors them. Old `OPENROUTER_*` names still work with a deprecation warning.
+- Every model call goes through `backend/src/ai/` (`getAi().chat(role, …)` / `.json(role, …)`, doc `backend/AI.md`); no other file may call an LLM over HTTP, read AI env or implement fallback. Order: the `opencode` sidecar (`OPENCODE_URL`, `OPENCODE_SERVER_PASSWORD`, `OPENCODE_MODEL_<ROLE>` or `OPENCODE_MODEL_PRIMARY`, default `opencode/big-pickle`; text only, `/api/experimental/generate/text`), then OpenRouter (`OPENROUTER_API_KEY`, `OPENROUTER_MODEL_<ROLE>`), next pair on 401/402/408/429/5xx, network error, timeout or a bad answer; a spent opencode free allowance parks it until opencode's reset. The old primary provider (`LLM_BASE_URL`, `LLM_API_KEY`, `MODEL_*`) is removed; those names only warn. Roles are registered in `src/ai/config.js` (`MATCH`, `DEDUPE`; `modelsFrom` lets a role borrow another's model lists); defaults live only there and `.env.example` mirrors them. Old `OPENROUTER_*` names still work with a deprecation warning.
 
 ### Reviews
 
@@ -235,7 +237,7 @@ S3-compatible store and prunes both ends. It is optional: it runs when the
 changing provider is an env change (`BACKUP_S3_*`), not a code change. The full
 rebuild-from-nothing runbook is in `backend/README.md`.
 
-Third-party credentials such as `TMDB_API_KEY`, `LLM_API_KEY`, `OPENROUTER_API_KEY`, and
+Third-party credentials such as `TMDB_API_KEY`, the opencode login (`opencode auth export opencode`), `OPENROUTER_API_KEY`, and
 `MDBLIST_API_KEYS` (legacy `MDBLIST_API_KEY` still read) cannot be regenerated by `infra/scripts/bootstrap-vps.sh`; keep a
 secure copy off the machine.
 

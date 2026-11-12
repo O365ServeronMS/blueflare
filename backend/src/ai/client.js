@@ -9,11 +9,14 @@ import {
  * `json(role, messages, options)`; HTTP, keys, model order, fallback, retries, quota and
  * response_format negotiation all live here.
  *
- * Order of attempts: primary provider x its models, then OpenRouter x its models (see
+ * Order of attempts: the opencode sidecar x its models, then OpenRouter x its models (see
  * config.js roleRoutes); inside a model, keys in order. A pair moves aside on 401/402,
  * 408/429/5xx (after AI_RETRIES tries), network error, timeout, empty answer, broken JSON,
  * schema failure, or an image it cannot read. OpenRouter-only body fields (usage, reasoning)
- * and headers are never sent to the primary provider. Keys travel only in the Authorization
+ * and headers go to OpenRouter only. opencode gets one stateless generation
+ * (`POST /api/experimental/generate/text`, basic auth): the messages are flattened into its single
+ * prompt, JSON is asked for in that prompt, and its answer/error is mapped back onto the
+ * chat-completions shape the loop below reads (see opencodeRequest / opencodeResponse). Keys travel only in the Authorization
  * header: never in a URL, error, attempt or log line.
  */
 
@@ -27,8 +30,9 @@ const JSON_INSTRUCTION = 'Answer with a single valid JSON value only: no markdow
 const MODEL_GONE = /not a valid model|no endpoints|model[^.]{0,40}(not found|does not exist|not exist|unknown)|unknown model|not supported|unsupported model/i;
 const PARAMS_REJECTED = /requested parameters|response_format|json_schema|json_object|structured output/i;
 const IMAGE_REJECTED = /image|vision|multimodal|modalit/i;
-// Token Harbor: the whole free allowance of the key is spent until a stated date, for every model.
-const FREE_ALLOWANCE_DONE = /free_tier_limit_reached|used this period.s free allowance/i;
+// The whole free allowance of the key is spent until a stated date (Token Harbor) or for
+// `retryAfterMs` (opencode: "Free usage limit reached", shared by every free model of the account).
+const FREE_ALLOWANCE_DONE = /free_tier_limit_reached|used this period.s free allowance|free usage limit reached/i;
 const ALLOWANCE_RESET = /starts on (\d{1,2} [A-Za-z]{3,9} \d{4}) at (\d{1,2}:\d{2}) UTC/i;
 const MAX_ALLOWANCE_PARK_MS = 8 * 24 * 60 * 60 * 1000;
 const AUTH_LOCKOUT = /failed authenticat|authentication attempts|invalid (api )?key|api key (is )?(invalid|revoked)/i;
@@ -73,12 +77,58 @@ function reasoningField(reasoning) {
 /** Rough prompt size in tokens from the text parts (images are not counted). */
 const estimateTokens = (messages) => Math.ceil(messages.reduce((sum, m) => sum + contentText(m.content).length, 0) / 3) + 300;
 
+/**
+ * opencode `generate/text` takes one prompt: system text first, then the conversation. A single
+ * user turn goes in as is; several turns are labelled by role.
+ */
+export function flattenMessages(messages) {
+  const system = messages.filter((m) => m.role === 'system').map((m) => contentText(m.content)).filter(Boolean);
+  const turns = messages.filter((m) => m.role !== 'system');
+  const body = turns.length === 1
+    ? [contentText(turns[0].content)]
+    : turns.map((m) => String(m.role).toUpperCase() + ':\n' + contentText(m.content));
+  return [...system, ...body].filter(Boolean).join('\n\n');
+}
+
+/** `opencode/big-pickle` -> { providerID: 'opencode', id: 'big-pickle' }. */
+const opencodeModel = (id) => {
+  const slash = id.indexOf('/');
+  return { providerID: id.slice(0, slash), id: id.slice(slash + 1) };
+};
+
+// opencode ProviderRequestError.reason -> the HTTP status the loop already knows how to handle.
+const OPENCODE_REASON_STATUS = Object.freeze({ authentication: 401, rate_limit: 429, content_filter: 403, invalid_request: 400, overloaded: 503, provider: 502 });
+
+/**
+ * Map an opencode answer onto { status, json, headers } of a chat completion. Success
+ * `{data:{text}}` becomes one choice; ProviderRequestError (HTTP 502) takes the status of its
+ * `reason` and turns `retryAfterMs` into a Retry-After header; other errors keep their status.
+ */
+export function opencodeResponse(status, json) {
+  if (status < 400) {
+    const text = typeof json?.data?.text === 'string' ? json.data.text : null;
+    return { status, json: text == null ? null : { choices: [{ message: { content: text }, finish_reason: 'stop' }] }, headers: null };
+  }
+  let mapped = status;
+  const headers = {};
+  if (json?._tag === 'ProviderRequestError') {
+    mapped = OPENCODE_REASON_STATUS[json.reason] ?? (Number(json.status) >= 400 ? Number(json.status) : 502);
+    const retry = Number(json.retryAfterMs);
+    if (Number.isFinite(retry) && retry > 0) headers['retry-after'] = String(Math.ceil(retry / 1000));
+  }
+  return { status: mapped, json, headers: { get: (name) => headers[String(name).toLowerCase()] ?? null } };
+}
+
 /** Transport for AI_FAKE=1 and tests: JSON calls get `{"fake":true}`, text calls echo the last user message. */
 export function fakeTransport() {
   return async (url, init = {}) => {
     const reply = (status, body) => ({ ok: status < 400, status, headers: { get: () => null }, text: async () => JSON.stringify(body) });
     if (!init.body) return reply(200, { data: [] });
     const body = JSON.parse(init.body);
+    if (typeof body.prompt === 'string') { // opencode generate/text
+      const content = body.prompt.includes(JSON_INSTRUCTION) ? '{"fake":true}' : 'fake: ' + body.prompt.slice(-200);
+      return reply(200, { data: { text: content } });
+    }
     const wantsJson = Boolean(body.response_format) || body.messages.some((m) => m.role === 'system' && contentText(m.content).includes(JSON_INSTRUCTION));
     const user = [...body.messages].reverse().find((m) => m.role === 'user');
     const content = wantsJson ? '{"fake":true}' : 'fake: ' + contentText(user?.content).slice(0, 200);
@@ -196,7 +246,15 @@ export function createAi(options = {}) {
     return body;
   }
 
+  /** opencode body: the chat body's messages (JSON instruction included) flattened into one prompt. */
+  function opencodeRequest(model, chatBody) {
+    return { prompt: flattenMessages(chatBody.messages), model: opencodeModel(model.id) };
+  }
+
   function headersFor(provider, key) {
+    if (provider.kind === 'opencode') {
+      return { 'content-type': 'application/json', authorization: 'Basic ' + Buffer.from('opencode:' + key.value).toString('base64') };
+    }
     const headers = { 'content-type': 'application/json', authorization: 'Bearer ' + key.value };
     if (provider.openrouter) {
       headers['http-referer'] = 'https://phim.bluesia.net';
@@ -251,7 +309,7 @@ export function createAi(options = {}) {
         const usable = [];
         for (const model of route.models) {
           const mid = route.provider.name + '|' + model.id;
-          if (refused.has(mid) || (images && state.noVision.has(mid))) continue;
+          if (refused.has(mid) || (images && (state.noVision.has(mid) || route.provider.kind === 'opencode'))) continue;
           if (paidSpent && !isFree(model.id)) { eligibleAt.push(nextUtcMidnight(t)); continue; }
           for (const key of keysOf(route.provider)) {
             const pid = mid + '|' + key.fingerprint;
@@ -282,9 +340,12 @@ export function createAi(options = {}) {
       const { provider, model, key, mid, pid } = chosen;
       const pair = pairState(pid);
       if (model.rpm) pair.nextAt = t + Math.ceil(60000 / model.rpm) + SPACING_MARGIN_MS;
-      const formatIndex = mode === 'json' ? Math.max(opts.schema ? 0 : 1, state.formats.get(mid) ?? 0) : -1;
+      // opencode has no response_format: JSON is always asked for in the prompt.
+      const formatIndex = mode === 'json' ? (provider.kind === 'opencode' ? FORMATS.length - 1 : Math.max(opts.schema ? 0 : 1, state.formats.get(mid) ?? 0)) : -1;
       const format = formatIndex >= 0 ? FORMATS[formatIndex] : null;
-      const body = requestBody(provider, model, messages, opts, format, opts.schema, maxTokens);
+      const chatBody = requestBody(provider, model, messages, opts, format, opts.schema, maxTokens);
+      const isOpencode = provider.kind === 'opencode';
+      const body = isOpencode ? opencodeRequest(model, chatBody) : chatBody;
       const handle = ledger ? await ledger.begin(ledgerId(key, role), model.id, est, t) : null;
       const started = now();
 
@@ -295,7 +356,7 @@ export function createAi(options = {}) {
       let headers = null;
       let networkReason = null;
       try {
-        const response = await (transport ?? globalThis.fetch)(provider.baseUrl + '/chat/completions', {
+        const response = await (transport ?? globalThis.fetch)(provider.baseUrl + (isOpencode ? '/api/experimental/generate/text' : '/chat/completions'), {
           method: 'POST',
           headers: headersFor(provider, key),
           body: JSON.stringify(body),
@@ -305,8 +366,9 @@ export function createAi(options = {}) {
         headers = response.headers;
         raw = await response.text().catch(() => '');
         try { json = JSON.parse(raw); } catch { /* checked below */ }
+        if (isOpencode) ({ status, json, headers } = opencodeResponse(status, json));
         // A provider failure can come as HTTP 200 with {error:{code,message}}.
-        if (response.ok && json?.error) status = Number(json.error.code) >= 400 ? Number(json.error.code) : 502;
+        else if (response.ok && json?.error) status = Number(json.error.code) >= 400 ? Number(json.error.code) : 502;
       } catch (error) {
         networkReason = error?.name === 'TimeoutError' || error?.name === 'AbortError' ? 'timeout' : 'network error';
       }
@@ -376,10 +438,13 @@ export function createAi(options = {}) {
         reason = 'http 429 (auth lockout)';
         announce(keyState(key), now() + clamp(delayMs ?? cfg.cooldownMs), key.label + ' disabled: too many failed authentications (HTTP 429)');
       } else if (status === 429 && FREE_ALLOWANCE_DONE.test(raw)) {
-        // Retry-After says 1h, but nothing works before the stated reset: park the key until then.
+        // Nothing works before the reset, on any model of this key: park the key until then.
+        // Token Harbor states the date (its Retry-After says 1h); opencode gives retryAfterMs.
         const m = ALLOWANCE_RESET.exec(raw);
         const resetAt = m ? Date.parse(m[1] + ' ' + m[2] + ' UTC') : NaN;
-        const wait = Number.isFinite(resetAt) ? Math.min(Math.max(resetAt - now(), 60000), MAX_ALLOWANCE_PARK_MS) : cfg.cooldownMs;
+        const retryAfter = Number(headers?.get?.('retry-after'));
+        const stated = Number.isFinite(resetAt) ? resetAt - now() : isOpencode && retryAfter > 0 ? retryAfter * 1000 : NaN;
+        const wait = Number.isFinite(stated) ? Math.min(Math.max(stated, 60000), MAX_ALLOWANCE_PARK_MS) : cfg.cooldownMs;
         reason = 'http 429 (free allowance used up)';
         announce(keyState(key), now() + wait, key.label + ' free allowance used up (HTTP 429), parked until ' + new Date(now() + wait).toISOString());
       } else if (status === 429) {

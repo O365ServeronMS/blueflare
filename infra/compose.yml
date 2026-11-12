@@ -209,6 +209,11 @@ services:
         condition: service_healthy
       image-cache-init:
         condition: service_completed_successfully
+      # Started, not healthy, and not required: the AI module falls back to
+      # OpenRouter when opencode is down, so sync never waits for it.
+      opencode:
+        condition: service_started
+        required: false
     volumes:
       # Read-only on purpose: the image prewarmer only needs to see which cache
       # entries already exist. Creating one stays the api service's job, over
@@ -223,6 +228,43 @@ services:
       timeout: 5s
       retries: 3
       start_period: 2m
+    networks:
+      - backend
+
+  opencode:
+    container_name: blueflare-opencode
+    build:
+      context: ${BLUEFLARE_SRC:-/home/ubuntu/blueflare}/infra/opencode
+    restart: unless-stopped
+    # `opencode serve` (v2) for the worker's AI module, reached at http://opencode:4096
+    # with basic auth (user `opencode`, OPENCODE_SERVER_PASSWORD, shared with the
+    # worker through the stack .env). No published port and no env_file: it gets
+    # only its password, never the stack's other secrets. ~350 MB RSS measured.
+    mem_limit: 512m
+    mem_reservation: 128m
+    memswap_limit: 512m
+    cpus: 1.0
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      OPENCODE_SERVER_PASSWORD: ${OPENCODE_SERVER_PASSWORD:-}
+    volumes:
+      # The login lives in this volume (HOME); the entrypoint imports
+      # ./opencode/credentials.json (`opencode auth export opencode`, 0600, uid 1000)
+      # whenever that file changes.
+      - opencode-data:/data
+      - ${OPENCODE_CREDENTIALS_DIR:-./opencode}:/run/opencode:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null -u \"opencode:$$OPENCODE_SERVER_PASSWORD\" http://127.0.0.1:4096/api/info"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     networks:
       - backend
 
@@ -275,3 +317,4 @@ volumes:
     # database (and the backup would then upload empty dumps), so compose refuses.
     name: ${POSTGRES_VOLUME:?POSTGRES_VOLUME must name the existing PostgreSQL volume (docker volume ls)}
   valkey-data:
+  opencode-data:

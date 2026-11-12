@@ -3,9 +3,10 @@ import { parseKeys, parseModels } from './util.js';
 /**
  * The single place where AI settings and their defaults live. `.env.example` mirrors AI_DEFAULTS.
  *
- *   LLM_BASE_URL / LLM_API_KEY   primary OpenAI-compatible provider (empty base URL = OpenRouter only)
+ *   OPENCODE_URL                 first provider: the `opencode serve` sidecar (empty = OpenRouter only)
+ *   OPENCODE_SERVER_PASSWORD     the sidecar's basic-auth password, required with OPENCODE_URL
+ *   OPENCODE_MODEL_<ROLE>        opencode models (`providerID/modelID`) of a role; OPENCODE_MODEL_PRIMARY, then the role default
  *   OPENROUTER_API_KEY           fallback provider (comma list allowed)
- *   MODEL_<ROLE>                 primary models of a role, in order; MODEL_PRIMARY + MODEL_FALLBACK otherwise
  *   OPENROUTER_MODEL_<ROLE>      OpenRouter models of a role; OPENROUTER_MODEL_PRIMARY, then the role default
  *   AI_TIMEOUT_MS[_<ROLE>]       per-request timeout; empty = the role default
  *   AI_MAX_TOKENS                default completion ceiling when a call names none
@@ -40,10 +41,10 @@ const roles = new Map();
 
 /**
  * One line per role. `vision`: the role may send images (models that cannot read them are
- * skipped). `defaultOr`: OpenRouter models when no env names any. Optional `timeoutMs`,
+ * skipped; opencode is never used for them). `defaultOc` / `defaultOr`: opencode / OpenRouter models when no env names any. Optional `timeoutMs`,
  * `maxTokens`, `reasoning` (level when AI_REASONING names none), `paidCap` (daily paid output
  * tokens when AI_PAID_DAILY_OUTPUT_TOKENS_<ROLE> is empty), `ledgerScope` (quota counters; defaults to the lower-case name), `modelsFrom`
- * (another role whose MODEL_/OPENROUTER_MODEL_ lists and default this role uses when its own
+ * (another role whose OPENCODE_MODEL_/OPENROUTER_MODEL_ lists and defaults this role uses when its own
  * env names none; the paid cap and ledger scope stay this role's own).
  */
 export function registerRole(name, spec = {}) {
@@ -52,6 +53,7 @@ export function registerRole(name, spec = {}) {
   const role = Object.freeze({
     name: key,
     vision: Boolean(spec.vision),
+    defaultOc: String(spec.defaultOc ?? ''),
     defaultOr: String(spec.defaultOr ?? ''),
     timeoutMs: Number(spec.timeoutMs) > 0 ? Number(spec.timeoutMs) : null,
     maxTokens: Number(spec.maxTokens) > 0 ? Number(spec.maxTokens) : null,
@@ -73,7 +75,7 @@ export function getRole(name) {
 export const roleNames = () => [...roles.keys()];
 
 // Each role has its own paid cap: DEDUPE borrows MATCH's (partly paid) models, so it must not run uncapped.
-registerRole('MATCH', { defaultOr: 'openrouter/free', timeoutMs: 180000, reasoning: 'medium', paidCap: 1_000_000, ledgerScope: 'tmdb-match' });
+registerRole('MATCH', { defaultOc: 'opencode/big-pickle', defaultOr: 'openrouter/free', timeoutMs: 180000, reasoning: 'medium', paidCap: 1_000_000, ledgerScope: 'tmdb-match' });
 registerRole('DEDUPE', { modelsFrom: 'MATCH', timeoutMs: 180000, reasoning: 'medium', paidCap: 1_000_000, ledgerScope: 'catalog-audit' });
 
 // ---- env --------------------------------------------------------------------------------
@@ -94,7 +96,9 @@ const FOLDED_ENV = Object.freeze({
   TMDB_MATCH_AI_TRANSIENT_PARK_MAX_MS: 'transientParkMaxMs'
 });
 
-const UNUSED_ENV = Object.freeze(['TMDB_MATCH_AI_RESERVE_PCT']);
+// The OpenAI-compatible primary provider (LLM_BASE_URL) was removed when opencode took its place.
+const UNUSED_ENV = Object.freeze(['TMDB_MATCH_AI_RESERVE_PCT', 'LLM_BASE_URL', 'LLM_API_KEY', 'MODEL_PRIMARY', 'MODEL_FALLBACK']);
+const UNUSED_ENV_PATTERN = /^MODEL_[A-Z][A-Z0-9_]*$/; // MODEL_<ROLE>: now OPENCODE_MODEL_<ROLE> / OPENROUTER_MODEL_<ROLE>
 
 const text = (value) => String(value ?? '').trim();
 
@@ -114,7 +118,7 @@ function positiveInt(view, name, fallback, warn, minimum = 1) {
 export function readAiConfig(env = process.env, options = {}) {
   const warn = options.warn ?? ((message) => console.warn(message));
   const view = {};
-  for (const [name, value] of Object.entries(env)) if (/^(LLM_|MODEL_|OPENROUTER_|AI_)/.test(name)) view[name] = value;
+  for (const [name, value] of Object.entries(env)) if (/^(OPENCODE_|OPENROUTER_|AI_)/.test(name)) view[name] = value;
   const deprecated = [];
   for (const [oldName, newName] of Object.entries(RENAMED_ENV)) {
     if (!text(env[oldName])) continue;
@@ -132,21 +136,23 @@ export function readAiConfig(env = process.env, options = {}) {
     folded[field] = text(env[oldName]);
     warn('[ai] ' + oldName + ' is deprecated (now a built-in default); its value is still used, remove it to use the default');
   }
-  for (const name of UNUSED_ENV) {
+  const unused = [...new Set([...UNUSED_ENV, ...Object.keys(env).filter((name) => UNUSED_ENV_PATTERN.test(name))])];
+  for (const name of unused) {
     if (!text(env[name])) continue;
     deprecated.push(name);
     warn('[ai] ' + name + ' is no longer read; remove it');
   }
 
-  let primary = null;
-  const baseUrl = text(view.LLM_BASE_URL).replace(/\/+$/, '');
-  if (baseUrl) {
+  let opencode = null;
+  const opencodeUrl = text(view.OPENCODE_URL).replace(/\/+$/, '');
+  if (opencodeUrl) {
     let url;
-    try { url = new URL(baseUrl); } catch { throw new AiConfigError('LLM_BASE_URL is not a valid URL'); }
-    if (!/^https?:$/.test(url.protocol)) throw new AiConfigError('LLM_BASE_URL must be http(s)');
-    const keys = parseKeys(view.LLM_API_KEY);
-    if (!keys.length) throw new AiConfigError('LLM_API_KEY is required when LLM_BASE_URL is set');
-    primary = { name: url.hostname, baseUrl, keys, openrouter: false };
+    try { url = new URL(opencodeUrl); } catch { throw new AiConfigError('OPENCODE_URL is not a valid URL'); }
+    if (!/^https?:$/.test(url.protocol)) throw new AiConfigError('OPENCODE_URL must be http(s)');
+    const password = text(view.OPENCODE_SERVER_PASSWORD);
+    if (!password) throw new AiConfigError('OPENCODE_SERVER_PASSWORD is required when OPENCODE_URL is set');
+    // The password plays the key: one "key", so parks and the quota ledger work as for any provider.
+    opencode = { name: 'opencode', kind: 'opencode', baseUrl: opencodeUrl, keys: [password], openrouter: false };
   }
   const openrouterBaseUrl = text(folded.openrouterBaseUrl || OPENROUTER_BASE_URL).replace(/\/+$/, '');
   const openrouter = { name: 'openrouter', baseUrl: openrouterBaseUrl, keys: parseKeys(view.OPENROUTER_API_KEY), openrouter: true };
@@ -156,7 +162,7 @@ export function readAiConfig(env = process.env, options = {}) {
   const parkMaxMs = Number(folded.transientParkMaxMs);
   return Object.freeze({
     view: Object.freeze(view),
-    primary,
+    opencode,
     openrouter,
     timeoutMs: positiveInt(view, 'AI_TIMEOUT_MS', null, warn, 1000),
     maxTokens: positiveInt(view, 'AI_MAX_TOKENS', AI_DEFAULTS.maxTokens, warn),
@@ -171,25 +177,24 @@ export function readAiConfig(env = process.env, options = {}) {
 
 /**
  * Where a role's calls go, in order: `[{ provider, models }]`, routes without keys or models
- * left out. With a primary provider: primary x MODEL_<ROLE> (or MODEL_PRIMARY + MODEL_FALLBACK),
- * then OpenRouter x OPENROUTER_MODEL_<ROLE>. Without one: OpenRouter x MODEL_<ROLE>, falling back
- * to the OpenRouter list. A role with `modelsFrom` reads the donor role's lists where its own are empty.
+ * left out. opencode x OPENCODE_MODEL_<ROLE> (else OPENCODE_MODEL_PRIMARY, else the role's
+ * `defaultOc`), then OpenRouter x OPENROUTER_MODEL_<ROLE> (else OPENROUTER_MODEL_PRIMARY, else
+ * `defaultOr`). A role with `modelsFrom` reads the donor role's lists and defaults where its own
+ * are empty. A vision role gets no opencode route: its generate endpoint takes text only.
  */
 export function roleRoutes(cfg, roleName) {
   const role = getRole(roleName);
   const donor = role.modelsFrom ? getRole(role.modelsFrom) : null;
   const v = cfg.view;
   const named = (prefix) => text(v[prefix + role.name]) || (donor ? text(v[prefix + donor.name]) : '');
+  const ocModels = named('OPENCODE_MODEL_') || text(v.OPENCODE_MODEL_PRIMARY) || role.defaultOc || donor?.defaultOc || '';
   const orModels = named('OPENROUTER_MODEL_') || text(v.OPENROUTER_MODEL_PRIMARY) || role.defaultOr || donor?.defaultOr || '';
   const routes = [];
-  if (cfg.primary) {
-    const own = named('MODEL_');
-    const list = own || [text(v.MODEL_PRIMARY), text(v.MODEL_FALLBACK)].filter(Boolean).join(',');
-    routes.push({ provider: cfg.primary, models: parseModels(list, { freeRpm: 0 }) });
-    routes.push({ provider: cfg.openrouter, models: parseModels(orModels) });
-  } else {
-    routes.push({ provider: cfg.openrouter, models: parseModels(named('MODEL_') || orModels) });
+  if (cfg.opencode && !role.vision) {
+    // `providerID/modelID`; anything without a provider part is refused (opencode needs both).
+    routes.push({ provider: cfg.opencode, models: parseModels(ocModels, { freeRpm: 0 }).filter((m) => /^[^/\s]+\/\S+$/.test(m.id)) });
   }
+  routes.push({ provider: cfg.openrouter, models: parseModels(orModels) });
   return routes.filter((route) => route.provider.keys.length && route.models.length);
 }
 

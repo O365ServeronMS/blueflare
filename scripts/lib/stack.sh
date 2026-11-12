@@ -9,7 +9,7 @@ STACK_DIR=${BLUEFLARE_STACK_DIR:-/opt/stacks/blueflare}
 # a deploy or rollback passes its health gate, so it always names healthy code.
 STATE_FILE=$STACK_DIR/.last-deploy
 # Services with a build: section; the others run pinned upstream images.
-BUILT_SERVICES=(frontend api worker backup)
+BUILT_SERVICES=(frontend api worker backup opencode)
 
 log() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 die() { printf 'ABORT: %s\n' "$*" >&2; exit 1; }

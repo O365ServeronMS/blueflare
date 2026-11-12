@@ -6,8 +6,13 @@ export { utcDay, nextUtcMidnight };
 const FREE_RPM = 20; // OpenRouter free tier: ~20 requests/minute per account
 const DAILY_RETRY_DELAY_MS = 10 * 60 * 1000;
 
-/** `:free` / `-free` variants (OpenRouter, OrcaRouter) and OpenRouter's free router `openrouter/free`, which picks a free model per request. */
-export const isFree = (id) => /[:-]free$/.test(id) || id === 'openrouter/free';
+/**
+ * Free models: `:free` / `-free` variants (OpenRouter, opencode), OpenRouter's free router
+ * `openrouter/free`, and opencode's free `big-pickle`, whose id carries no suffix. Free models
+ * are outside the paid output cap (opencode reports no token usage, so it cannot count them).
+ */
+const FREE_IDS = new Set(['openrouter/free', 'opencode/big-pickle']);
+export const isFree = (id) => /[:-]free$/.test(id) || FREE_IDS.has(id);
 
 /** Key list from a comma string (or array): trimmed, empties dropped, deduped, order kept. */
 export function parseKeys(value) {

@@ -32,6 +32,11 @@ done
 for f in "$SRC_DIR"/infra/cloudflare/*.json; do
   copy "$f" "$STACK_DIR/deploy/$(basename "$f")" 644
 done
+# The opencode sidecar mounts this read-only for credentials.json. Created here so
+# it is ours, not a root-owned directory Docker makes up for a missing bind mount.
+if [[ ! -d "$STACK_DIR/opencode" ]]; then
+  if [[ "$DRY" == "--dry-run" ]]; then echo "WOULD CREATE: $STACK_DIR/opencode/"; else install -d -m 700 "$STACK_DIR/opencode"; echo "created: $STACK_DIR/opencode/"; fi
+fi
 
 echo
 echo "Chưa áp dụng gì vào container. Tiếp theo, tại $STACK_DIR:"

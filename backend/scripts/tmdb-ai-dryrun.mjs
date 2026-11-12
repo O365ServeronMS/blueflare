@@ -47,7 +47,7 @@ if (args.includes('--no-ai')) {
   // One entry per provider+model so a 503 ("high demand") on the best model falls through to the next one.
   const ai = getAi();
   const rotations = ai.modelsFor('MATCH').map(({ provider, model }) => ({ model: provider + '/' + model, ai, only: { provider, model } }));
-  assert.ok(rotations.length, 'no AI route for MATCH: set LLM_BASE_URL+LLM_API_KEY or OPENROUTER_API_KEY');
+  assert.ok(rotations.length, 'no AI route for MATCH: set OPENCODE_URL+OPENCODE_SERVER_PASSWORD or OPENROUTER_API_KEY');
   const cache = await jsonlCache(OUT + '/ai-rank-cache.jsonl');
   const ranked = await rankAll(evidence, rotations, { batch: config.tmdbMatchAiBatchMax, cache, log, onProgress: (d, n) => log(`rank ${d}/${n}`) });
   choices = ranked.choices;

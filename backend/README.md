@@ -237,13 +237,13 @@ Reviews are re-fetchable, so they are not irreplaceable state.
 ### AI module
 
 `src/ai/` is the only code that calls a model; the call API, roles, routing, fallback
-rules and the full env table are in [`AI.md`](AI.md). In short: a primary
-OpenAI-compatible provider (`LLM_BASE_URL`, `LLM_API_KEY`, `MODEL_<ROLE>` or
-`MODEL_PRIMARY`/`MODEL_FALLBACK`) is tried first, then OpenRouter
+rules and the full env table are in [`AI.md`](AI.md). In short: the `opencode` compose
+sidecar (`OPENCODE_URL`, `OPENCODE_SERVER_PASSWORD`, `OPENCODE_MODEL_<ROLE>`, default
+`opencode/big-pickle`) is tried first, then OpenRouter
 (`OPENROUTER_API_KEY`, `OPENROUTER_MODEL_<ROLE>`), moving on at a 401/402/408/429/5xx,
 network error, timeout or bad answer. Roles: `MATCH` (TMDB AI match) and
-`DEDUPE` (catalog audit). The worker reads the AI env at start; `LLM_BASE_URL` without
-`LLM_API_KEY` stops it with a clear error, and old variable names log a deprecation
+`DEDUPE` (catalog audit). The worker reads the AI env at start; `OPENCODE_URL` without
+`OPENCODE_SERVER_PASSWORD` stops it with a clear error, and old variable names log a deprecation
 warning.
 
 - Keys: comma lists, trimmed and deduped. Logs name keys only as

@@ -63,10 +63,18 @@ if (( ${#services[@]} == 0 )); then
     services+=(api worker)
   fi
   if grep -q '^infra/backup/' <<<"$changed"; then services+=(backup); fi
+  if grep -q '^infra/opencode/' <<<"$changed"; then services+=(opencode); fi
 fi
-mapfile -t services < <(printf '%s\n' ${services[@]+"${services[@]}"} | awk 'NF && !seen[$0]++')
 compose_changed=0
 diff -q infra/compose.yml "$STACK_DIR/compose.yml" >/dev/null 2>&1 || compose_changed=1
+# `compose up --no-build` below cannot start a service whose image was never built
+# (a service new in this compose.yml), so build those too.
+if (( compose_changed )); then
+  for s in "${BUILT_SERVICES[@]}"; do
+    docker image inspect "blueflare-$s:latest" >/dev/null 2>&1 || services+=("$s")
+  done
+fi
+mapfile -t services < <(printf '%s\n' ${services[@]+"${services[@]}"} | awk 'NF && !seen[$0]++')
 new_migrations=$(grep '^backend/migrations/' <<<"$changed" || true)
 
 log "deploy ${prev_rev:0:7}${prev_rev:+..}${rev:0:7}  services: ${services[*]:-none}  compose.yml changed: $compose_changed"
@@ -152,7 +160,7 @@ check=(${services[@]+"${services[@]}"})
 if (( compose_changed )); then
   log "compose.yml changed: reconciling every service"
   compose up -d --no-build
-  check=(postgres valkey api worker frontend backup)
+  check=(postgres valkey api worker frontend backup opencode)
 fi
 if (( ${#services[@]} )); then recreate "${services[@]}"; fi
 

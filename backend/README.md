@@ -266,7 +266,7 @@ warning.
 
 For ready titles with no `tmdb_id`, and for pending provider reviews (`providers-disagree`,
 `single-vs-existing`, `type-mismatch`; these may already hold an id, and the provider ids join
-the candidates), the pass fetches real TMDB candidates
+the candidates; listed only when `PROVIDER_TMDB_MODE=apply`, at most half of each batch), the pass fetches real TMDB candidates
 (`tmdbMatchAi.js`), has a model rank them (AI module, role `MATCH`), and lets an independent gate
 decide. The model never supplies an id, only picks among fetched candidates. It
 runs only with `TMDB_MATCH_AI_MODE` other than `off` (default `off`), a usable `MATCH`
@@ -427,21 +427,23 @@ null), `imdb_id`). The worker pass `providerIdentitySync.js` (overview in `CLAUD
 them into row identities:
 
 - **List walk**, lane `provider-ids` in `crawl_checkpoints`: `PROVIDER_IDS_PAGES_PER_RUN`
-  pages per provider per cycle (NguonC ~3,400 pages, KKPhim ~1,300), refreshing only the
+  pages per provider per cycle (default 30, so ~115 cycles or ~1 day for NguonC's ~3,400 pages;
+  KKPhim ~1,300 at 1 request/s keeps each cycle's walk near 30 s), refreshing only the
   identity keys of `movie_provider_sources.metadata` (never `updated_at`). A finished walk
   restarts after `PROVIDER_IDS_REWALK_DAYS`; delete the checkpoint rows to restart it now.
 - **Resolve**: `PROVIDER_TMDB_BATCH` ready rows per cycle in id order. Rules
   (`providerIdentity.js`): two providers agreeing win; one provider fills an empty row;
   disagreements, a single provider against a held id and a type contradiction are queued for
   the AI match (provider ids join its candidates); season disagreements are queued for the
-  catalog audit (`provider-season`) or the monthly season batch; a stored season is rewritten
+  catalog audit (`provider-season`, and NguonC `tmdb-mismatch`, both only once the pass applies) or the monthly season batch; a stored season is rewritten
   only on two agreeing signals; a provider null season never clears one.
 - **Tiers** (`PROVIDER_TMDB_MODE=apply` + `PROVIDER_TMDB_TIERS`): `fill` (empty row/season,
   empty imdb_id), `season` (rewrite a stored season), `overwrite` (replace another id),
-  `merge` (fold into the row already holding the id). Season and overwrite together are capped
-  by `PROVIDER_TMDB_OVERWRITE_PER_DAY`. A season change resets the row's TMDB artwork like any
+  `merge` (fold into the row already holding the id). Season and overwrite writes plus every merge are capped
+  together by `PROVIDER_TMDB_OVERWRITE_PER_DAY`. A season change resets the row's TMDB artwork like any
   identity change. Writes are `source='provider'` rows of `tmdb_identity_changes`, undone with
-  `scripts/tmdb-identity-undo.mjs`; an undo pins the row (`tmdb_identity_pinned`).
+  `scripts/tmdb-identity-undo.mjs`; an undo pins the row (`tmdb_identity_pinned`; migration 040 back-fills the pin for earlier
+  catalog audit applies and undos).
 - **Review**: `provider_identity_reviews` holds one decision per row (status
   pending/planned/done/blocked, outcome `would-assign`, `would-merge:<slug>`, `assigned`,
   `imdb-conflict` …); an unchanged fingerprint (claims + row tuple + pin + mode/tiers) is not

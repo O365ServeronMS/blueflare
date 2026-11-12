@@ -348,3 +348,58 @@ dbTest('merge drops a stale self-fetched score on the survivor instead of re-wri
   assert.equal(survivor.ratings.tmdb_src, undefined);
   assert.equal(survivor.ratings.imdb, 7);
 });
+
+dbTest('provider options: replace ignores the stored season, respectPin, holder-pinned before merge-disabled, pin on apply and undo', async () => {
+  await reset();
+  const opts = { source: 'provider', mode: 'dry-run', replace: true, guard: true, respectPin: true };
+  // replace: a stored season 3 is ignored; the title marker (Phần 2) decides.
+  const series = await movie({ media_type: 'series', title: 'Show (Phần 2)', slug: 'show-phan-2', tmdb_id: 500, tmdb_media_type: 'tv', tmdb_season_number: 3 });
+  const planned = await identity.assignTmdbIdentity(series.id, { tmdbId: 501, mediaType: 'tv' }, opts);
+  assert.deepEqual([planned.action, planned.plan], ['planned', 'assign']);
+  assert.equal((await identity.planTmdbIdentity(series.id, { tmdbId: 501, mediaType: 'tv' }, { replace: true })).season, 2);
+  // Without replace the held tuple blocks.
+  assert.equal((await identity.assignTmdbIdentity(series.id, { tmdbId: 501, mediaType: 'tv' }, { mode: 'dry-run' })).reason, 'row-has-other-identity');
+  // respectPin: a pinned row is refused.
+  await pool.query('UPDATE movies SET tmdb_identity_pinned=true WHERE id=$1', [series.id]);
+  assert.equal((await identity.assignTmdbIdentity(series.id, { tmdbId: 501, mediaType: 'tv' }, opts)).reason, 'pinned');
+
+  // A pinned holder is reported as holder-pinned even when merging is disabled (not would-merge).
+  const holder = await movie({ slug: 'h', tmdb_id: 600, tmdb_media_type: 'movie', tmdb_identity_pinned: true });
+  const target = await movie({ slug: 't' });
+  const refused = await identity.assignTmdbIdentity(target.id, { tmdbId: 600, mediaType: 'movie' }, { ...opts, allowMerge: false });
+  assert.equal(refused.reason, 'holder-pinned');
+  await pool.query('UPDATE movies SET tmdb_identity_pinned=NULL WHERE id=$1', [holder.id]);
+  const waiting = await identity.assignTmdbIdentity(target.id, { tmdbId: 600, mediaType: 'movie' }, { ...opts, allowMerge: false });
+  assert.deepEqual([waiting.reason, waiting.holderSlug], ['merge-disabled', 'h']);
+
+  // pin: true pins the written row; undo pins it as well.
+  const free = await movie({ slug: 'free' });
+  const written = await identity.assignTmdbIdentity(free.id, { tmdbId: 700, mediaType: 'movie' }, { mode: 'apply', pin: true });
+  assert.equal(written.action, 'assigned');
+  assert.equal((await one('SELECT tmdb_identity_pinned p FROM movies WHERE id=$1', [free.id])).p, true);
+  const loose = await movie({ slug: 'loose' });
+  const change = await identity.assignTmdbIdentity(loose.id, { tmdbId: 701, mediaType: 'movie' }, { mode: 'apply' });
+  assert.equal((await one('SELECT tmdb_identity_pinned p FROM movies WHERE id=$1', [loose.id])).p, null);
+  assert.equal((await identity.undoTmdbIdentity(change.changeId)).action, 'undone');
+  assert.equal((await one('SELECT tmdb_identity_pinned p FROM movies WHERE id=$1', [loose.id])).p, true);
+});
+
+dbTest('migration 040 pins rows settled by the catalog audit or an undo, and nothing else', async () => {
+  await reset();
+  const { readFile } = await import('node:fs/promises');
+  const sql = await readFile(new URL('../migrations/040_backfill_identity_pins.sql', import.meta.url), 'utf8');
+  const audited = await movie({ slug: 'audited' });
+  const restored = await movie({ slug: 'restored' });
+  const undone = await movie({ slug: 'undone' });
+  const plain = await movie({ slug: 'plain' });
+  const log = (id, reason, extra = '') => pool.query(
+    `INSERT INTO tmdb_identity_changes (movie_id, kind, source, tmdb_id, media_type, reason${extra ? ', undone_at' : ''}) VALUES ($1, 'assign', 'inferred', 1, 'movie', $2${extra ? ', now()' : ''})`,
+    [id, reason]);
+  await log(audited.id, 'catalog-audit:set_season');
+  await log(restored.id, 'undone');
+  await log(undone.id, null, 'undone');
+  await log(plain.id, 'provider:providers-agree');
+  await pool.query(sql);
+  const pins = (await pool.query("SELECT canonical_slug, tmdb_identity_pinned p FROM movies WHERE canonical_slug IN ('audited','restored','undone','plain') ORDER BY 1")).rows;
+  assert.deepEqual(pins.map((r) => [r.canonical_slug, r.p]), [['audited', true], ['plain', null], ['restored', true], ['undone', true]]);
+});

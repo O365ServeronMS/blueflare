@@ -45,12 +45,17 @@ export function identityMetaOf(normalized) {
 /**
  * Replace the identity keys of stored source metadata by provider slug. Only rows whose metadata
  * actually changes are written; updated_at is left alone (it drives the stale-source queue).
+ * A list item without a season keeps the stored season of the same tmdb id (detail records carry
+ * it, list items sometimes do not), so the value does not flip between detail and list.
  */
 export async function updateSourceIdentityClaims(provider, entries, { db = pool } = {}) {
   if (!entries.length) return 0;
   const result = await db.query(
     'WITH v AS (SELECT * FROM jsonb_to_recordset($2::jsonb) AS x(slug text, meta jsonb)), ' +
-    'n AS (SELECT s.id, (COALESCE(s.metadata, \'{}\'::jsonb) - $3::text[]) || v.meta AS next, s.metadata AS prev ' +
+    'n AS (SELECT s.id, (COALESCE(s.metadata, \'{}\'::jsonb) - $3::text[]) || v.meta || ' +
+    "  CASE WHEN NOT v.meta ? 'tmdb_season' AND s.metadata ? 'tmdb_season' AND s.metadata->'tmdb_id' = v.meta->'tmdb_id' " +
+    "    AND s.metadata->'tmdb_type' IS NOT DISTINCT FROM v.meta->'tmdb_type' " +
+    "  THEN jsonb_build_object('tmdb_season', s.metadata->'tmdb_season') ELSE '{}'::jsonb END AS next, s.metadata AS prev " +
     '  FROM movie_provider_sources s JOIN v ON s.provider=$1 AND s.provider_slug=v.slug) ' +
     'UPDATE movie_provider_sources s SET metadata=n.next FROM n WHERE s.id=n.id AND n.next IS DISTINCT FROM n.prev',
     [provider, JSON.stringify(entries), IDENTITY_KEYS]
@@ -131,17 +136,24 @@ export async function saveProviderReview(entry, { db = pool } = {}) {
     "VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,now(),CASE WHEN $6='done' THEN now() END) " +
     'ON CONFLICT (movie_id) DO UPDATE SET claims_key=EXCLUDED.claims_key, action=EXCLUDED.action, reason=EXCLUDED.reason, ' +
     'tier=EXCLUDED.tier, status=EXCLUDED.status, outcome=EXCLUDED.outcome, candidates=EXCLUDED.candidates, ' +
-    'claims=EXCLUDED.claims, decided_at=now(), resolved_at=EXCLUDED.resolved_at',
+    // decided_at only moves when the decision itself changes: a new fingerprint (tiers, mode) with
+    // the same queued question must not reopen a review the AI match already ranked.
+    'claims=EXCLUDED.claims, resolved_at=EXCLUDED.resolved_at, decided_at=CASE WHEN ' +
+    'provider_identity_reviews.status=EXCLUDED.status AND provider_identity_reviews.action=EXCLUDED.action ' +
+    'AND provider_identity_reviews.reason IS NOT DISTINCT FROM EXCLUDED.reason ' +
+    'AND provider_identity_reviews.candidates IS NOT DISTINCT FROM EXCLUDED.candidates ' +
+    'THEN provider_identity_reviews.decided_at ELSE now() END',
     [entry.movieId, entry.key, entry.action, entry.reason ?? null, entry.tier ?? null, entry.status, entry.outcome ?? null,
       JSON.stringify(entry.candidates ?? null), JSON.stringify(entry.claims ?? null)]
   );
 }
 
-/** Season and overwrite writes the provider pass made today (UTC), for the daily cap. */
+/** Season/overwrite writes and merges (any tier) the provider pass made today (UTC), for the daily cap. */
 export async function countProviderOverwritesToday({ db = pool } = {}) {
   const result = await db.query(
-    "SELECT count(*)::int AS n FROM tmdb_identity_changes WHERE source='provider' AND kind IN ('assign','merge') " +
-    "AND evidence->>'pass'=$1 AND evidence->>'tier' IN ('season','overwrite') AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'",
+    "SELECT count(*)::int AS n FROM tmdb_identity_changes WHERE source='provider' AND evidence->>'pass'=$1 " +
+    "AND (kind='merge' OR (kind='assign' AND evidence->>'tier' IN ('season','overwrite'))) " +
+    "AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'",
     [PASS]
   );
   return result.rows[0]?.n ?? 0;
@@ -293,6 +305,9 @@ export async function resolveProviderIdentities(deps = {}) {
       const capped = tier === 'season' || tier === 'overwrite';
       const enabled = tierEnabled(settings, tier);
       const overCap = apply && enabled && capped && overwrites >= settings.providerTmdbOverwritePerDay;
+      // A merge (any tier) deletes a row: it shares the daily cap with season/overwrite writes.
+      const mergeOn = tierEnabled(settings, 'merge');
+      const mergeCapped = apply && enabled && mergeOn && overwrites >= settings.providerTmdbOverwritePerDay;
       if (overCap) {
         stats.capped += 1;
         bump('daily-cap');
@@ -304,12 +319,17 @@ export async function resolveProviderIdentities(deps = {}) {
       }, {
         source: 'provider', evidence, mode: apply && enabled ? 'apply' : 'dry-run', reason: 'provider:' + decision.reason,
         replace: row.tmdb_id !== null && row.tmdb_id !== undefined, guard: true, respectPin: true,
-        allowMerge: tierEnabled(settings, 'merge')
+        allowMerge: mergeOn && !mergeCapped
       }).catch((error) => ({ action: 'error', reason: error.message }));
+      if (mergeCapped && result.reason === 'merge-disabled') {
+        stats.capped += 1;
+        bump('daily-cap');
+        continue; // the merge waits for tomorrow's cap, no fingerprint
+      }
       const base = { ...review, action: 'assign', reason: decision.reason, tier, candidates: decision.candidates ?? null };
       if (result.action === 'assigned' || result.action === 'merged') {
         stats[result.action] += 1;
-        if (capped) overwrites += 1;
+        if (capped || result.action === 'merged') overwrites += 1;
         if (result.survivorSlug) slugs.add(result.survivorSlug);
         if (result.dropSlug) slugs.add(result.dropSlug);
         await save({ ...base, status: 'done', outcome: withImdb(result.action) });

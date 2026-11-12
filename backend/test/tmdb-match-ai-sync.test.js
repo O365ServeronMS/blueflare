@@ -342,7 +342,7 @@ test('provider reviews go first, their ids join the candidates, a verified pick 
   const paths = [];
   const reviewRow = (n, over) => movie(n, { review_reason: 'single-vs-existing', review_candidates: [{ id: 77, type: 'tv' }], ...over });
   const h = harness([movie(3)], {
-    config: { tmdbMatchAiMode: 'apply' },
+    config: { tmdbMatchAiMode: 'apply', providerTmdbMode: 'apply' },
     client: {},
     deps: {
       listReviews: async () => [reviewRow(1, { tmdb_id: 9, tmdb_media_type: 'tv' }), reviewRow(2, { tmdb_id: 1, tmdb_media_type: 'tv' })],
@@ -365,4 +365,19 @@ test('provider reviews go first, their ids join the candidates, a verified pick 
   assert.equal(calls[1].opts.replace, undefined);
   assert.deepEqual(resolved, [['id1', 'ai-assigned', 'apply'], ['id2', 'ai-confirmed', 'apply']]);
   assert.equal(h.runs.find((r) => r.movieId === 'id2').evidence.action, 'confirmed');
+});
+
+test('provider reviews are ignored until the provider pass applies, and take at most half the batch', async () => {
+  for (const [providerTmdbMode, expected] of [['dry-run', null], ['off', null], ['apply', 5]]) {
+    let asked = null;
+    const h = harness([movie(3)], {
+      config: { tmdbMatchAiMode: 'apply', providerTmdbMode, tmdbMatchAiLimit: 9 },
+      deps: {
+        listReviews: async (opts) => { asked = opts.limit; return []; },
+        assign: async () => ({ action: 'assigned' })
+      }
+    });
+    await refreshTmdbAiMatches(h.deps);
+    assert.equal(asked, expected, providerTmdbMode);
+  }
 });

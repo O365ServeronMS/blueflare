@@ -176,8 +176,8 @@ async function planWith(db, movieId, input, {
   if (holder.catalog_state !== 'ready') return { ...base, action: 'blocked', reason: 'holder-not-ready', season };
   const refused = mergeGuard(target, holder, source, { force: guard });
   if (refused) return { ...base, action: 'blocked', reason: refused, season };
-  if (!allowMerge) return { ...base, action: 'blocked', reason: 'merge-disabled', season, holderId: holder.id, holderSlug: holder.canonical_slug };
   if (respectPin && holder.tmdb_identity_pinned === true) return { ...base, action: 'blocked', reason: 'holder-pinned', season };
+  if (!allowMerge) return { ...base, action: 'blocked', reason: 'merge-disabled', season, holderId: holder.id, holderSlug: holder.canonical_slug };
   const providers = await providersOf(db, [target.id, holder.id]);
   const rows = [target, holder].map((row) => ({ ...row, providers: providers.get(row.id) || [] }));
   const { survivor, drops, reason } = chooseSurvivor(rows);

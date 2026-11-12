@@ -203,3 +203,23 @@ test('seasonFromShow: the title marker first, then one season, then the inferenc
   assert.deepEqual(seasonFromShow({ title: 'X' }, { number_of_seasons: 1 }), { season: 1 });
   assert.equal(seasonFromShow({ title: 'X', year: 2020, episode_total: '10' }, { number_of_seasons: 2, seasons: [] }).season, null);
 });
+
+test('a merge under the fill tier counts against the daily cap; once over it, merges wait without a fingerprint', async () => {
+  const rows = [
+    film({ id: 'a', provider_claims: [claim('nguonc', 10)] }),
+    film({ id: 'b', provider_claims: [claim('nguonc', 11)] }),
+    film({ id: 'c', provider_claims: [claim('nguonc', 12)] })
+  ];
+  const seen = [];
+  const h = harness(rows, { providerTmdbTiers: ['fill', 'merge'], providerTmdbOverwritePerDay: 1 }, {
+    assign: async (movieId, _input, options) => {
+      seen.push([movieId, options.allowMerge]);
+      if (!options.allowMerge) return { action: 'blocked', reason: 'merge-disabled', holderSlug: 'h', survivorId: movieId };
+      return { action: 'merged', survivorId: movieId, survivorSlug: 's-' + movieId, dropSlug: 'd-' + movieId };
+    }
+  });
+  const stats = await resolveProviderIdentities(h.deps);
+  assert.deepEqual(seen, [['a', true], ['b', false], ['c', false]]);
+  assert.deepEqual([stats.merged, stats.capped], [1, 2]);
+  assert.deepEqual(h.saved.map((s) => s.movieId), ['a']);
+});

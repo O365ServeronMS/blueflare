@@ -79,8 +79,13 @@ export function rowMarkers(row) {
 
 const isTv = (row) => row.media_type === 'tv';
 
-/** Detector codes for one row (`row.sources`, `row.aliases` attached). */
-export function detectRow(row) {
+/**
+ * Detector codes for one row (`row.sources`, `row.aliases` attached). `providerIds` (the provider
+ * pass writes, PROVIDER_TMDB_MODE=apply) widens tmdb-mismatch from KKPhim to every provider and
+ * turns on provider-season; before that NguonC's claims are unreviewed and stay out of the audit.
+ * A row whose provider review the AI match settled (outcome ai-*) is not re-flagged for mismatch.
+ */
+export function detectRow(row, { providerIds = false } = {}) {
   const found = new Set();
   const sources = row.sources || [];
   const available = sources.filter((s) => s.availability !== false);
@@ -102,11 +107,13 @@ export function detectRow(row) {
     }
   }
 
-  if (isTv(row) && SEASON_REVIEW_REASONS.has(row.provider_review)) found.add('provider-season');
+  if (providerIds && isTv(row) && SEASON_REVIEW_REASONS.has(row.provider_review)) found.add('provider-season');
 
+  const aiSettled = providerIds && String(row.provider_review_outcome ?? '').startsWith('ai-');
   if (has(row.tmdb_id)) {
     for (const source of sources) {
-      if (source.availability === false) continue;
+      if (source.availability === false || aiSettled) continue;
+      if (!providerIds && source.provider !== 'kkphim') continue;
       const meta = source.metadata || {};
       const id = int(meta.tmdb_id);
       if (id && id > 0 && ['movie', 'tv'].includes(meta.tmdb_type) &&
@@ -284,7 +291,8 @@ function rowsQuery(where) {
     "COALESCE((SELECT jsonb_agg(jsonb_build_object('slug', a.slug) ORDER BY a.slug) FROM movie_slug_aliases a WHERE a.movie_id=m.id), '[]'::jsonb) AS aliases, " +
     '(SELECT count(*)::int FROM user_favorites f WHERE f.movie_id=m.id) AS favorites, ' +
     '(SELECT count(*)::int FROM user_history h WHERE h.movie_id=m.id) AS history, ' +
-    "(SELECT r.reason FROM provider_identity_reviews r WHERE r.movie_id=m.id AND r.status='pending') AS provider_review " +
+    "(SELECT r.reason FROM provider_identity_reviews r WHERE r.movie_id=m.id AND r.status='pending') AS provider_review, " +
+    "(SELECT r.outcome FROM provider_identity_reviews r WHERE r.movie_id=m.id AND r.status='done') AS provider_review_outcome " +
     'FROM movies m WHERE ' + where;
 }
 
@@ -309,7 +317,7 @@ export async function loadRows(db, ids) {
 }
 
 /** Index + detectors over a loaded catalog. Returns `{ groups, counts, family, holderOf }`. */
-export function analyseCatalog(rows) {
+export function analyseCatalog(rows, { providerIds = false } = {}) {
   const byId = new Map();
   const byTmdb = new Map();
   const byTitle = new Map();
@@ -330,7 +338,7 @@ export function analyseCatalog(rows) {
 
   const flagged = [];
   for (const row of rows) {
-    const codes = detectRow(row);
+    const codes = detectRow(row, { providerIds });
     for (const code of codes) counts[code] += 1;
     if (codes.length) flagged.push({ row, codes });
   }

@@ -359,16 +359,18 @@ async function updateMovie(client, current, incoming) {
   const thumbAssetId = await ensureImageAsset(client, movie.thumbSourceUrl);
   const posterAssetId = await ensureImageAsset(client, movie.posterSourceUrl);
   const result = await client.query(
+    // No tmdb_id here: the TMDB tuple is written only by fillTmdbIdentity / tmdbIdentity.js, so a
+    // stale read of `current` can never undo an identity the AI loop wrote meanwhile.
     'UPDATE movies SET ' +
     'title=$2, original_title=$3, normalized_title=$4, ' +
     'normalized_original_title=$5, media_type=$6, display_type=$7, year=$8, ' +
-    'tmdb_id=$9, imdb_id=$10, overview=$11, thumb_source_url=$12, ' +
-    'poster_source_url=$13, quality=$14, language=$15, status=$16, ' +
-    'episode_current=$17, episode_total=$18, duration=$19, actors=$20, ' +
-    'directors=$21, genres=$22, countries=$23, ratings=$24, ' +
-    "primary_provider=$25, provider_updated_at=$26, catalog_state='ready', " +
-    'ready_at=COALESCE(ready_at, now()), thumb_asset_id=$27, poster_asset_id=$28, ' +
-    'catalog_sort_at=COALESCE($26, catalog_sort_at), updated_at=now() ' +
+    'imdb_id=$9, overview=$10, thumb_source_url=$11, ' +
+    'poster_source_url=$12, quality=$13, language=$14, status=$15, ' +
+    'episode_current=$16, episode_total=$17, duration=$18, actors=$19, ' +
+    'directors=$20, genres=$21, countries=$22, ratings=$23, ' +
+    "primary_provider=$24, provider_updated_at=$25, catalog_state='ready', " +
+    'ready_at=COALESCE(ready_at, now()), thumb_asset_id=$26, poster_asset_id=$27, ' +
+    'catalog_sort_at=COALESCE($25, catalog_sort_at), updated_at=now() ' +
     'WHERE id=$1 RETURNING *',
     [
       current.id,
@@ -379,7 +381,6 @@ async function updateMovie(client, current, incoming) {
       movie.mediaType,
       movie.displayType,
       movie.year,
-      movie.tmdbId,
       movie.imdbId,
       movie.overview,
       movie.thumbSourceUrl,

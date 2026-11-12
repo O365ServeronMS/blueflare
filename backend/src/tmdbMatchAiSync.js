@@ -170,10 +170,14 @@ export async function runAiMatchPass(deps = {}, options = {}) {
   const list = deps.list ?? listAiMatchCandidates;
   const record = deps.record ?? recordAiRun;
   const rowLimit = options.rowLimit ?? settings.tmdbMatchAiLimit;
-  // Provider reviews first: they are few and each settles a real disagreement.
+  // Provider reviews first, but only once the provider pass itself writes (PROVIDER_TMDB_MODE=apply):
+  // a dry-run provider pass queues reviews for the CSV, and an AI apply must not act on them before
+  // they are reviewed. They take at most half the batch so plain title matching never starves.
+  const reviewsOn = settings.providerTmdbMode === 'apply';
   const listReviews = deps.listReviews ?? (deps.list ? async () => [] : listProviderReviewCandidates);
   const resolveReview = deps.resolveReview ?? resolveProviderReview;
-  const reviews = await listReviews({ mode, limit: rowLimit, errorRetryMs: settings.tmdbMatchAiErrorRetryMs });
+  const reviewLimit = Math.max(1, Math.ceil(rowLimit / 2));
+  const reviews = reviewsOn ? await listReviews({ mode, limit: reviewLimit, errorRetryMs: settings.tmdbMatchAiErrorRetryMs }) : [];
   const listed = reviews.length >= rowLimit ? [] : await list({
     mode, limit: rowLimit - reviews.length, retryMs: settings.tmdbMatchAiRetryMs, errorRetryMs: settings.tmdbMatchAiErrorRetryMs,
     scope: options.scope ?? 'all', freshMs: settings.tmdbMatchAiFreshMs

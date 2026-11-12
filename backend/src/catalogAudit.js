@@ -210,7 +210,7 @@ export async function runCatalogAudit(deps = {}) {
   try {
     const startedAt = Date.now();
     const catalog = await loadCatalog(db, { isStopping });
-    const { groups, counts, family, holderOf } = analyseCatalog(catalog);
+    const { groups, counts, family, holderOf } = analyseCatalog(catalog, { providerIds: settings.providerTmdbMode === 'apply' });
     summary.counts = counts;
     summary.groups = groups.length;
     log('[worker] catalog audit run=' + runId + ' mode=' + mode + ' rows=' + catalog.length + ' groups=' + groups.length +
@@ -312,7 +312,7 @@ export async function applyRecordedGroup(groupKey, deps = {}) {
     "AND status='dry-run' ORDER BY id", [groupKey])).rows;
   if (!recorded.length) return { results: [], slugs: [] };
   const catalog = await loadCatalog(db);
-  const { family, holderOf } = analyseCatalog(catalog);
+  const { family, holderOf } = analyseCatalog(catalog, { providerIds: (deps.config ?? config).providerTmdbMode === 'apply' });
   const slugs = new Set(recorded.flatMap((a) => a.slugs || []));
   const ids = new Set(recorded.map((a) => a.params.movieId).filter(Boolean));
   const rows = catalog.filter((r) => ids.has(r.id) || slugs.has(r.canonical_slug));

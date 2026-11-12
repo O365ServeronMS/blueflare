@@ -112,13 +112,16 @@ cf_purge_reminder() {
 }
 
 # swap_images <service...> — exchange :latest and :prev, so a second call undoes
-# the first. Checks every :prev exists before retagging anything.
+# the first. A service with no :prev (its first build, e.g. a service new in
+# compose.yml) has nothing to go back to: it is left on :latest with a warning,
+# so the others still roll back.
 swap_images() {
-  local s
+  local s swap=()
   for s in "$@"; do
-    docker image inspect "blueflare-$s:prev" >/dev/null 2>&1 || die "no blueflare-$s:prev image to swap to"
+    if docker image inspect "blueflare-$s:prev" >/dev/null 2>&1; then swap+=("$s")
+    else log "  $s: no blueflare-$s:prev image (first build); left on :latest"; fi
   done
-  for s in "$@"; do
+  for s in ${swap[@]+"${swap[@]}"}; do
     docker tag "blueflare-$s:latest" "blueflare-$s:swap"
     docker tag "blueflare-$s:prev" "blueflare-$s:latest"
     docker tag "blueflare-$s:swap" "blueflare-$s:prev"

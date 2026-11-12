@@ -559,3 +559,24 @@ test('openrouter/free counts as a free model', () => {
   assert.equal(isFree('openai/gpt-6-luna'), false);
   assert.deepEqual(parseModels('openrouter/free:20:300'), [{ id: 'openrouter/free', rpm: 20, rpd: 300 }]);
 });
+
+test('opencode: one call in flight per key, across roles; OpenRouter calls are not held', async () => {
+  let inFlight = 0;
+  let peak = 0;
+  const { ai, fetch } = make(ocEnv({ OPENCODE_MODEL_DEDUPE: 'opencode/other-free' }), async (call) => {
+    if (!call.url.startsWith(OC)) return answer('or');
+    inFlight += 1;
+    peak = Math.max(peak, inFlight);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    inFlight -= 1;
+    return ocAnswer('oc');
+  });
+  const results = await Promise.all([
+    ai.chat('MATCH', [{ role: 'user', content: 'a' }]),
+    ai.chat('MATCH', [{ role: 'user', content: 'b' }]),
+    ai.chat('DEDUPE', [{ role: 'user', content: 'c' }]),
+  ]);
+  assert.deepEqual(results.map((r) => r.text), ['oc', 'oc', 'oc']);
+  assert.equal(peak, 1);
+  assert.equal(fetch.calls.filter((c) => c.url.startsWith(OC)).length, 3);
+});

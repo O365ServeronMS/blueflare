@@ -14,13 +14,18 @@ if [ -r "$CRED" ] && [ -s "$CRED" ]; then
     if opencode auth import --standalone "$CRED" >/dev/null 2>&1; then
       # import does not carry the active flag: switch to the account active on the host.
       active=$(jq -r '[.[] | select(.active == true)][0] | select(. != null) | .integrationID + " " + .id' "$CRED" 2>/dev/null || true)
+      switched=1
       if [ -n "$active" ]; then
         # shellcheck disable=SC2086
-        opencode auth switch --standalone $active >/dev/null 2>&1 \
-          || echo "opencode-entrypoint: WARNING could not switch to the active account" >&2
+        opencode auth switch --standalone $active >/dev/null 2>&1 || switched=0
       fi
-      printf '%s\n' "$sum" >"$MARK"
-      echo "opencode-entrypoint: imported credentials from $CRED (active ${active#* })"
+      if [ "$switched" = 1 ]; then
+        printf '%s\n' "$sum" >"$MARK"
+        echo "opencode-entrypoint: imported credentials from $CRED (active ${active#* })"
+      else
+        # no marker: the next start imports and switches again
+        echo "opencode-entrypoint: WARNING imported $CRED but could not switch to the active account" >&2
+      fi
     else
       echo "opencode-entrypoint: WARNING could not import $CRED; serving with the stored login" >&2
     fi

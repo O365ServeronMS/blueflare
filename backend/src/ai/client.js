@@ -272,7 +272,24 @@ export function createAi(options = {}) {
    * is gone (404, e.g. the sidecar's store was reset) is made again once. Returns the fetch
    * response of the step that ended it, so a failed session creation is handled like any answer.
    */
-  async function opencodeFetch(provider, key, model, prompt, signal) {
+  // One opencode call in flight per key (every role and model): parallel generations on the
+  // free tier draw "Free usage limit reached" and can hang for minutes (measured 2026-11-12).
+  const ocQueues = new Map();
+  function opencodeFetch(provider, key, model, prompt, signal) {
+    const prev = ocQueues.get(key.name) ?? Promise.resolve();
+    const run = prev.then(async () => {
+      if (signal?.aborted) throw signal.reason ?? new Error('aborted');
+      const response = await opencodeOnce(provider, key, model, prompt, signal);
+      const raw = await response.text().catch(() => '');
+      return { ok: response.ok, status: response.status, headers: response.headers, text: async () => raw };
+    });
+    const tail = run.catch(() => {});
+    ocQueues.set(key.name, tail);
+    tail.then(() => { if (ocQueues.get(key.name) === tail) ocQueues.delete(key.name); });
+    return run;
+  }
+
+  async function opencodeOnce(provider, key, model, prompt, signal) {
     const send = transport ?? globalThis.fetch;
     const post = (path, body) => send(provider.baseUrl + path, { method: 'POST', headers: headersFor(provider, key), body: JSON.stringify(body), signal });
     const slot = key.name + ' ' + model.id;

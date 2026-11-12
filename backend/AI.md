@@ -73,7 +73,9 @@ which takes text only. A role gets an opencode route only from `OPENCODE_MODEL_<
   `plan` agent (`POST /api/session {title: 'blueflare-ai', agent: 'plan', model}`), then every
   call is `POST /api/session/{id}/generate {prompt}`: a stateless generation (nothing is added to
   the session, no tool runs) that answers `{text, tokens, cost}`. A session that is gone (404) is
-  made again once.
+  made again once. Only one opencode call is in flight at a time (every role and model queue on
+  it): parallel free-tier generations drew "Free usage limit reached" and hung for minutes. Time
+  spent queued counts toward the call's timeout, so a long queue ends on OpenRouter.
 - Why a session and a stock agent: opencode Zen serves its free models only to requests that
   carry a stock opencode agent's system prompt and tools. `/api/experimental/generate/text` (no
   agent), the short `title`/`summary` agents and a `plan` session with changed `permissions` all

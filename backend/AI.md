@@ -68,26 +68,34 @@ which takes text only. A role gets an opencode route only from `OPENCODE_MODEL_<
 - With `OPENCODE_URL`: opencode × `OPENCODE_MODEL_<ROLE>` (else `OPENCODE_MODEL_PRIMARY`, else
   the role default), then OpenRouter × `OPENROUTER_MODEL_<ROLE>` (else `OPENROUTER_MODEL_PRIMARY`,
   else the role default). Without it: OpenRouter only.
-- opencode is the `opencode` compose service (opencode v2 `opencode serve`). One call is
-  `POST {OPENCODE_URL}/api/experimental/generate/text` with `{prompt, model: {providerID, id}}`
-  and basic auth `opencode:OPENCODE_SERVER_PASSWORD`; it is stateless (no agent, no tools).
-  The messages are flattened into one prompt (system text first; several turns are labelled
-  `USER:` / `ASSISTANT:`). There is no usage, temperature, max_tokens, reasoning or
-  `response_format`, so JSON is always asked for in the prompt. Its errors
-  (`ProviderRequestError {reason, status, retryAfterMs}`, `ModelNotFoundError`) are mapped
-  onto the same status rules as OpenRouter; "Free usage limit reached" parks every opencode
-  model until `retryAfterMs` (opencode's daily reset), and the calls go on through OpenRouter.
+- opencode is the `opencode` compose service (opencode v2 `opencode serve`, basic auth
+  `opencode:OPENCODE_SERVER_PASSWORD`). Per key+model the module makes one session of the stock
+  `plan` agent (`POST /api/session {title: 'blueflare-ai', agent: 'plan', model}`), then every
+  call is `POST /api/session/{id}/generate {prompt}`: a stateless generation (nothing is added to
+  the session, no tool runs) that answers `{text, tokens, cost}`. A session that is gone (404) is
+  made again once.
+- Why a session and a stock agent: opencode Zen serves its free models only to requests that
+  carry a stock opencode agent's system prompt and tools. `/api/experimental/generate/text` (no
+  agent), the short `title`/`summary` agents and a `plan` session with changed `permissions` all
+  get "Free usage limit reached" while a plain `plan` session works (measured 2026-11-12). The
+  cost is ~7-9k prompt tokens of agent prompt per call, mostly served from opencode's cache.
+- The messages are flattened into one prompt (system text first; several turns are labelled
+  `USER:` / `ASSISTANT:`). There is no temperature, max_tokens, reasoning or `response_format`,
+  so JSON is always asked for in the prompt. Errors are mapped onto the same status rules as
+  OpenRouter: `ServiceUnavailableError` "Free usage limit reached" → 429, parking every opencode
+  model for `AI_COOLDOWN_MS` (or until `retryAfterMs` when opencode states one), "Model
+  unavailable" → 404, any other → 503; `ProviderRequestError {reason, status, retryAfterMs}`
+  by its reason. Meanwhile the calls go on through OpenRouter.
 - Next pair on 401 (key off), 402 / 403 "key limit" (model parked), 408/429/5xx (after
   `AI_RETRIES` tries), network error, timeout, empty answer, bad JSON, schema or `accept`
   failure, no vision. A daily 429 on an OpenRouter `:free` model parks all `:free` models of
-  that key until 00:00 UTC. A free allowance message with a reset time parks the whole key
-until then.
+  that key until 00:00 UTC.
 - JSON: `response_format` goes `json_schema → json_object → none` (prompt instruction) and the
   level that worked is remembered per provider+model.
 - OpenRouter only: `usage: {include: true}`, `reasoning`, `HTTP-Referer`/`X-Title`, `/models`.
 - Budget: one place, the quota ledger (`ai_quota_ledger`): per key+model requests per day
   (`rpd`), RPM spacing, and `AI_PAID_DAILY_OUTPUT_TOKENS_<ROLE>` over paid models (free:
-`…:free`, `…-free`, `openrouter/free`, `opencode/big-pickle`; opencode reports no tokens).
+`…:free`, `…-free`, `openrouter/free`, `opencode/big-pickle`).
 - Keys and the opencode password travel only in the `Authorization` header; logs name them
   `k1 (<6 hex of sha256>)`.
 

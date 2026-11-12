@@ -13,10 +13,13 @@ import {
  * config.js roleRoutes); inside a model, keys in order. A pair moves aside on 401/402,
  * 408/429/5xx (after AI_RETRIES tries), network error, timeout, empty answer, broken JSON,
  * schema failure, or an image it cannot read. OpenRouter-only body fields (usage, reasoning)
- * and headers go to OpenRouter only. opencode gets one stateless generation
- * (`POST /api/experimental/generate/text`, basic auth): the messages are flattened into its single
+ * and headers go to OpenRouter only. opencode (basic auth) gets one stateless generation from a
+ * session of the stock `plan` agent (`POST /api/session/{id}/generate`; one session per model,
+ * created on first use and again when it is gone): the messages are flattened into its single
  * prompt, JSON is asked for in that prompt, and its answer/error is mapped back onto the
- * chat-completions shape the loop below reads (see opencodeRequest / opencodeResponse). Keys travel only in the Authorization
+ * chat-completions shape the loop below reads (see opencodeResponse). opencode Zen serves its free
+ * models only to requests of a stock opencode agent: `/api/experimental/generate/text` (no agent)
+ * or an agent with changed permissions gets "Free usage limit reached". Keys travel only in the Authorization
  * header: never in a URL, error, attempt or log line.
  */
 
@@ -30,12 +33,13 @@ const JSON_INSTRUCTION = 'Answer with a single valid JSON value only: no markdow
 const MODEL_GONE = /not a valid model|no endpoints|model[^.]{0,40}(not found|does not exist|not exist|unknown)|unknown model|not supported|unsupported model/i;
 const PARAMS_REJECTED = /requested parameters|response_format|json_schema|json_object|structured output/i;
 const IMAGE_REJECTED = /image|vision|multimodal|modalit/i;
-// The whole free allowance of the key is spent until a stated date (Token Harbor) or for
-// `retryAfterMs` (opencode: "Free usage limit reached", shared by every free model of the account).
-const FREE_ALLOWANCE_DONE = /free_tier_limit_reached|used this period.s free allowance|free usage limit reached/i;
-const ALLOWANCE_RESET = /starts on (\d{1,2} [A-Za-z]{3,9} \d{4}) at (\d{1,2}:\d{2}) UTC/i;
-const MAX_ALLOWANCE_PARK_MS = 8 * 24 * 60 * 60 * 1000;
-const AUTH_LOCKOUT = /failed authenticat|authentication attempts|invalid (api )?key|api key (is )?(invalid|revoked)/i;
+// opencode's free allowance is spent ("Free usage limit reached", shared by every free model of
+// the account), until `retryAfterMs` when opencode states it.
+const FREE_ALLOWANCE_DONE = /free usage limit reached/i;
+// The stock opencode agent whose sessions generate; read-only, and generate runs no tools.
+export const OPENCODE_AGENT = 'plan';
+const OPENCODE_SESSION_TITLE = 'blueflare-ai';
+const MAX_ALLOWANCE_PARK_MS = 2 * 24 * 60 * 60 * 1000;
 
 /** The only error the AI module throws for a failed call. `attempts`: [{ provider, model, reason }]. */
 export class AiError extends Error {
@@ -78,7 +82,7 @@ function reasoningField(reasoning) {
 const estimateTokens = (messages) => Math.ceil(messages.reduce((sum, m) => sum + contentText(m.content).length, 0) / 3) + 300;
 
 /**
- * opencode `generate/text` takes one prompt: system text first, then the conversation. A single
+ * opencode session generate takes one prompt: system text first, then the conversation. A single
  * user turn goes in as is; several turns are labelled by role.
  */
 export function flattenMessages(messages) {
@@ -101,17 +105,31 @@ const OPENCODE_REASON_STATUS = Object.freeze({ authentication: 401, rate_limit: 
 
 /**
  * Map an opencode answer onto { status, json, headers } of a chat completion. Success
- * `{data:{text}}` becomes one choice; ProviderRequestError (HTTP 502) takes the status of its
- * `reason` and turns `retryAfterMs` into a Retry-After header; other errors keep their status.
+ * `{data:{text, tokens, cost}}` becomes one choice with usage (cached prompt tokens count as
+ * prompt). ServiceUnavailableError (HTTP 503) "Free usage limit reached" becomes a 429 and
+ * "Model unavailable" a 404; ProviderRequestError (HTTP 502) takes the status of its `reason`
+ * and turns `retryAfterMs` into a Retry-After header; other errors keep their status.
  */
 export function opencodeResponse(status, json) {
   if (status < 400) {
-    const text = typeof json?.data?.text === 'string' ? json.data.text : null;
-    return { status, json: text == null ? null : { choices: [{ message: { content: text }, finish_reason: 'stop' }] }, headers: null };
+    const data = json?.data;
+    const text = typeof data?.text === 'string' ? data.text : null;
+    if (text == null) return { status, json: null, headers: null };
+    const t = data.tokens;
+    const usage = t && typeof t === 'object' ? {
+      prompt_tokens: (Number(t.input) || 0) + (Number(t.cache?.read) || 0) + (Number(t.cache?.write) || 0),
+      completion_tokens: Number(t.output) || 0,
+      completion_tokens_details: { reasoning_tokens: Number(t.reasoning) || 0 },
+      cost: Number.isFinite(Number(data.cost)) ? Number(data.cost) : null
+    } : undefined;
+    return { status, json: { choices: [{ message: { content: text }, finish_reason: 'stop' }], ...(usage ? { usage } : {}) }, headers: null };
   }
   let mapped = status;
   const headers = {};
-  if (json?._tag === 'ProviderRequestError') {
+  const message = String(json?.message ?? '');
+  if (json?._tag === 'ServiceUnavailableError' && FREE_ALLOWANCE_DONE.test(message)) mapped = 429;
+  else if (json?._tag === 'ServiceUnavailableError' && /model unavailable/i.test(message)) mapped = 404;
+  else if (json?._tag === 'ProviderRequestError') {
     mapped = OPENCODE_REASON_STATUS[json.reason] ?? (Number(json.status) >= 400 ? Number(json.status) : 502);
     const retry = Number(json.retryAfterMs);
     if (Number.isFinite(retry) && retry > 0) headers['retry-after'] = String(Math.ceil(retry / 1000));
@@ -125,7 +143,8 @@ export function fakeTransport() {
     const reply = (status, body) => ({ ok: status < 400, status, headers: { get: () => null }, text: async () => JSON.stringify(body) });
     if (!init.body) return reply(200, { data: [] });
     const body = JSON.parse(init.body);
-    if (typeof body.prompt === 'string') { // opencode generate/text
+    if (/\/api\/session$/.test(url)) return reply(200, { data: { id: 'ses_fake' } }); // opencode session
+    if (typeof body.prompt === 'string') { // opencode session generate
       const content = body.prompt.includes(JSON_INSTRUCTION) ? '{"fake":true}' : 'fake: ' + body.prompt.slice(-200);
       return reply(200, { data: { text: content } });
     }
@@ -246,9 +265,34 @@ export function createAi(options = {}) {
     return body;
   }
 
-  /** opencode body: the chat body's messages (JSON instruction included) flattened into one prompt. */
-  function opencodeRequest(model, chatBody) {
-    return { prompt: flattenMessages(chatBody.messages), model: opencodeModel(model.id) };
+  // opencode session per key+model: generate is stateless, so one session serves every call.
+  const ocSessions = new Map();
+  /**
+   * One opencode generation: make (or reuse) the model's session, then generate. A session that
+   * is gone (404, e.g. the sidecar's store was reset) is made again once. Returns the fetch
+   * response of the step that ended it, so a failed session creation is handled like any answer.
+   */
+  async function opencodeFetch(provider, key, model, prompt, signal) {
+    const send = transport ?? globalThis.fetch;
+    const post = (path, body) => send(provider.baseUrl + path, { method: 'POST', headers: headersFor(provider, key), body: JSON.stringify(body), signal });
+    const slot = key.name + ' ' + model.id;
+    for (let fresh = 0; fresh < 2; fresh++) {
+      let id = ocSessions.get(slot);
+      if (!id) {
+        const created = await post('/api/session', { title: OPENCODE_SESSION_TITLE, agent: OPENCODE_AGENT, model: opencodeModel(model.id) });
+        if (!created.ok) return created;
+        const raw = await created.text().catch(() => '');
+        try { id = JSON.parse(raw)?.data?.id; } catch { id = null; }
+        if (typeof id !== 'string' || !id) return { ok: false, status: 502, headers: created.headers, text: async () => raw };
+        ocSessions.set(slot, id);
+      }
+      const response = await post('/api/session/' + encodeURIComponent(id) + '/generate', { prompt });
+      if (response.status !== 404 || fresh) return response;
+      const raw = await response.text().catch(() => '');
+      if (!/SessionNotFound/.test(raw)) return { ok: false, status: 404, headers: response.headers, text: async () => raw };
+      ocSessions.delete(slot);
+    }
+    throw new Error('unreachable');
   }
 
   function headersFor(provider, key) {
@@ -345,7 +389,7 @@ export function createAi(options = {}) {
       const format = formatIndex >= 0 ? FORMATS[formatIndex] : null;
       const chatBody = requestBody(provider, model, messages, opts, format, opts.schema, maxTokens);
       const isOpencode = provider.kind === 'opencode';
-      const body = isOpencode ? opencodeRequest(model, chatBody) : chatBody;
+      const body = chatBody;
       const handle = ledger ? await ledger.begin(ledgerId(key, role), model.id, est, t) : null;
       const started = now();
 
@@ -356,12 +400,10 @@ export function createAi(options = {}) {
       let headers = null;
       let networkReason = null;
       try {
-        const response = await (transport ?? globalThis.fetch)(provider.baseUrl + (isOpencode ? '/api/experimental/generate/text' : '/chat/completions'), {
-          method: 'POST',
-          headers: headersFor(provider, key),
-          body: JSON.stringify(body),
-          signal: opts.signal ? AbortSignal.any([AbortSignal.timeout(timeoutMs), opts.signal]) : AbortSignal.timeout(timeoutMs)
-        });
+        const signal = opts.signal ? AbortSignal.any([AbortSignal.timeout(timeoutMs), opts.signal]) : AbortSignal.timeout(timeoutMs);
+        const response = isOpencode
+          ? await opencodeFetch(provider, key, model, flattenMessages(chatBody.messages), signal)
+          : await (transport ?? globalThis.fetch)(provider.baseUrl + '/chat/completions', { method: 'POST', headers: headersFor(provider, key), body: JSON.stringify(body), signal });
         status = response.status;
         headers = response.headers;
         raw = await response.text().catch(() => '');
@@ -431,19 +473,11 @@ export function createAi(options = {}) {
       } else if (status === 404 || (status === 400 && MODEL_GONE.test(raw))) {
         reason = 'http ' + status + ' (model unavailable)';
         announce(modelState(mid), now() + cfg.cooldownMs, provider.name + ' model ' + model.id + ' unavailable (HTTP ' + status + ')');
-      } else if (status === 429 && AUTH_LOCKOUT.test(raw)) {
-        // Token Harbor: after failed logins the key/IP is locked out (429 + Retry-After). Every
-        // model of this key would fail the same way and each try may extend the lockout.
-        const { delayMs } = classifyRateLimit(raw, headers, now());
-        reason = 'http 429 (auth lockout)';
-        announce(keyState(key), now() + clamp(delayMs ?? cfg.cooldownMs), key.label + ' disabled: too many failed authentications (HTTP 429)');
-      } else if (status === 429 && FREE_ALLOWANCE_DONE.test(raw)) {
-        // Nothing works before the reset, on any model of this key: park the key until then.
-        // Token Harbor states the date (its Retry-After says 1h); opencode gives retryAfterMs.
-        const m = ALLOWANCE_RESET.exec(raw);
-        const resetAt = m ? Date.parse(m[1] + ' ' + m[2] + ' UTC') : NaN;
+      } else if (status === 429 && isOpencode && FREE_ALLOWANCE_DONE.test(raw)) {
+        // Nothing works before the reset, on any opencode model: park the key until retryAfterMs,
+        // or for AI_COOLDOWN_MS when opencode states no time (session generate does not).
         const retryAfter = Number(headers?.get?.('retry-after'));
-        const stated = Number.isFinite(resetAt) ? resetAt - now() : isOpencode && retryAfter > 0 ? retryAfter * 1000 : NaN;
+        const stated = retryAfter > 0 ? retryAfter * 1000 : NaN;
         const wait = Number.isFinite(stated) ? Math.min(Math.max(stated, 60000), MAX_ALLOWANCE_PARK_MS) : cfg.cooldownMs;
         reason = 'http 429 (free allowance used up)';
         announce(keyState(key), now() + wait, key.label + ' free allowance used up (HTTP 429), parked until ' + new Date(now() + wait).toISOString());

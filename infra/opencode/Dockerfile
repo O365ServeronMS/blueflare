@@ -7,7 +7,7 @@ ARG OPENCODE_VERSION=2.2.7
 ARG OPENCODE_SHA512=c24fc33c7c6be266a25be166429f33b685e5a3fbc2e6ab261081ec2cd68d2d92f689a2187e1caa1517ba091b02571cbe89bd2c7cad3b5f621ea45c3b6522aa35
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl \
+ && apt-get install -y --no-install-recommends ca-certificates curl jq \
  && rm -rf /var/lib/apt/lists/* \
  && curl -fsSL -o /tmp/oc.tgz "https://registry.npmjs.org/@opencode/cli-linux-x64/-/cli-linux-x64-${OPENCODE_VERSION}.tgz" \
  && echo "${OPENCODE_SHA512}  /tmp/oc.tgz" | sha512sum -c - \

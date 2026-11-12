@@ -332,6 +332,9 @@ export async function resolveProviderIdentities(deps = {}) {
         if (capped || result.action === 'merged') overwrites += 1;
         if (result.survivorSlug) slugs.add(result.survivorSlug);
         if (result.dropSlug) slugs.add(result.dropSlug);
+        // The merge kept the holder and deleted this row: its review row would break the foreign key.
+        // The survivor's own review is re-decided on its next turn (its identity columns changed).
+        if (result.action === 'merged' && result.dropId === row.id) continue;
         await save({ ...base, status: 'done', outcome: withImdb(result.action) });
       } else if (result.action === 'planned') {
         stats.planned += 1;

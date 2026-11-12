@@ -223,3 +223,19 @@ test('a merge under the fill tier counts against the daily cap; once over it, me
   assert.deepEqual([stats.merged, stats.capped], [1, 2]);
   assert.deepEqual(h.saved.map((s) => s.movieId), ['a']);
 });
+
+test('a merge that deletes the row being decided saves no review for it and the pass goes on', async () => {
+  const rows = [
+    film({ id: 'a', provider_claims: [claim('nguonc', 10)] }),
+    film({ id: 'b', provider_claims: [claim('nguonc', 11)] })
+  ];
+  const h = harness(rows, { providerTmdbTiers: ['fill', 'merge'] }, {
+    assign: async (movieId) => movieId === 'a'
+      ? { action: 'merged', survivorId: 'h', survivorSlug: 'holder', dropId: 'a', dropSlug: 'drop-a' }
+      : { action: 'assigned', survivorId: movieId, survivorSlug: 'slug-' + movieId }
+  });
+  const stats = await resolveProviderIdentities(h.deps);
+  assert.deepEqual([stats.merged, stats.assigned], [1, 1]);
+  assert.deepEqual(h.saved.map((s) => s.movieId), ['b']);
+  assert.deepEqual(stats.slugs.sort(), ['drop-a', 'holder', 'slug-b']);
+});

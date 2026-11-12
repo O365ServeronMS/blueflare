@@ -221,7 +221,32 @@ function uniqueCandidates(list) {
 }
 
 /** Reasons the AI match can settle by choosing among candidate TMDB titles. */
-export const AI_REVIEW_REASONS = new Set(['providers-disagree', 'single-vs-existing', 'type-mismatch']);
+export const AI_REVIEW_REASONS = new Set(['providers-disagree', 'single-vs-existing', 'type-mismatch', 'provider-unverified']);
+
+/** Fill reasons resting on one provider's word: checked against TMDB before they are written. */
+export const VERIFY_REASONS = new Set(['single-provider', 'season-unknown']);
+
+/**
+ * Plausibility of one provider id against the TMDB title it names: null when it fits, else why not.
+ * The id must exist; the release year (a known season's air date for tv, else the first air date,
+ * never the show's first date for a later season) must be within one year of the row's. A title
+ * with no date yet (unaired) or a row with no year passes.
+ */
+export function providerYearCheck(row, identity, body) {
+  if (!body) return 'tmdb-missing';
+  const rowYear = Number(row?.year);
+  if (!Number.isInteger(rowYear) || rowYear < 1900) return null;
+  let date = null;
+  if (identity.mediaType === 'movie') date = body.release_date;
+  else {
+    const season = Number(identity.season) || null;
+    const entry = season && Array.isArray(body.seasons) ? body.seasons.find((item) => Number(item?.season_number) === season) : null;
+    date = entry?.air_date || (season && season > 1 ? null : body.first_air_date);
+  }
+  const year = Number(String(date || '').slice(0, 4));
+  if (!Number.isInteger(year) || year < 1900) return null;
+  return Math.abs(year - rowYear) <= 1 ? null : 'tmdb-year-' + year;
+}
 /**
  * Season questions the AI match cannot settle; the catalog audit and the monthly manual season batch
  * pick them up. 'season-unresolved' comes from providerIdentitySync.js: TMDB /tv could not pick one.

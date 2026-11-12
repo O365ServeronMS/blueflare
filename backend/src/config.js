@@ -126,6 +126,9 @@ export const config = Object.freeze({
   providerTmdbOverwritePerDay: integer('PROVIDER_TMDB_OVERWRITE_PER_DAY', 300, 0),
   providerTmdbBatch: integer('PROVIDER_TMDB_BATCH', 2000, 1),
   providerTmdbLookupsPerCycle: integer('PROVIDER_TMDB_LOOKUPS_PER_CYCLE', 200, 0),
+  // A fill resting on one provider (single-provider, season-unknown) is written only when the TMDB title exists and
+  // its year is within one of the row's; otherwise it is queued for the AI match as 'provider-unverified'.
+  providerTmdbVerify: boolean('PROVIDER_TMDB_VERIFY', true),
   providerIdsPagesPerRun: integer('PROVIDER_IDS_PAGES_PER_RUN', 30, 0),
   providerIdsRewalkDays: integer('PROVIDER_IDS_REWALK_DAYS', 30, 1),
   // Weekly catalog audit (catalogAudit.js, fifth worker loop): off | dry-run (log proposals only) | apply.

@@ -8,7 +8,7 @@ import { claimFromMetadata } from '../src/providerIdentity.js';
 
 const base = {
   providerTmdbMode: 'apply', providerTmdbTiers: ['fill'], providerTmdbOverwritePerDay: 300, providerTmdbBatch: 100,
-  providerTmdbLookupsPerCycle: 10, providerIdsPagesPerRun: 5, providerIdsRewalkDays: 30, tmdbApiKey: 'k'
+  providerTmdbLookupsPerCycle: 10, providerTmdbVerify: false, providerIdsPagesPerRun: 5, providerIdsRewalkDays: 30, tmdbApiKey: 'k'
 };
 const film = (extra = {}) => ({
   id: 'm1', title: 'Phim', canonical_slug: 'phim', display_type: 'single', media_type: 'movie', year: 2024, episode_total: '1',
@@ -238,4 +238,50 @@ test('a merge that deletes the row being decided saves no review for it and the 
   assert.deepEqual([stats.merged, stats.assigned], [1, 1]);
   assert.deepEqual(h.saved.map((s) => s.movieId), ['b']);
   assert.deepEqual(stats.slugs.sort(), ['drop-a', 'holder', 'slug-b']);
+});
+
+test('verify on: a one-provider fill is written only when the TMDB title exists and fits the year', async () => {
+  const rows = [
+    film({ id: 'ok', year: 2024, provider_claims: [claim('kkphim', 10)] }),
+    film({ id: 'old', year: 2023, provider_claims: [claim('kkphim', 11)] }),
+    film({ id: 'gone', year: 2021, provider_claims: [claim('nguonc', 12)] }),
+    film({ id: 'both', year: 2010, provider_claims: [claim('nguonc', 13), claim('kkphim', 13)] })
+  ];
+  const paths = [];
+  const bodies = { '/movie/10': { release_date: '2025-02-01' }, '/movie/11': { release_date: '2011-05-05' }, '/movie/12': null };
+  const h = harness(rows, { providerTmdbVerify: true }, { client: { get: async (path) => { paths.push(path); return bodies[path]; } } });
+  const stats = await resolveProviderIdentities(h.deps);
+  assert.deepEqual(h.assigns.map((a) => a.movieId), ['ok', 'both']);
+  assert.deepEqual(paths, ['/movie/10', '/movie/11', '/movie/12']);
+  assert.equal(stats.queued, 2);
+  const queued = h.saved.filter((s) => s.reason === 'provider-unverified');
+  assert.deepEqual(queued.map((s) => [s.movieId, s.status, s.outcome]), [['old', 'pending', 'tmdb-year-2011'], ['gone', 'pending', 'tmdb-missing']]);
+  assert.deepEqual(queued[0].candidates, [{ id: 11, type: 'movie' }]);
+});
+
+test('verify on: a tv season-unknown fill reuses the /tv body and checks the picked season year', async () => {
+  const rows = [
+    show({ id: 'k', year: 2023, tmdb_id: 35353, tmdb_media_type: 'tv', provider_claims: [claim('kkphim', 35353, 'tv')] }),
+    show({ id: 'n', year: 2024, provider_claims: [claim('kkphim', 50, 'tv')] })
+  ];
+  const paths = [];
+  const bodies = {
+    '/tv/35353': { number_of_seasons: 1, first_air_date: '2011-01-01', seasons: [{ season_number: 1, air_date: '2011-01-01' }] },
+    '/tv/50': { number_of_seasons: 1, first_air_date: '', seasons: [{ season_number: 1, air_date: null }] }
+  };
+  const h = harness(rows, { providerTmdbVerify: true }, { client: { get: async (path) => { paths.push(path); return bodies[path]; } } });
+  await resolveProviderIdentities(h.deps);
+  assert.deepEqual(paths, ['/tv/35353', '/tv/50']);
+  assert.deepEqual(h.assigns.map((a) => [a.movieId, a.input.season]), [['n', 1]]);
+  assert.equal(h.saved.find((s) => s.movieId === 'k').reason, 'provider-unverified');
+});
+
+test('the stored key describes the row after its own imdb and tmdb writes', async () => {
+  const row = film({ provider_claims: [claim('kkphim', 10, 'movie', null, 'tt1234567')] });
+  const h = harness([row]);
+  await resolveProviderIdentities(h.deps);
+  const after = { ...row, tmdb_id: 10, tmdb_media_type: 'movie', tmdb_season_number: null, imdb_id: 'tt1234567' };
+  const claims = row.provider_claims.map((entry) => claimFromMetadata(entry.provider, entry.meta));
+  assert.equal(h.saved[0].key, reviewFingerprint(after, claims, { ...h.deps.settings }));
+  assert.equal(reviewUnchanged({ ...after, review_key: h.saved[0].key }, reviewFingerprint(after, claims, h.deps.settings)), true);
 });

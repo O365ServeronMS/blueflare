@@ -341,6 +341,18 @@ Models, keys, timeout (`AI_TIMEOUT_MS_MATCH`, default 180000) and paid cap: role
 Every assign, merge, blocked and conflict is a row in `tmdb_identity_changes`
 (migration 030; merges point at the `movie_merges` snapshot).
 
+The `node scripts/…` commands in this file need the database, and the api/worker
+image ships only `migrations/`, `src/`, `node_modules/` and `package*.json`, not
+`scripts/`. Copy them into the running worker, run, copy any output back, and remove
+them (the copy lives only in that container and is gone at its next recreate anyway):
+
+```bash
+docker cp backend/scripts blueflare-worker:/app/scripts
+docker exec -w /app blueflare-worker node scripts/provider-identity-report.mjs /tmp/out.csv
+docker cp blueflare-worker:/tmp/out.csv .
+docker exec -u 0 blueflare-worker rm -rf /app/scripts /tmp/out.csv
+```
+
 - `node scripts/tmdb-identity-report.mjs <out.csv> [--n 200] [--seed 1] [--tmdb]`
   is the read-only review sample.
 - `node scripts/tmdb-identity-undo.mjs <changeId>` reverses one assign or merge
@@ -447,8 +459,16 @@ them into row identities:
 - **Review**: `provider_identity_reviews` holds one decision per row (status
   pending/planned/done/blocked, outcome `would-assign`, `would-merge:<slug>`, `assigned`,
   `imdb-conflict` …); an unchanged fingerprint (claims + row tuple + pin + mode/tiers) is not
-  re-decided. `node scripts/provider-identity-report.mjs <out.csv> [--status planned]
-  [--tier overwrite] [--reason R]` prints the counts and exports the rows (read-only).
+  re-decided. The fingerprint is taken after the decision's own writes, so a row is not decided
+  again only because its imdb/tmdb columns were just filled. `node scripts/provider-identity-report.mjs <out.csv> [--status planned]
+  [--tier overwrite] [--reason R]` prints the counts and exports the rows (read-only; run it as
+  in [Identity audit and undo](#identity-audit-and-undo)).
+- **Year check** (`PROVIDER_TMDB_VERIFY`, default on): a fill resting on one provider
+  (`single-provider`, or `season-unknown` with its TMDB `/tv` body) is written only when the TMDB
+  title exists and its year (a known season's air date for tv) is within one of the row's; an
+  unaired title or a row without year passes. Otherwise the review is `pending` with reason
+  `provider-unverified` and the id goes to the AI match as a candidate. Ids the sync upsert fills
+  directly (KKPhim, and NguonC in apply) are not re-checked for movies.
 
 Rollout: run `dry-run` for a full walk, review the CSV, then enable tiers one at a time:
 `fill`, then `season,overwrite`, then `merge`.

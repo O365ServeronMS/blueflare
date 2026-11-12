@@ -16,7 +16,7 @@
 import { config } from './config.js';
 import { pool } from './db.js';
 import {
-  AI_REVIEW_REASONS, SEASON_REVIEW_REASONS, claimFromMetadata, claimsKey, decideProviderIdentity, tierEnabled, typeConflict
+  AI_REVIEW_REASONS, SEASON_REVIEW_REASONS, VERIFY_REASONS, claimFromMetadata, providerYearCheck, claimsKey, decideProviderIdentity, tierEnabled, typeConflict
 } from './providerIdentity.js';
 import { assignTmdbIdentity } from './tmdbIdentity.js';
 import { createTmdbClient } from './tmdbMatchAi.js';
@@ -227,7 +227,7 @@ export async function resolveProviderIdentities(deps = {}) {
   if (mode === 'off') return stats;
   const list = deps.list ?? listProviderIdentityRows;
   const assign = deps.assign ?? assignTmdbIdentity;
-  const save = deps.save ?? saveProviderReview;
+  const saveReview = deps.save ?? saveProviderReview;
   const fillImdb = deps.fillImdb ?? fillImdbId;
   const apply = mode === 'apply';
   const rows = await list(settings.providerTmdbBatch, { afterId: resolveCursor.afterId });
@@ -254,7 +254,12 @@ export async function resolveProviderIdentities(deps = {}) {
     stats.checked += 1;
     let decision = decideProviderIdentity({ row, claims });
     const review = { movieId: row.id, key: fingerprint, claims: claims.filter((claim) => claim.tmdbId || claim.imdbId) };
+    // The stored key describes the row as it is after this decision's writes, so a row is not
+    // decided a second time only because its own imdb/tmdb columns were just filled.
+    let current = row;
+    const save = (entry) => saveReview({ ...entry, key: reviewFingerprint(current, claims, settings) });
     let lookupMissed = false;
+    let showBody;
 
     if (decision.action === 'find') {
       const body = await tmdb('/find/' + decision.imdbId + '?external_source=imdb_id');
@@ -273,6 +278,7 @@ export async function resolveProviderIdentities(deps = {}) {
 
     if (decision.action === 'resolve-season') {
       const show = await tmdb('/tv/' + decision.identity.id);
+      showBody = show;
       if (show === undefined) lookupMissed = true;
       else {
         const found = seasonFromShow(row, show);
@@ -282,12 +288,24 @@ export async function resolveProviderIdentities(deps = {}) {
       }
     }
 
+    // One provider's word for an empty row (or a held id with no season): the TMDB title must exist
+    // and fit the row's year, otherwise the id goes to the AI match as a candidate instead.
+    if (decision.action === 'assign' && VERIFY_REASONS.has(decision.reason) && settings.providerTmdbVerify !== false) {
+      const { id, mediaType } = decision.identity;
+      const body = mediaType === 'tv' && showBody !== undefined ? showBody : await tmdb('/' + mediaType + '/' + id);
+      if (body === undefined) lookupMissed = true;
+      else {
+        const why = providerYearCheck(row, decision.identity, body);
+        if (why) decision = { ...decision, action: 'queue', reason: 'provider-unverified', detail: why, candidates: [{ id, type: mediaType }] };
+      }
+    }
+
     // imdb: fill only, never overwrite; conflicts are reported in the review, not in tmdb_identity_changes.
     let imdbOutcome = null;
     if (decision.imdb?.action === 'fill' && !row.imdb_id) {
       if (tierEnabled(settings, 'fill')) {
         imdbOutcome = await fillImdb(row, decision.imdb.imdbId).catch(() => false) ? 'imdb-filled' : 'imdb-taken';
-        if (imdbOutcome === 'imdb-filled') { stats.imdbFilled += 1; slugs.add(row.canonical_slug); }
+        if (imdbOutcome === 'imdb-filled') { stats.imdbFilled += 1; slugs.add(row.canonical_slug); current = { ...current, imdb_id: decision.imdb.imdbId }; }
       } else imdbOutcome = 'imdb-planned';
     } else if (decision.imdb?.action === 'conflict') imdbOutcome = 'imdb-conflict';
 
@@ -335,6 +353,8 @@ export async function resolveProviderIdentities(deps = {}) {
         // The merge kept the holder and deleted this row: its review row would break the foreign key.
         // The survivor's own review is re-decided on its next turn (its identity columns changed).
         if (result.action === 'merged' && result.dropId === row.id) continue;
+        current = { ...current, tmdb_id: decision.identity.id, tmdb_media_type: decision.identity.mediaType,
+          tmdb_season_number: result.season ?? decision.identity.season ?? null };
         await save({ ...base, status: 'done', outcome: withImdb(result.action) });
       } else if (result.action === 'planned') {
         stats.planned += 1;

@@ -131,3 +131,17 @@ test('claimsKey changes only when what providers claim changes', () => {
   assert.notEqual(claimsKey([nc(10), kk(11)]), claimsKey([nc(10), kk(12)]));
   assert.equal(claimsKey([nc(null)]), '');
 });
+
+test('providerYearCheck: existence, year within one, unaired passes, later seasons use their own date', async () => {
+  const { providerYearCheck } = await import('../src/providerIdentity.js');
+  const movie = { id: 1, mediaType: 'movie', season: null };
+  assert.equal(providerYearCheck({ year: 2024 }, movie, null), 'tmdb-missing');
+  assert.equal(providerYearCheck({ year: 2024 }, movie, { release_date: '2023-12-01' }), null);
+  assert.equal(providerYearCheck({ year: 2024 }, movie, { release_date: '2011-01-01' }), 'tmdb-year-2011');
+  assert.equal(providerYearCheck({ year: 2024 }, movie, { release_date: '' }), null);
+  assert.equal(providerYearCheck({ year: null }, movie, { release_date: '2011-01-01' }), null);
+  const show = { first_air_date: '2015-01-01', seasons: [{ season_number: 3, air_date: '2024-03-01' }, { season_number: 4, air_date: null }] };
+  assert.equal(providerYearCheck({ year: 2024 }, { id: 1, mediaType: 'tv', season: 3 }, show), null);
+  assert.equal(providerYearCheck({ year: 2026 }, { id: 1, mediaType: 'tv', season: 4 }, show), null);
+  assert.equal(providerYearCheck({ year: 2024 }, { id: 1, mediaType: 'tv', season: 1 }, show), 'tmdb-year-2015');
+});

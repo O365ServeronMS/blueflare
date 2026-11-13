@@ -574,7 +574,29 @@ export async function undoTmdbIdentity(changeId) {
       (row.tmdb_season_number ?? null) === (change.season ?? null);
     if (!holdsIdentity) { await client.query('ROLLBACK'); return { action: 'noop', reason: 'identity-changed-since' }; }
 
-    const restoreIdentity = () => setColumns(client, row.id, change.before || {});
+    // movies_imdb_identity_idx allows one season-less row per (imdb_id, media_type). Seasons of a series
+    // share the imdb id, so putting a season back to null can collide with its sibling: the imdb id of the
+    // row being restored is then dropped (it only duplicated the sibling's), and reported to the caller.
+    let imdbCleared = null;
+    const clearConflictingImdb = async () => {
+      const restored = change.before || {};
+      if (!('tmdb_season_number' in restored) || restored.tmdb_season_number != null) return;
+      const imdb = restored.imdb_id ?? row.imdb_id;
+      if (!imdb) return;
+      const clash = await client.query(
+        'SELECT 1 FROM movies WHERE imdb_id=$1 AND media_type=$2 AND tmdb_season_number IS NULL AND id<>$3 LIMIT 1',
+        [imdb, row.media_type, row.id]
+      );
+      if (!clash.rowCount) return;
+      await client.query('UPDATE movies SET imdb_id=NULL, updated_at=now() WHERE id=$1', [row.id]);
+      imdbCleared = imdb;
+    };
+    const restoreIdentity = async () => {
+      await clearConflictingImdb();
+      const values = { ...(change.before || {}) };
+      if (imdbCleared) delete values.imdb_id;
+      await setColumns(client, row.id, values);
+    };
     const slugs = [row.canonical_slug];
     let restoredId = row.id;
     if (change.kind === 'assign') {
@@ -628,7 +650,7 @@ export async function undoTmdbIdentity(changeId) {
       await logChange(client, { movieId: id, kind: 'blocked', source: change.source, tmdbId: change.tmdb_id, mediaType: change.media_type, season: change.season, reason: 'undone' });
     }
     await client.query('COMMIT');
-    return { action: 'undone', kind: change.kind, survivorId: row.id, restoredId, slugs };
+    return { action: 'undone', kind: change.kind, survivorId: row.id, restoredId, slugs, ...(imdbCleared ? { imdbCleared } : {}) };
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     throw error;

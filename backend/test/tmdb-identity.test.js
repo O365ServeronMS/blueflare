@@ -150,6 +150,24 @@ dbTest('assign writes the identity as pending and logs it; dry-run writes nothin
   assert.equal((await identity.undoTmdbIdentity(result.changeId)).reason, 'already-undone');
 });
 
+dbTest('undoing two seasons that share an imdb id does not hit the imdb unique index', async () => {
+  await reset();
+  const one1 = await movie({ media_type: 'series', title: 'Show 1', tmdb_identity_status: 'ineligible' });
+  const two = await movie({ media_type: 'series', title: 'Show 2', tmdb_identity_status: 'ineligible' });
+  const first = await identity.assignTmdbIdentity(one1.id, { tmdbId: 300, mediaType: 'tv', season: 1 });
+  const second = await identity.assignTmdbIdentity(two.id, { tmdbId: 300, mediaType: 'tv', season: 2 });
+  assert.deepEqual([first.action, second.action], ['assigned', 'assigned']);
+  // Seasons share the series imdb id; the index only covers season-less rows.
+  await pool.query("UPDATE movies SET imdb_id='tt0001' WHERE id = ANY($1::uuid[])", [[one1.id, two.id]]);
+  assert.equal((await identity.undoTmdbIdentity(first.changeId)).action, 'undone');
+  const undone = await identity.undoTmdbIdentity(second.changeId);
+  assert.equal(undone.action, 'undone');
+  assert.equal(undone.imdbCleared, 'tt0001');
+  const after = await one('SELECT imdb_id, tmdb_id, tmdb_season_number FROM movies WHERE id=$1', [two.id]);
+  assert.deepEqual([after.imdb_id, after.tmdb_id, after.tmdb_season_number], [null, null, null]);
+  assert.equal((await one('SELECT imdb_id FROM movies WHERE id=$1', [one1.id])).imdb_id, 'tt0001');
+});
+
 dbTest('a series with no evident season is blocked, logged once and left alone', async () => {
   await reset();
   const m = await movie({ media_type: 'series', title: 'Archer' });

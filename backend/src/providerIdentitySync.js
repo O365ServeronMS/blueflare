@@ -16,7 +16,8 @@
 import { config } from './config.js';
 import { pool } from './db.js';
 import {
-  AI_REVIEW_REASONS, SEASON_REVIEW_REASONS, VERIFY_REASONS, claimFromMetadata, providerYearCheck, claimsKey, decideProviderIdentity, tierEnabled, typeConflict
+  AI_REVIEW_REASONS, SEASON_REVIEW_REASONS, VERIFY_REASONS, claimFromMetadata, providerYearCheck, claimsKey, decideProviderIdentity, tierEnabled, typeConflict,
+  upsertIdentityView
 } from './providerIdentity.js';
 import { assignTmdbIdentity } from './tmdbIdentity.js';
 import { createTmdbClient } from './tmdbMatchAi.js';
@@ -416,4 +417,62 @@ export function formatProviderIdentityStats(walk, resolved) {
 /** Test hook. */
 export function resetProviderIdentityCursor() {
   resolveCursor.afterId = null;
+}
+
+// ---------------------------------------------------------------------------------------------
+// 3. Upsert guard
+
+/**
+ * Year check for the ids the sync upsert would write straight into an empty row (the one write path
+ * that does not go through resolveProviderIdentities). Called by the worker before upsertCanonical,
+ * never inside its transaction. Returns the record unchanged when nothing would be filled or the TMDB
+ * title fits the row's year; otherwise the record without its TMDB tuple, so upsert fills nothing and
+ * providerIdentitySync later decides it (the ids stay in the source metadata). A missing key, an
+ * exhausted per-cycle budget or a failed lookup also strip the tuple: unverified ids are never written.
+ * One TMDB lookup per row that is about to be filled, cached by title for the process.
+ */
+export function createUpsertIdentityGuard({ settings = config, db = pool, client = null } = {}) {
+  const budget = Math.max(0, settings.providerTmdbLookupsPerCycle ?? 0);
+  const cache = new Map();
+  let used = 0;
+  let tmdb = client;
+  const strip = (record) => ({ ...record, tmdbId: null, tmdbMediaType: null, tmdbSeasonNumber: null });
+
+  const guard = async (incoming) => {
+    if (settings.providerTmdbVerify === false) return incoming;
+    const view = upsertIdentityView(incoming, settings);
+    const id = Number(view.tmdbId);
+    const mediaType = view.tmdbMediaType;
+    if (!Number.isSafeInteger(id) || id <= 0 || !['movie', 'tv'].includes(mediaType)) return incoming;
+    const season = mediaType === 'tv' ? Number(view.tmdbSeasonNumber) : null;
+    if (mediaType === 'tv' && !(Number.isInteger(season) && season >= 1)) return incoming; // upsert fills no tuple without a season
+
+    const existing = (await db.query(
+      'SELECT m.year, m.tmdb_id, m.tmdb_media_type, m.tmdb_season_number, m.tmdb_identity_pinned FROM movie_provider_sources s ' +
+      'JOIN movies m ON m.id=s.movie_id WHERE s.provider=$1 AND s.provider_slug=$2 LIMIT 1',
+      [incoming.provider, incoming.providerSlug]
+    ).catch(() => ({ rows: [] }))).rows[0];
+    if (existing) {
+      if (existing.tmdb_identity_pinned === true) return incoming;
+      const empty = existing.tmdb_id === null || existing.tmdb_id === undefined;
+      const seasonFill = !empty && mediaType === 'tv' && Number(existing.tmdb_id) === id && existing.tmdb_media_type === 'tv' &&
+        (existing.tmdb_season_number === null || existing.tmdb_season_number === undefined);
+      if (!empty && !seasonFill) return incoming; // a held tuple is never replaced here
+    }
+    const year = existing?.year ?? incoming.year;
+    const key = mediaType + ':' + id;
+    let body = cache.get(key);
+    if (body === undefined) {
+      const ready = Boolean(tmdb) || Boolean(settings.tmdbEnabled !== false && settings.tmdbApiKey);
+      if (!ready || used >= budget) return strip(incoming);
+      used += 1;
+      tmdb ??= createTmdbClient({ concurrency: 2 });
+      try { body = await tmdb.get('/' + mediaType + '/' + id, { language: '' }); } catch { return strip(incoming); }
+      if (body === undefined) return strip(incoming);
+      cache.set(key, body ?? null);
+    }
+    return providerYearCheck({ year }, { id, mediaType, season }, body) ? strip(incoming) : incoming;
+  };
+  guard.resetBudget = () => { used = 0; cache.clear(); };
+  return guard;
 }

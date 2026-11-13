@@ -81,7 +81,11 @@ import { catalogLock, runCatalogAuditLoop } from './catalogAudit.js';
 import { getAi } from './ai/index.js';
 import { promoteVerifiedMatches } from './tmdbIdentity.js';
 import { refreshSeasonInference } from './tmdbSeasonInferSync.js';
-import { formatProviderIdentityStats, refreshProviderIdClaims, resolveProviderIdentities } from './providerIdentitySync.js';
+import { createUpsertIdentityGuard, formatProviderIdentityStats, refreshProviderIdClaims, resolveProviderIdentities } from './providerIdentitySync.js';
+
+// Year check for ids the upsert would fill into an empty row; budget and cache reset every sync cycle.
+const upsertIdentityGuard = createUpsertIdentityGuard();
+const upsertGuarded = async (normalized, options) => upsertCanonical(await upsertIdentityGuard(normalized), options);
 import { backfillMdblistRatings, formatMdblistStats, syncMdblistRatings } from './mdblistRatingsSync.js';
 import {
   fetchTmdbRecommendations,
@@ -162,7 +166,7 @@ async function syncPage(provider, page) {
       normalized = summaryFallback(provider, item);
     }
     try {
-      const result = await upsertCanonical(normalized);
+      const result = await upsertGuarded(normalized);
       if (result.changed) changedSlugs.push(result.movie.canonical_slug);
       changedSlugs.push(...(result.hiddenSlugs ?? []));
       imported += 1;
@@ -303,7 +307,7 @@ async function refreshStaleSourcesPass() {
     deps: {
       listStale: listStaleSources,
       mapLimit,
-      upsert: upsertCanonical,
+      upsert: upsertGuarded,
       recordNotFound: recordSourceNotFound,
       markUnavailable: markSourceUnavailable,
       deleteIfNoSource: deleteMovieIfNoAvailableSource,
@@ -740,6 +744,7 @@ async function reconcileDuplicates() {
 }
 
 async function syncCycle() {
+  upsertIdentityGuard.resetBudget();
   const headResults = [];
   if (config.syncEnabled) {
     for (const provider of providersFor(config.syncProviders)) {
@@ -1048,7 +1053,7 @@ function startCatalogAuditLoop() {
   auditLoop = runCatalogAuditLoop({
     signal: stopController.signal,
     providers: new Map(providers.map((provider) => [provider.name.toLowerCase(), provider])),
-    upsert: upsertCanonical,
+    upsert: upsertGuarded,
     onChanged: (slugs) => invalidateForSlugs(slugs)
   }).catch((error) => console.error('[worker] catalog audit loop stopped unexpectedly', error));
 }

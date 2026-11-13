@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  identityMetaOf, pickFindResult, refreshProviderIdClaims, resetProviderIdentityCursor, resolveProviderIdentities,
+  createUpsertIdentityGuard, identityMetaOf, pickFindResult, refreshProviderIdClaims, resetProviderIdentityCursor, resolveProviderIdentities,
   reviewFingerprint, reviewUnchanged, seasonFromShow
 } from '../src/providerIdentitySync.js';
 import { claimFromMetadata } from '../src/providerIdentity.js';
@@ -284,4 +284,54 @@ test('the stored key describes the row after its own imdb and tmdb writes', asyn
   const claims = row.provider_claims.map((entry) => claimFromMetadata(entry.provider, entry.meta));
   assert.equal(h.saved[0].key, reviewFingerprint(after, claims, { ...h.deps.settings }));
   assert.equal(reviewUnchanged({ ...after, review_key: h.saved[0].key }, reviewFingerprint(after, claims, h.deps.settings)), true);
+});
+
+// ---- upsert guard ----------------------------------------------------------------------------
+
+function guardHarness({ existing = null, bodies = {}, settings = {} } = {}) {
+  const gets = [];
+  const db = { query: async () => ({ rows: existing ? [existing] : [] }) };
+  const client = { get: async (path) => { gets.push(path); if (path in bodies) return bodies[path]; throw new Error('404'); } };
+  const guard = createUpsertIdentityGuard({ settings: { ...base, providerTmdbVerify: true, ...settings }, db, client });
+  return { guard, gets };
+}
+const incomingFilm = (extra = {}) => ({ provider: 'kkphim', providerSlug: 'phim', year: 2020, tmdbId: 10, tmdbMediaType: 'movie', tmdbSeasonNumber: null, imdbId: 'tt1', ...extra });
+
+test('upsert guard: a fitting TMDB year keeps the tuple, one lookup per title', async () => {
+  const { guard, gets } = guardHarness({ bodies: { '/movie/10': { release_date: '2020-05-01' } } });
+  assert.equal((await guard(incomingFilm())).tmdbId, 10);
+  assert.equal((await guard(incomingFilm({ providerSlug: 'other' }))).tmdbId, 10);
+  assert.deepEqual(gets, ['/movie/10']);
+});
+
+test('upsert guard: a distant year, a 404 or an exhausted budget strips the tuple but keeps imdb', async () => {
+  const far = guardHarness({ bodies: { '/movie/10': { release_date: '1999-01-01' } } });
+  const out = await far.guard(incomingFilm());
+  assert.deepEqual([out.tmdbId, out.tmdbMediaType, out.tmdbSeasonNumber, out.imdbId], [null, null, null, 'tt1']);
+  assert.equal((await guardHarness().guard(incomingFilm())).tmdbId, null);
+  const capped = guardHarness({ bodies: { '/movie/10': { release_date: '2020-01-01' } }, settings: { providerTmdbLookupsPerCycle: 0 } });
+  assert.equal((await capped.guard(incomingFilm())).tmdbId, null);
+});
+
+test('upsert guard: no lookup when nothing would be filled', async () => {
+  const held = guardHarness({ existing: { year: 2020, tmdb_id: 99, tmdb_media_type: 'movie', tmdb_season_number: null, tmdb_identity_pinned: false } });
+  assert.equal((await held.guard(incomingFilm())).tmdbId, 10);
+  const pinned = guardHarness({ existing: { year: 2020, tmdb_id: null, tmdb_identity_pinned: true } });
+  assert.equal((await pinned.guard(incomingFilm())).tmdbId, 10);
+  const none = guardHarness();
+  assert.equal((await none.guard(incomingFilm({ tmdbId: null }))).tmdbId, null);
+  const nguonc = guardHarness({ settings: { providerTmdbTiers: [] } });
+  assert.equal((await nguonc.guard(incomingFilm({ provider: 'nguonc' }))).imdbId, 'tt1');
+  assert.deepEqual([...held.gets, ...pinned.gets, ...none.gets, ...nguonc.gets], []);
+  const off = guardHarness({ settings: { providerTmdbVerify: false } });
+  assert.equal((await off.guard(incomingFilm())).tmdbId, 10);
+  assert.deepEqual(off.gets, []);
+});
+
+test('upsert guard: a tv season is checked against that season\'s air date', async () => {
+  const body = { first_air_date: '2010-01-01', seasons: [{ season_number: 2, air_date: '2020-03-01' }] };
+  const ok = guardHarness({ bodies: { '/tv/7': body } });
+  assert.equal((await ok.guard(incomingFilm({ tmdbId: 7, tmdbMediaType: 'tv', tmdbSeasonNumber: 2 }))).tmdbId, 7);
+  const bad = guardHarness({ bodies: { '/tv/7': body } });
+  assert.equal((await bad.guard(incomingFilm({ tmdbId: 7, tmdbMediaType: 'tv', tmdbSeasonNumber: 2, year: 2012 }))).tmdbId, null);
 });

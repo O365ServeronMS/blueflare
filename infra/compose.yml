@@ -303,6 +303,9 @@ services:
     volumes:
       - ${BACKUP_HOST_DIR:-./backups/postgres}:/backups
     networks:
+    # Image postgres khai báo VOLUME /var/lib/postgresql; backup chỉ cần pg_dump nên dùng tmpfs để khỏi sinh volume ẩn danh mỗi lần recreate.
+    tmpfs:
+      - /var/lib/postgresql
       - backend
 
 networks:

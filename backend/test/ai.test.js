@@ -580,3 +580,31 @@ test('opencode: one call in flight per key, across roles; OpenRouter calls are n
   assert.equal(peak, 1);
   assert.equal(fetch.calls.filter((c) => c.url.startsWith(OC)).length, 3);
 });
+
+const R9 = 'http://9router:20128/v1';
+const r9Env = (over = {}) => env({ ROUTER9_BASE_URL: R9 + '/', ROUTER9_API_KEY: 'r9-key', ...over });
+
+test('9router: first in line, plain OpenAI call, falls through to opencode/OpenRouter on 429', async () => {
+  const { ai, fetch } = make(r9Env({ OPENCODE_URL: OC, OPENCODE_SERVER_PASSWORD: 'p' }), (call) => (call.url.startsWith(R9) ? { status: 200, body: answer('r9').body } : reply(call, 'other')));
+  assert.deepEqual(ai.modelsFor('MATCH').map((m) => m.provider + ':' + m.model), ['9router:oc/deepseek-v4.1-flash-free', 'opencode:opencode/big-pickle', 'openrouter:openrouter/free']);
+  const result = await ai.chat('MATCH', user('hi'));
+  assert.equal(result.provider, '9router');
+  assert.equal(fetch.calls[0].url, R9 + '/chat/completions');
+  assert.equal(fetch.calls[0].auth, 'Bearer r9-key');
+  for (const field of ['usage', 'reasoning']) assert.equal(field in fetch.calls[0].body, false, field);
+  assert.equal(fetch.calls[0].init.headers['http-referer'], undefined);
+  assert.equal(fetch.calls[0].body.model, 'oc/deepseek-v4.1-flash-free');
+
+  const down = make(r9Env({ AI_RETRIES: '0' }), (call) => (call.url.startsWith(R9) ? { status: 429, body: { error: { message: 'slow down' } } } : answer('or')));
+  const fallback = await down.ai.chat('MATCH', user('hi'));
+  assert.equal(fallback.provider, 'openrouter');
+  assert.equal(fallback.text, 'or');
+});
+
+test('9router: model env, no key = no route, key without URL is a config error', () => {
+  assert.deepEqual(make(r9Env({ ROUTER9_MODEL_SAMPLE: 'a/b,c' }), () => answer('x')).ai.modelsFor('SAMPLE').filter((m) => m.provider === '9router').map((m) => m.model), ['a/b', 'c']);
+  assert.equal(make(env(), () => answer('x')).ai.modelsFor('MATCH').some((m) => m.provider === '9router'), false);
+  assert.equal(make(r9Env({ ROUTER9_API_KEY: '' }), () => answer('x')).ai.modelsFor('MATCH').some((m) => m.provider === '9router'), false);
+  assert.throws(() => readAiConfig({ ROUTER9_API_KEY: 'k' }, { warn() {} }), AiConfigError);
+  assert.throws(() => readAiConfig({ ROUTER9_BASE_URL: 'ftp://x', ROUTER9_API_KEY: 'k' }, { warn() {} }), AiConfigError);
+});

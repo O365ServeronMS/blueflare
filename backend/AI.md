@@ -65,6 +65,13 @@ which takes text only. A role gets an opencode route only from `OPENCODE_MODEL_<
 
 ## Routing and fallback
 
+- With `ROUTER9_API_KEY` (+ `ROUTER9_BASE_URL`, required with it): 9router first × `ROUTER9_MODEL_<ROLE>`
+  (else `ROUTER9_MODEL_PRIMARY`, else the role default; MATCH: `oc/deepseek-v4.1-flash-free`). It is a plain
+  OpenAI-compatible `POST {base}/chat/completions` with `Authorization: Bearer`, no OpenRouter-only
+  fields (`usage`, `reasoning`, referer headers, `/models`); reasoning goes as `reasoning_effort`. Text
+  only: a vision role gets no 9router route. 9router is a separate container stack (`/opt/stacks/9router`,
+  pinned image, its own backup); the worker reaches it at `http://9router:20128/v1` over the external
+  network `blueflare-ai` that only they share. Create it once: `docker network create blueflare-ai`.
 - With `OPENCODE_URL`: opencode × `OPENCODE_MODEL_<ROLE>` (else `OPENCODE_MODEL_PRIMARY`, else
   the role default), then OpenRouter × `OPENROUTER_MODEL_<ROLE>` (else `OPENROUTER_MODEL_PRIMARY`,
   else the role default). Without it: OpenRouter only.
@@ -107,6 +114,9 @@ Defaults live in `src/ai/config.js` (`AI_DEFAULTS`, roles); `.env.example` mirro
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
+| `ROUTER9_BASE_URL` | empty | 9router base URL incl. `/v1`; required when `ROUTER9_API_KEY` is set (startup error otherwise) |
+| `ROUTER9_API_KEY` | empty | secret, comma list; empty = no 9router route |
+| `ROUTER9_MODEL_PRIMARY` / `_<ROLE>` | role default (MATCH: `oc/deepseek-v4.1-flash-free`) | `id[:rpm[:rpd]]`, best first |
 | `OPENCODE_URL` | empty | the opencode sidecar (`http://opencode:4096` in the stack); empty = OpenRouter only |
 | `OPENCODE_SERVER_PASSWORD` | empty | secret, sidecar basic-auth password, shared by the `opencode` service and the worker; required when `OPENCODE_URL` is set (startup error otherwise) |
 | `OPENCODE_MODEL_PRIMARY` / `_<ROLE>` | role default (MATCH: `opencode/big-pickle`) | `providerID/modelID`, comma list, best first |

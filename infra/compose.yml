@@ -230,6 +230,9 @@ services:
       start_period: 2m
     networks:
       - backend
+      # Shared only with the 9router stack (/opt/stacks/9router); ROUTER9_BASE_URL=http://9router:20128/v1.
+      # Created once by hand: docker network create blueflare-ai (compose refuses to start without it).
+      - ai
 
   opencode:
     container_name: blueflare-opencode
@@ -300,17 +303,20 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    volumes:
-      - ${BACKUP_HOST_DIR:-./backups/postgres}:/backups
-    networks:
     # Image postgres khai báo VOLUME /var/lib/postgresql; backup chỉ cần pg_dump nên dùng tmpfs để khỏi sinh volume ẩn danh mỗi lần recreate.
     tmpfs:
       - /var/lib/postgresql
+    volumes:
+      - ${BACKUP_HOST_DIR:-./backups/postgres}:/backups
+    networks:
       - backend
 
 networks:
   backend:
     driver: bridge
+  ai:
+    name: blueflare-ai
+    external: true
 
 volumes:
   postgres-data:

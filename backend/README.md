@@ -72,6 +72,13 @@ the browser connects to the selected provider.
 | `image-cache-init` | One-shot `mkdir`+`chown` of the image cache directory. It exits 0 and stays exited; `api` waits for that completion because it runs as uid 1000 and cannot write a root-owned bind mount. |
 | `backup` | Scheduled dump to an S3-compatible store. On when the `BACKUP_S3_*` endpoint and keys are set; idles without backing up when they are missing or `BACKUP_ENABLED=false`. |
 
+The AI module's first provider, 9router, is not part of this stack: it runs from `/opt/stacks/9router`
+(pinned image, loopback-only dashboard port, own daily backup in `/opt/stacks/9router/backups`). The
+`worker` reaches it as `http://9router:20128/v1` over the external network `blueflare-ai`, which only
+they share. Create it once on a new host, before the first `docker compose up`:
+`docker network create blueflare-ai`. Without it compose refuses to start. 9router's provider logins and
+API keys are outside the PostgreSQL dump and cannot be regenerated.
+
 The `frontend` service is covered under [Caddy](#caddy). Caddy is the public TLS
 boundary.
 

@@ -36,8 +36,9 @@ const shared = { blockedUntil: 0, calibration: createTokenCalibration(), state: 
  * Rows with a cast of two or more go first (the gate is strongest there).
  * scope 'priority' keeps only films first seen within freshMs and films whose last run
  * errored (the retries): the share of the daily quota that the old backlog may not touch.
- * Only runs on the row's current metadata (meta_key) count: after MAX_REAL_TRIES 'none' or
- * 'unverifiable' answers a title is given up (obscure local titles often have no TMDB page)
+ * A row with no original_title is searched by its title (the gate is unchanged).
+ * Only runs on the row's current metadata (meta_key) count: after MAX_REAL_TRIES 'none',
+ * 'unverifiable' or verified-but-skipped (assignTmdbIdentity refused the pick) answers a title is given up (obscure local titles often have no TMDB page)
  * until its title, original title or year changes, which also lifts the retry wait.
  */
 export const MAX_REAL_TRIES = 3;
@@ -57,12 +58,12 @@ export async function listAiMatchCandidates({ mode, limit, retryMs, errorRetryMs
     'm.countries, m.actors, m.episode_total, m.duration, m.overview FROM movies m ' +
     "WHERE m.catalog_state='ready' AND m.tmdb_id IS NULL " +
     "  AND m.tmdb_match_status IS DISTINCT FROM 'verified' " +
-    "  AND COALESCE(m.original_title, '') <> '' " +
+    "  AND (COALESCE(m.original_title, '') <> '' OR COALESCE(m.title, '') <> '') " +
     '  AND NOT EXISTS (SELECT 1 FROM tmdb_match_ai_runs r WHERE r.movie_id = m.id AND r.meta_key IS NOT DISTINCT FROM ' + META_KEY_SQL +
     "    AND r.created_at > now() - (CASE WHEN r.outcome = 'error' THEN $2::bigint ELSE $1::bigint END) * interval '1 millisecond' " +
     "    AND ($3::text = 'dry-run' OR r.mode = 'apply' OR r.outcome IS DISTINCT FROM 'verified')) " +
     '  AND (SELECT count(*) FROM tmdb_match_ai_runs t WHERE t.movie_id = m.id AND t.meta_key = ' + META_KEY_SQL +
-    "    AND t.outcome IN ('none', 'unverifiable')) < " + MAX_REAL_TRIES + ' ' +
+    "    AND (t.outcome IN ('none', 'unverifiable') OR (t.outcome = 'verified' AND t.status = 'skipped'))) < " + MAX_REAL_TRIES + ' ' +
     priority +
     "ORDER BY (jsonb_typeof(m.actors) = 'array' AND jsonb_array_length(m.actors) >= 2) DESC, " +
     'm.catalog_sort_at DESC NULLS LAST LIMIT $4',

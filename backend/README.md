@@ -296,7 +296,7 @@ route (AI keys + models), and `TMDB_ENABLED` plus a TMDB key.
   not re-examined for `TMDB_MATCH_AI_RETRY_MS`; errors wait
   `TMDB_MATCH_AI_ERROR_RETRY_MS`. Rows with a cast of two or more go first.
 - Attempt cap (title scope only; provider reviews are ranked once per decision and not counted): each run stores `meta_key` = md5(title|original title|year) (migration 035).
-  After 3 `none`/`unverifiable` runs on the current key a title is given up (obscure local
+  After 3 runs on the current key that ended `none`, `unverifiable`, or `verified` but `skipped` (`assignTmdbIdentity` refused the pick) a title is given up (obscure local
   titles often have no TMDB page; errors do not count). A changed title, original title or year
   is a new key: the title is listed again at once, with a fresh cap. Rows the catalog audit
   splits off are new rows and go through the `priority` scope.

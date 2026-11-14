@@ -36,5 +36,30 @@ dbTest('listAiMatchCandidates: priority keeps new films and retries, all keeps t
   assert.deepEqual(priority.sort(), ['ailist-new', 'ailist-retry']);
   await pool.query('DELETE FROM tmdb_match_ai_runs');
   await pool.query("DELETE FROM movies WHERE canonical_slug LIKE 'ailist-%'");
+});
+
+dbTest('listAiMatchCandidates: title stands in for a missing original_title; verified-but-skipped runs count toward the give-up limit', async () => {
+  const { pool, migrate } = await import('../src/db.js');
+  const { listAiMatchCandidates, META_KEY_SQL } = await import('../src/tmdbMatchAiSync.js');
+  await migrate();
+  await pool.query('DELETE FROM tmdb_match_ai_runs');
+  await pool.query("DELETE FROM movies WHERE canonical_slug LIKE 'ailist2-%'");
+  const insert = (slug, original, title = slug) => pool.query(
+    "INSERT INTO movies (canonical_slug, title, normalized_title, original_title, year, media_type, catalog_state, actors, created_at) " +
+    "VALUES ($1, $2, $1, $3, 2020, 'tv', 'ready', '[]'::jsonb, now() - interval '30 days') RETURNING id", [slug, title, original]
+  ).then((r) => r.rows[0].id);
+  const skipped = (id, n) => pool.query(
+    "INSERT INTO tmdb_match_ai_runs (run_id, mode, movie_id, status, outcome, created_at, meta_key) " +
+    "SELECT gen_random_uuid(), 'apply', m.id, 'skipped', 'verified', now() - interval '30 days', " + META_KEY_SQL +
+    ' FROM movies m, generate_series(1, $2::int) WHERE m.id=$1', [id, n]);
+  await insert('ailist2-notitle-orig', '');
+  await insert('ailist2-empty-both', '', '');
+  await skipped(await insert('ailist2-skip-two', 'Orig two'), 2);
+  await skipped(await insert('ailist2-skip-three', 'Orig three'), 3);
+  const rows = await listAiMatchCandidates({ mode: 'apply', limit: 50, retryMs: 3600000, errorRetryMs: 3600000, scope: 'all' });
+  const slugs = rows.map((r) => r.canonical_slug).filter((s) => s.startsWith('ailist2-')).sort();
+  assert.deepEqual(slugs, ['ailist2-notitle-orig', 'ailist2-skip-two']);
+  await pool.query('DELETE FROM tmdb_match_ai_runs');
+  await pool.query("DELETE FROM movies WHERE canonical_slug LIKE 'ailist2-%'");
   await pool.end();
 });

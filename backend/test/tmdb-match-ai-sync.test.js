@@ -179,7 +179,7 @@ test('listAiMatchCandidates: SQL shape, parameters, ordering and retry rules', a
   assert.doesNotMatch(sql, /tmdb_id_source|tmdb_match_id/);
   // Runs count only on the current metadata; three real answers give the title up.
   assert.match(sql, /r\.meta_key IS NOT DISTINCT FROM md5\(/);
-  assert.match(sql, /t\.outcome IN \('none', 'unverifiable'\)\) < 3 /);
+  assert.match(sql, /t\.outcome IN \('none', 'unverifiable'\) OR \(t\.outcome = 'verified' AND t\.status = 'skipped'\)\)\) < 3 /);
 });
 
 test('recordAiRun writes one idempotent row with the outcome', async () => {

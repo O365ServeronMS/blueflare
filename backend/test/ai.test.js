@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { attemptLine, createAi, AiError, AiConfigError, imagePart, readAiConfig, registerRole, fakeTransport } from '../src/ai/index.js';
+import { roleRoutes } from '../src/ai/config.js';
 import { createQuotaLedger } from '../src/aiQuotaLedger.js';
 import { checkSchema, extractJson, isFree, parseModels } from '../src/ai/util.js';
 
 // A role of the test's own: the module ships MATCH and DEDUPE only, both with defaults.
 registerRole('SAMPLE');
 
-const R9 = 'http://9router:20128/v1';
+const NR = 'http://9router:20128/v1';
 const OR = 'https://openrouter.ai/api/v1';
 const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
 
@@ -30,7 +31,7 @@ function transport(respond) {
 const answer = (content, extra = {}) => ({ status: 200, body: { choices: [{ message: { content }, finish_reason: 'stop' }], ...extra } });
 const orUsage = { usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, cost: 0.0001, completion_tokens_details: { reasoning_tokens: 2 } } };
 const env = (over = {}) => ({ OPENROUTER_API_KEY: 'or-key', ...over });
-const r9Env = (over = {}) => env({ ROUTER9_BASE_URL: R9 + '/', ROUTER9_API_KEY: 'r9-key', ...over });
+const nrEnv = (over = {}) => env({ NINEROUTER_BASE_URL: NR + '/', NINEROUTER_API_KEY: 'r9-key', ...over });
 const make = (envVars, respond, extra = {}) => {
   const fetch = transport(respond);
   const warnings = [];
@@ -40,7 +41,7 @@ const make = (envVars, respond, extra = {}) => {
   return { ai, fetch, warnings };
 };
 const user = (text) => [{ role: 'user', content: text }];
-const isR9 = (call) => call.url.startsWith(R9);
+const isNr = (call) => call.url.startsWith(NR);
 
 test('a) without 9router every call goes to OpenRouter with OPENROUTER_MODEL_<ROLE>', async () => {
   const { ai, fetch } = make(env({ OPENROUTER_MODEL_SAMPLE: 'vendor/one,vendor/two' }), () => answer('xin chào', orUsage));
@@ -53,13 +54,13 @@ test('a) without 9router every call goes to OpenRouter with OPENROUTER_MODEL_<RO
   assert.equal(fetch.calls[0].auth, 'Bearer or-key');
   assert.deepEqual(ai.modelsFor('SAMPLE'), [{ provider: 'openrouter', model: 'vendor/one' }, { provider: 'openrouter', model: 'vendor/two' }]);
   // MATCH defaults: 9router's free model first when configured, openrouter/free after.
-  assert.deepEqual(make(r9Env(), () => answer('x')).ai.modelsFor('MATCH'), [{ provider: '9router', model: 'oc/deepseek-v4.1-flash-free' }, { provider: 'openrouter', model: 'openrouter/free' }]);
+  assert.deepEqual(make(nrEnv(), () => answer('x')).ai.modelsFor('MATCH'), [{ provider: '9router', model: 'oc/deepseek-v4.1-flash-free' }, { provider: 'openrouter', model: 'openrouter/free' }]);
   assert.deepEqual(make(env(), () => answer('x')).ai.modelsFor('MATCH'), [{ provider: 'openrouter', model: 'openrouter/free' }]);
 });
 
 test('b) a 401 and a network error / timeout fall through to the next provider', async () => {
-  const vars = r9Env({ ROUTER9_MODEL_SAMPLE: 'r/x', OPENROUTER_MODEL_PRIMARY: 'or/model' });
-  const { ai, warnings } = make(vars, (call) => (isR9(call) ? { status: 401, body: {} } : answer('ok')));
+  const vars = nrEnv({ NINEROUTER_MODEL_SAMPLE: 'r/x', OPENROUTER_MODEL_PRIMARY: 'or/model' });
+  const { ai, warnings } = make(vars, (call) => (isNr(call) ? { status: 401, body: {} } : answer('ok')));
   assert.equal((await ai.chat('SAMPLE', user('x'))).provider, 'openrouter');
   assert.ok(warnings.some((w) => /9router k1 \([0-9a-f]{6}\) disabled/.test(w)));
   assert.ok(warnings.every((w) => !w.includes('r9-key')), 'the key never reaches a log line');
@@ -69,7 +70,7 @@ test('b) a 401 and a network error / timeout fall through to the next provider',
   assert.ok(!JSON.stringify({ m: err.message, a: err.attempts }).includes('bad-or-key'), 'keys never reach an error');
 
   const timeout = Object.assign(new Error('t'), { name: 'TimeoutError' });
-  const { ai: flaky } = make(vars, (call) => (isR9(call) ? timeout : answer('ok')));
+  const { ai: flaky } = make(vars, (call) => (isNr(call) ? timeout : answer('ok')));
   const r = await flaky.chat('SAMPLE', user('x'));
   assert.deepEqual(r.attempts.map((a) => a.reason), ['timeout', 'ok']);
 });
@@ -101,13 +102,13 @@ test('c) the OpenRouter body has usage, reasoning and its headers; usage/cost ma
 });
 
 test('d) bad JSON moves to the next pair; when every pair fails AiError lists every reason', async () => {
-  const vars = r9Env({ ROUTER9_MODEL_MATCH: 'r9/deep', OPENROUTER_MODEL_MATCH: 'or/a,or/b' });
+  const vars = nrEnv({ NINEROUTER_MODEL_MATCH: 'r9/deep', OPENROUTER_MODEL_MATCH: 'or/a,or/b' });
   const { ai } = make(vars, (call) => answer(call.body.model === 'or/b' ? '```json\n{"results":[1]}\n```' : 'not json at all'));
   const good = await ai.json('MATCH', user('rank'));
   assert.deepEqual(good.data, { results: [1] });
   assert.deepEqual(good.attempts.map((a) => a.model + ':' + a.reason.split(':')[0]), ['r9/deep:bad JSON', 'or/a:bad JSON', 'or/b:ok']);
 
-  const { ai: bad } = make(vars, (call) => (isR9(call) ? answer('{"oops"') : call.body.model === 'or/a' ? { status: 400, body: { error: { message: 'bad request' } } } : { status: 200, body: '' }));
+  const { ai: bad } = make(vars, (call) => (isNr(call) ? answer('{"oops"') : call.body.model === 'or/a' ? { status: 400, body: { error: { message: 'bad request' } } } : { status: 200, body: '' }));
   const error = await bad.json('MATCH', user('rank')).catch((e) => e);
   assert.ok(error instanceof AiError);
   assert.equal(error.kind, 'content');
@@ -133,7 +134,7 @@ test('d) bad JSON moves to the next pair; when every pair fails AiError lists ev
 
 test('e) a vision role skips models that cannot read images', async () => {
   registerRole('POSTER_TEST', { vision: true });
-  const vars = r9Env({ ROUTER9_MODEL_POSTER_TEST: 'r9/x', OPENROUTER_MODEL_POSTER_TEST: 'text-only,seeing,or/blind,or/eyes' });
+  const vars = nrEnv({ NINEROUTER_MODEL_POSTER_TEST: 'r9/x', OPENROUTER_MODEL_POSTER_TEST: 'text-only,seeing,or/blind,or/eyes' });
   const respond = (call) => {
     if (call.url.endsWith('/models')) return { status: 200, body: { data: [{ id: 'or/blind', architecture: { input_modalities: ['text'] } }, { id: 'or/eyes', architecture: { input_modalities: ['text', 'image'] } }] } };
     if (call.body.model === 'text-only') return { status: 400, body: { error: { message: 'This model does not support image input' } } };
@@ -155,7 +156,7 @@ test('e) a vision role skips models that cannot read images', async () => {
   fetch.calls.length = 0;
   await ai.chat('POSTER_TEST', user('text'));
   assert.equal(fetch.calls[0].body.model, 'text-only');
-  assert.ok(!fetch.calls.some(isR9));
+  assert.ok(!fetch.calls.some(isNr));
   // A non-vision role refuses images outright.
   await assert.rejects(ai.chat('SAMPLE', messages), TypeError);
   assert.throws(() => imagePart(Buffer.from('nope')), TypeError);
@@ -203,11 +204,11 @@ test('g) a role added with one line works without touching the module', async ()
   assert.equal(ai.available('SUMMARY_TEST'), true);
   assert.equal((await ai.chat('SUMMARY_TEST', user('long text'))).text, 'short');
   assert.equal(fetch.calls[0].body.model, 'vendor/summary:free');
-  // No default and no ROUTER9_MODEL_*: no 9router route even with 9router configured.
-  assert.deepEqual(make(r9Env(), () => answer('x')).ai.modelsFor('SUMMARY_TEST'), [{ provider: 'openrouter', model: 'vendor/summary:free' }]);
-  const { ai: own } = make(r9Env({ ROUTER9_MODEL_PRIMARY: 'r/p1', ROUTER9_MODEL_SUMMARY_TEST: 'r/mine' }), () => answer('x'));
+  // No default and no NINEROUTER_MODEL_*: no 9router route even with 9router configured.
+  assert.deepEqual(make(nrEnv(), () => answer('x')).ai.modelsFor('SUMMARY_TEST'), [{ provider: 'openrouter', model: 'vendor/summary:free' }]);
+  const { ai: own } = make(nrEnv({ NINEROUTER_MODEL_PRIMARY: 'r/p1', NINEROUTER_MODEL_SUMMARY_TEST: 'r/mine' }), () => answer('x'));
   assert.deepEqual(own.modelsFor('SUMMARY_TEST'), [{ provider: '9router', model: 'r/mine' }, { provider: 'openrouter', model: 'vendor/summary:free' }]);
-  const { ai: shared } = make(r9Env({ ROUTER9_MODEL_PRIMARY: 'r/p1,r/p2', OPENROUTER_MODEL_PRIMARY: 'or/shared' }), () => answer('x'));
+  const { ai: shared } = make(nrEnv({ NINEROUTER_MODEL_PRIMARY: 'r/p1,r/p2', OPENROUTER_MODEL_PRIMARY: 'or/shared' }), () => answer('x'));
   assert.deepEqual(shared.modelsFor('SUMMARY_TEST').map((m) => m.model), ['r/p1', 'r/p2', 'or/shared']);
   await assert.rejects(ai.chat('NOT_A_ROLE', user('x')), /unknown AI role/);
 });
@@ -380,7 +381,7 @@ test('AI_REASONING overrides the caller; OpenRouter takes a reasoning object, 9r
     if (seen.length === 1) return new Response('{}', { status: 500 });
     return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }], usage: {} }), { status: 200, headers: { 'content-type': 'application/json' } });
   };
-  const ai = createAi({ env: { ROUTER9_BASE_URL: R9, ROUTER9_API_KEY: 'k', ROUTER9_MODEL_SAMPLE: 'r/m', OPENROUTER_API_KEY: 'o', OPENROUTER_MODEL_SAMPLE: 'x/y', AI_REASONING: 'medium', AI_RETRIES: '0' }, transport, sleep: async () => {}, warn: () => {} });
+  const ai = createAi({ env: { NINEROUTER_BASE_URL: NR, NINEROUTER_API_KEY: 'k', NINEROUTER_MODEL_SAMPLE: 'r/m', OPENROUTER_API_KEY: 'o', OPENROUTER_MODEL_SAMPLE: 'x/y', AI_REASONING: 'medium', AI_RETRIES: '0' }, transport, sleep: async () => {}, warn: () => {} });
   await ai.chat('SAMPLE', [{ role: 'user', content: 'hi' }], { reasoning: 'off' });
   assert.equal(seen[0].body.reasoning_effort, 'medium');
   assert.equal('reasoning' in seen[0].body, false);
@@ -390,10 +391,10 @@ test('AI_REASONING overrides the caller; OpenRouter takes a reasoning object, 9r
 
 test('DEDUPE borrows the MATCH models and keys unless it names its own, with its own paid cap', async () => {
   const { roleRoutes, rolePaidCap } = await import('../src/ai/config.js');
-  const borrowed = readAiConfig({ ROUTER9_BASE_URL: R9, ROUTER9_API_KEY: 'k', ROUTER9_MODEL_MATCH: 'r/deep', OPENROUTER_API_KEY: 'or', OPENROUTER_MODEL_MATCH: 'or/m', AI_ROUTE_DEDUPE: '9router,openrouter' });
+  const borrowed = readAiConfig({ NINEROUTER_BASE_URL: NR, NINEROUTER_API_KEY: 'k', NINEROUTER_MODEL_MATCH: 'r/deep', OPENROUTER_API_KEY: 'or', OPENROUTER_MODEL_MATCH: 'or/m', AI_ROUTE_DEDUPE: '9router,openrouter' });
   assert.equal(roleRoutes(borrowed, 'DEDUPE').length, 2);
   assert.equal(JSON.stringify(roleRoutes(borrowed, 'DEDUPE').map((r) => r.models)), JSON.stringify(roleRoutes(borrowed, 'MATCH').map((r) => r.models)));
-  const own = readAiConfig({ ROUTER9_BASE_URL: R9, ROUTER9_API_KEY: 'k', ROUTER9_MODEL_MATCH: 'r/deep', ROUTER9_MODEL_DEDUPE: 'r/wide', OPENROUTER_API_KEY: 'or', AI_ROUTE_DEDUPE: '9router,openrouter' });
+  const own = readAiConfig({ NINEROUTER_BASE_URL: NR, NINEROUTER_API_KEY: 'k', NINEROUTER_MODEL_MATCH: 'r/deep', NINEROUTER_MODEL_DEDUPE: 'r/wide', OPENROUTER_API_KEY: 'or', AI_ROUTE_DEDUPE: '9router,openrouter' });
   assert.match(JSON.stringify(roleRoutes(own, 'DEDUPE')[0].models), /wide/);
   assert.doesNotMatch(JSON.stringify(roleRoutes(own, 'DEDUPE')[0].models), /deep/);
 
@@ -428,28 +429,28 @@ test('openrouter/free counts as a free model', () => {
 });
 
 test('9router: first in line, plain OpenAI call, falls through to OpenRouter on 429', async () => {
-  const { ai, fetch } = make(r9Env(), (call) => (call.url.startsWith(R9) ? { status: 200, body: answer('r9').body } : answer('other')));
+  const { ai, fetch } = make(nrEnv(), (call) => (call.url.startsWith(NR) ? { status: 200, body: answer('r9').body } : answer('other')));
   assert.deepEqual(ai.modelsFor('MATCH').map((m) => m.provider + ':' + m.model), ['9router:oc/deepseek-v4.1-flash-free', 'openrouter:openrouter/free']);
   const result = await ai.chat('MATCH', user('hi'));
   assert.equal(result.provider, '9router');
-  assert.equal(fetch.calls[0].url, R9 + '/chat/completions');
+  assert.equal(fetch.calls[0].url, NR + '/chat/completions');
   assert.equal(fetch.calls[0].auth, 'Bearer r9-key');
   for (const field of ['usage', 'reasoning']) assert.equal(field in fetch.calls[0].body, false, field);
   assert.equal(fetch.calls[0].init.headers['http-referer'], undefined);
   assert.equal(fetch.calls[0].body.model, 'oc/deepseek-v4.1-flash-free');
 
-  const down = make(r9Env({ AI_RETRIES: '0' }), (call) => (call.url.startsWith(R9) ? { status: 429, body: { error: { message: 'slow down' } } } : answer('or')));
+  const down = make(nrEnv({ AI_RETRIES: '0' }), (call) => (call.url.startsWith(NR) ? { status: 429, body: { error: { message: 'slow down' } } } : answer('or')));
   const fallback = await down.ai.chat('MATCH', user('hi'));
   assert.equal(fallback.provider, 'openrouter');
   assert.equal(fallback.text, 'or');
 });
 
 test('9router: model env, no key = no route, key without URL is a config error', () => {
-  assert.deepEqual(make(r9Env({ ROUTER9_MODEL_SAMPLE: 'a/b,c' }), () => answer('x')).ai.modelsFor('SAMPLE').filter((m) => m.provider === '9router').map((m) => m.model), ['a/b', 'c']);
+  assert.deepEqual(make(nrEnv({ NINEROUTER_MODEL_SAMPLE: 'a/b,c' }), () => answer('x')).ai.modelsFor('SAMPLE').filter((m) => m.provider === '9router').map((m) => m.model), ['a/b', 'c']);
   assert.equal(make(env(), () => answer('x')).ai.modelsFor('MATCH').some((m) => m.provider === '9router'), false);
-  assert.equal(make(r9Env({ ROUTER9_API_KEY: '' }), () => answer('x')).ai.modelsFor('MATCH').some((m) => m.provider === '9router'), false);
-  assert.throws(() => readAiConfig({ ROUTER9_API_KEY: 'k' }, { warn() {} }), AiConfigError);
-  assert.throws(() => readAiConfig({ ROUTER9_BASE_URL: 'ftp://x', ROUTER9_API_KEY: 'k' }, { warn() {} }), AiConfigError);
+  assert.equal(make(nrEnv({ NINEROUTER_API_KEY: '' }), () => answer('x')).ai.modelsFor('MATCH').some((m) => m.provider === '9router'), false);
+  assert.throws(() => readAiConfig({ NINEROUTER_API_KEY: 'k' }, { warn() {} }), AiConfigError);
+  assert.throws(() => readAiConfig({ NINEROUTER_BASE_URL: 'ftp://x', NINEROUTER_API_KEY: 'k' }, { warn() {} }), AiConfigError);
 });
 test('park ladder: timeouts park 2 x timeout doubling up to 30 min and reset on success; a 503 still parks 45 s', async () => {
   let clock = Date.UTC(2026, 9, 7, 12);
@@ -486,4 +487,27 @@ test('attemptLine: one line for a failed attempt, nothing for a success, no key 
   return ai.chat('SAMPLE', user('x')).catch(() => {
     assert.ok(records.length > 0 && records.every((l) => l.startsWith('[ai] attempt ') && !l.includes('sk-secret')));
   });
+});
+
+test('old ROUTER9_* names still work as a fallback, warn once each, never print a value', async () => {
+  const secret = 'old-secret-key-123';
+  const { ai, fetch, warnings } = make(env({ ROUTER9_BASE_URL: NR, ROUTER9_API_KEY: secret, ROUTER9_MODEL_MATCH: 'old/model' }), () => answer('x'));
+  assert.deepEqual(ai.modelsFor('MATCH')[0], { provider: '9router', model: 'old/model' });
+  await ai.chat('MATCH', user('hi'));
+  assert.ok(isNr(fetch.calls[0]) && fetch.calls[0].auth === 'Bearer ' + secret);
+  for (const old of ['ROUTER9_BASE_URL', 'ROUTER9_API_KEY', 'ROUTER9_MODEL_MATCH']) {
+    assert.equal(warnings.filter((w) => w.includes(old + ' is deprecated, rename it to ' + old.replace('ROUTER9_', 'NINEROUTER_'))).length, 1, old);
+  }
+  assert.ok(!warnings.some((w) => w.includes(secret) || w.includes('old/model') || w.includes(NR)), warnings.join('|'));
+  assert.deepEqual(readAiConfig({ ROUTER9_BASE_URL: NR, ROUTER9_API_KEY: secret }, { warn() {} }).deprecated, ['ROUTER9_BASE_URL', 'ROUTER9_API_KEY']);
+});
+
+test('NINEROUTER_* wins over ROUTER9_* when both are set', async () => {
+  const warnings = [];
+  const cfg = readAiConfig({ NINEROUTER_BASE_URL: NR, NINEROUTER_API_KEY: 'new-key', NINEROUTER_MODEL_MATCH: 'new/m', ROUTER9_BASE_URL: 'http://old:1/v1', ROUTER9_API_KEY: 'old-key', ROUTER9_MODEL_MATCH: 'old/m' }, { warn: (m) => warnings.push(m) });
+  assert.equal(cfg.nineRouter.baseUrl, NR);
+  assert.deepEqual(cfg.nineRouter.keys, ['new-key']);
+  assert.equal(roleRoutes(cfg, 'MATCH')[0].models[0].id ?? roleRoutes(cfg, 'MATCH')[0].models[0].model, 'new/m');
+  assert.equal(warnings.filter((w) => /ignored because NINEROUTER_/.test(w)).length, 3);
+  assert.ok(!warnings.some((w) => w.includes('old-key') || w.includes('new-key')));
 });

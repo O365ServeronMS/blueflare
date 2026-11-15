@@ -3,13 +3,14 @@ import { parseKeys, parseModels } from './util.js';
 /**
  * The single place where AI settings and their defaults live. `.env.example` mirrors AI_DEFAULTS.
  *
- *   ROUTER9_BASE_URL             9router (OpenAI-compatible router), tried before everything else; with ROUTER9_API_KEY
- *   ROUTER9_API_KEY              9router key (comma list allowed); empty = no 9router route
- *   ROUTER9_MODEL_<ROLE>         9router models of a role; ROUTER9_MODEL_PRIMARY, then the role default
+ *   NINEROUTER_BASE_URL          9router (OpenAI-compatible router), tried before everything else; with NINEROUTER_API_KEY
+ *   NINEROUTER_API_KEY           9router key (comma list allowed); empty = no 9router route
+ *   NINEROUTER_MODEL_<ROLE>      9router models of a role; NINEROUTER_MODEL_PRIMARY, then the role default
+ *   (the old ROUTER9_* names are still read as a fallback, with a deprecation warning)
  *   OPENROUTER_API_KEY           fallback provider (comma list allowed)
  *   OPENROUTER_MODEL_<ROLE>      OpenRouter models of a role; OPENROUTER_MODEL_PRIMARY, then the role default
  *   AI_ROUTE_<ROLE>, AI_ROUTE    which providers a role uses and in what order: comma list of 9router|openrouter
- *                                (alias router9; a leftover `opencode` is ignored with a warning); the role's own
+ *                                (aliases ninerouter and the deprecated router9; a leftover `opencode` is ignored with a warning); the role's own
  *                                `routes`, then both in that order, when unset
  *   AI_TIMEOUT_MS[_<ROLE>]       per-request timeout; empty = the role default
  *   AI_MAX_TOKENS                default completion ceiling when a call names none
@@ -34,6 +35,7 @@ export const AI_DEFAULTS = Object.freeze({
 
 export const ROUTE_NAMES = Object.freeze(['9router', 'openrouter']);
 const DEFAULT_ROUTES = ROUTE_NAMES;
+const ROUTE_ALIASES = Object.freeze({ ninerouter: '9router', router9: '9router' }); // router9 is deprecated: readAiConfig warns
 
 export class AiConfigError extends Error {
   constructor(message) {
@@ -48,22 +50,22 @@ const roles = new Map();
 
 /**
  * One line per role. `vision`: the role may send images (models that cannot read them are
- * skipped; 9router is never used for them). `defaultR9` / `defaultOr`: 9router / OpenRouter models when no env names any. Optional `timeoutMs`,
+ * skipped; 9router is never used for them). `defaultNineRouter` / `defaultOr`: 9router / OpenRouter models when no env names any. Optional `timeoutMs`,
  * `maxTokens`, `reasoning` (level when AI_REASONING names none), `paidCap` (daily paid output
  * tokens when AI_PAID_DAILY_OUTPUT_TOKENS_<ROLE> is empty), `ledgerScope` (quota counters; defaults to the lower-case name), `modelsFrom`
- * (another role whose ROUTER9_MODEL_/OPENROUTER_MODEL_ lists and defaults this role uses when its own
+ * (another role whose NINEROUTER_MODEL_/OPENROUTER_MODEL_ lists and defaults this role uses when its own
  * env names none; the paid cap and ledger scope stay this role's own), `routes` (providers the role may use,
  * in order, comma string or array of 9router|openrouter; null = both; AI_ROUTE_<ROLE> / AI_ROUTE
  * win; never inherited through `modelsFrom`).
  */
-/** Comma string or array -> canonical route names (router9 = 9router), duplicates dropped, `opencode` skipped (so the result may be empty). Throws on an unknown name or an empty list. */
+/** Comma string or array -> canonical route names (ninerouter and router9 = 9router), duplicates dropped, `opencode` skipped (so the result may be empty). Throws on an unknown name or an empty list. */
 function parseRouteList(value, label) {
   const items = (Array.isArray(value) ? value : String(value).split(',')).map((item) => String(item).trim().toLowerCase()).filter(Boolean);
   if (!items.length) throw new AiConfigError(label + ' names no provider (use ' + ROUTE_NAMES.join('|') + ')');
   const out = [];
   for (const item of items) {
     if (item === 'opencode') continue; // removed provider: readAiConfig warns once, a stale stack .env must still boot
-    const name = item === 'router9' ? '9router' : item;
+    const name = ROUTE_ALIASES[item] ?? item;
     if (!ROUTE_NAMES.includes(name)) throw new AiConfigError(label + ' has unknown provider "' + item + '" (use ' + ROUTE_NAMES.join('|') + ')');
     if (!out.includes(name)) out.push(name);
   }
@@ -76,7 +78,7 @@ export function registerRole(name, spec = {}) {
   const role = Object.freeze({
     name: key,
     vision: Boolean(spec.vision),
-    defaultR9: String(spec.defaultR9 ?? ''),
+    defaultNineRouter: String(spec.defaultNineRouter ?? ''),
     defaultOr: String(spec.defaultOr ?? ''),
     timeoutMs: Number(spec.timeoutMs) > 0 ? Number(spec.timeoutMs) : null,
     maxTokens: Number(spec.maxTokens) > 0 ? Number(spec.maxTokens) : null,
@@ -99,7 +101,7 @@ export function getRole(name) {
 export const roleNames = () => [...roles.keys()];
 
 // Each role has its own paid cap: DEDUPE borrows MATCH's (partly paid) models, so it must not run uncapped.
-registerRole('MATCH', { defaultR9: 'oc/deepseek-v4.1-flash-free', defaultOr: 'openrouter/free', timeoutMs: 180000, reasoning: 'medium', paidCap: 1_000_000, ledgerScope: 'tmdb-match' });
+registerRole('MATCH', { defaultNineRouter: 'oc/deepseek-v4.1-flash-free', defaultOr: 'openrouter/free', timeoutMs: 180000, reasoning: 'medium', paidCap: 1_000_000, ledgerScope: 'tmdb-match' });
 // DEDUPE borrows MATCH's models but not its routes: 9router authored 7 of 624 groups in run 8.
 registerRole('DEDUPE', { modelsFrom: 'MATCH', routes: 'openrouter', timeoutMs: 180000, reasoning: 'medium', paidCap: 1_000_000, ledgerScope: 'catalog-audit' });
 
@@ -126,7 +128,7 @@ const UNUSED_ENV = Object.freeze([
   'TMDB_MATCH_AI_RESERVE_PCT', 'LLM_BASE_URL', 'LLM_API_KEY', 'MODEL_PRIMARY', 'MODEL_FALLBACK',
   'OPENCODE_URL', 'OPENCODE_SERVER_PASSWORD', 'OPENCODE_MODEL_PRIMARY', 'OPENCODE_CREDENTIALS_DIR'
 ]);
-// MODEL_<ROLE> (old) and OPENCODE_MODEL_<ROLE>: now ROUTER9_MODEL_<ROLE> / OPENROUTER_MODEL_<ROLE>
+// MODEL_<ROLE> (old) and OPENCODE_MODEL_<ROLE>: now NINEROUTER_MODEL_<ROLE> / OPENROUTER_MODEL_<ROLE>
 const UNUSED_ENV_PATTERN = /^(OPENCODE_)?MODEL_[A-Z][A-Z0-9_]*$/;
 
 const text = (value) => String(value ?? '').trim();
@@ -147,10 +149,22 @@ function positiveInt(view, name, fallback, warn, minimum = 1) {
 export function readAiConfig(env = process.env, options = {}) {
   const warn = options.warn ?? ((message) => console.warn(message));
   const view = {};
-  for (const [name, value] of Object.entries(env)) if (/^(ROUTER9_|OPENROUTER_|AI_)/.test(name)) view[name] = value;
+  for (const [name, value] of Object.entries(env)) if (/^(NINEROUTER_|OPENROUTER_|AI_)/.test(name)) view[name] = value;
   const deprecated = [];
   for (const [oldName, newName] of Object.entries(RENAMED_ENV)) {
     if (!text(env[oldName])) continue;
+    deprecated.push(oldName);
+    if (text(env[newName])) warn('[ai] ' + oldName + ' is deprecated and ignored because ' + newName + ' is set; remove it');
+    else {
+      view[newName] = env[oldName];
+      warn('[ai] ' + oldName + ' is deprecated, rename it to ' + newName);
+    }
+  }
+  // ROUTER9_* (old) -> NINEROUTER_*: same suffix; the new name wins. The warning names the variables, never a value.
+  for (const oldName of Object.keys(env)) {
+    const match = /^ROUTER9_(BASE_URL|API_KEY|MODEL_[A-Z0-9_]+)$/.exec(oldName);
+    if (!match || !text(env[oldName])) continue;
+    const newName = 'NINEROUTER_' + match[1];
     deprecated.push(oldName);
     if (text(env[newName])) warn('[ai] ' + oldName + ' is deprecated and ignored because ' + newName + ' is set; remove it');
     else {
@@ -172,21 +186,24 @@ export function readAiConfig(env = process.env, options = {}) {
     warn('[ai] ' + name + ' is no longer read; remove it');
   }
 
-  // 9router: an OpenAI-compatible router. Name `9router` (env prefix ROUTER9_: a shell name cannot start with a digit).
-  let router9 = null;
-  const router9Keys = parseKeys(view.ROUTER9_API_KEY);
-  const router9Url = text(view.ROUTER9_BASE_URL).replace(/\/+$/, '');
-  if (router9Keys.length || router9Url) {
-    if (!router9Url) throw new AiConfigError('ROUTER9_BASE_URL is required when ROUTER9_API_KEY is set');
+  // 9router: an OpenAI-compatible router. Name `9router` (env prefix NINEROUTER_).
+  let nineRouter = null;
+  const nineRouterKeys = parseKeys(view.NINEROUTER_API_KEY);
+  const nineRouterUrl = text(view.NINEROUTER_BASE_URL).replace(/\/+$/, '');
+  if (nineRouterKeys.length || nineRouterUrl) {
+    if (!nineRouterUrl) throw new AiConfigError('NINEROUTER_BASE_URL is required when NINEROUTER_API_KEY is set');
     let url;
-    try { url = new URL(router9Url); } catch { throw new AiConfigError('ROUTER9_BASE_URL is not a valid URL'); }
-    if (!/^https?:$/.test(url.protocol)) throw new AiConfigError('ROUTER9_BASE_URL must be http(s)');
-    router9 = { name: '9router', kind: 'openai', baseUrl: router9Url, keys: router9Keys, openrouter: false };
+    try { url = new URL(nineRouterUrl); } catch { throw new AiConfigError('NINEROUTER_BASE_URL is not a valid URL'); }
+    if (!/^https?:$/.test(url.protocol)) throw new AiConfigError('NINEROUTER_BASE_URL must be http(s)');
+    nineRouter = { name: '9router', kind: 'openai', baseUrl: nineRouterUrl, keys: nineRouterKeys, openrouter: false };
   }
   const openrouterBaseUrl = text(folded.openrouterBaseUrl || OPENROUTER_BASE_URL).replace(/\/+$/, '');
   const openrouter = { name: 'openrouter', baseUrl: openrouterBaseUrl, keys: parseKeys(view.OPENROUTER_API_KEY), openrouter: true };
 
   for (const name of Object.keys(view)) {
+    if (/^AI_ROUTE(_[A-Z0-9_]+)?$/.test(name) && text(view[name]).toLowerCase().split(',').some((item) => item.trim() === 'router9')) {
+      warn('[ai] ' + name + ' names router9, deprecated: use 9router (or ninerouter)');
+    }
     if (/^AI_ROUTE(_[A-Z0-9_]+)?$/.test(name) && text(view[name]).toLowerCase().split(',').some((item) => item.trim() === 'opencode')) {
       warn('[ai] ' + name + ' names opencode, which is no longer a provider: ignored; remove it');
     }
@@ -197,7 +214,7 @@ export function readAiConfig(env = process.env, options = {}) {
   const parkMaxMs = Number(folded.transientParkMaxMs);
   return Object.freeze({
     view: Object.freeze(view),
-    router9,
+    nineRouter,
     openrouter,
     timeoutMs: positiveInt(view, 'AI_TIMEOUT_MS', null, warn, 1000),
     maxTokens: positiveInt(view, 'AI_MAX_TOKENS', AI_DEFAULTS.maxTokens, warn),
@@ -227,7 +244,7 @@ export function roleRouteOrder(cfg, roleName) {
 
 /**
  * Where a role's calls go, in order: `[{ provider, models }]`, routes without keys or models
- * left out. 9router x ROUTER9_MODEL_<ROLE> (else ROUTER9_MODEL_PRIMARY, else `defaultR9`), then OpenRouter x OPENROUTER_MODEL_<ROLE> (else OPENROUTER_MODEL_PRIMARY, else
+ * left out. 9router x NINEROUTER_MODEL_<ROLE> (else NINEROUTER_MODEL_PRIMARY, else `defaultNineRouter`), then OpenRouter x OPENROUTER_MODEL_<ROLE> (else OPENROUTER_MODEL_PRIMARY, else
  * `defaultOr`). A role with `modelsFrom` reads the donor role's lists and defaults where its own
  * are empty. A vision role gets no 9router route (text only). Only the providers
  * of roleRouteOrder are kept, in that order.
@@ -238,11 +255,11 @@ export function roleRoutes(cfg, roleName) {
   const v = cfg.view;
   const named = (prefix) => text(v[prefix + role.name]) || (donor ? text(v[prefix + donor.name]) : '');
   const orModels = named('OPENROUTER_MODEL_') || text(v.OPENROUTER_MODEL_PRIMARY) || role.defaultOr || donor?.defaultOr || '';
-  const r9Models = named('ROUTER9_MODEL_') || text(v.ROUTER9_MODEL_PRIMARY) || role.defaultR9 || donor?.defaultR9 || '';
+  const nineRouterModels = named('NINEROUTER_MODEL_') || text(v.NINEROUTER_MODEL_PRIMARY) || role.defaultNineRouter || donor?.defaultNineRouter || '';
   const built = new Map();
   const routes = [];
   // 9router first; text only (its models' image support is unknown).
-  if (cfg.router9 && !role.vision) built.set('9router', { provider: cfg.router9, models: parseModels(r9Models, { freeRpm: 0 }) });
+  if (cfg.nineRouter && !role.vision) built.set('9router', { provider: cfg.nineRouter, models: parseModels(nineRouterModels, { freeRpm: 0 }) });
   built.set('openrouter', { provider: cfg.openrouter, models: parseModels(orModels) });
   for (const name of roleRouteOrder(cfg, role.name)) if (built.has(name)) routes.push(built.get(name));
   return routes.filter((route) => route.provider.keys.length && route.models.length);

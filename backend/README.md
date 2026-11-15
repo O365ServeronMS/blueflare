@@ -245,7 +245,7 @@ Reviews are re-fetchable, so they are not irreplaceable state.
 
 `src/ai/` is the only code that calls a model; the call API, roles, routing, fallback
 rules and the full env table are in [`AI.md`](AI.md). In short: 9router
-(`ROUTER9_API_KEY`, `ROUTER9_MODEL_<ROLE>`) is tried first, then OpenRouter
+(`NINEROUTER_API_KEY`, `NINEROUTER_MODEL_<ROLE>`) is tried first, then OpenRouter
 (`OPENROUTER_API_KEY`, `OPENROUTER_MODEL_<ROLE>`), moving on at a 401/402/408/429/5xx,
 network error, timeout or bad answer. Roles: `MATCH` (TMDB AI match) and
 `DEDUPE` (catalog audit). The worker reads the AI env at start; a leftover

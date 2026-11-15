@@ -61,13 +61,13 @@ One line in `src/ai/config.js`:
 registerRole('POSTER', { vision: true, defaultOr: 'google/gemini-2.5-flash', timeoutMs: 60000 });
 ```
 
-It then reads `ROUTER9_MODEL_POSTER`, `OPENROUTER_MODEL_POSTER`, `AI_TIMEOUT_MS_POSTER` and
+It then reads `NINEROUTER_MODEL_POSTER`, `OPENROUTER_MODEL_POSTER`, `AI_TIMEOUT_MS_POSTER` and
 `AI_PAID_DAILY_OUTPUT_TOKENS_POSTER` with no other change. A vision role skips models that
 cannot read images (OpenRouter `/models` catalog, or a 400 saying so) and never uses 9router,
-which takes text only. A role gets a 9router route only from `ROUTER9_MODEL_<ROLE>`,
-`ROUTER9_MODEL_PRIMARY` or its `defaultR9` (MATCH: `oc/deepseek-v4.1-flash-free`).
+which takes text only. A role gets a 9router route only from `NINEROUTER_MODEL_<ROLE>`,
+`NINEROUTER_MODEL_PRIMARY` or its `defaultNineRouter` (MATCH: `oc/deepseek-v4.1-flash-free`).
 
-`modelsFrom: 'MATCH'` makes a role read the donor's `ROUTER9_MODEL_MATCH` / `OPENROUTER_MODEL_MATCH`
+`modelsFrom: 'MATCH'` makes a role read the donor's `NINEROUTER_MODEL_MATCH` / `OPENROUTER_MODEL_MATCH`
 (and default) wherever its own are empty; timeout, paid cap and ledger scope stay its own.
 `DEDUPE` is registered that way (`ledgerScope: 'catalog-audit'`, 180000 ms).
 
@@ -75,7 +75,7 @@ which takes text only. A role gets a 9router route only from `ROUTER9_MODEL_<ROL
 
 Which providers a role uses, and in what order, is `roleRouteOrder` (config.js): `AI_ROUTE_<ROLE>`, then
 `AI_ROUTE`, then the role's `routes` (registerRole), then `9router,openrouter`. Names are
-`9router|openrouter` (`router9` is an alias); an unknown name or an empty list is an
+`9router|openrouter` (`ninerouter` is an alias, `router9` a deprecated one that warns at startup); an unknown name or an empty list is an
 `AiConfigError` at startup. A leftover `opencode` (the removed sidecar) is skipped with one startup
 warning, and a list naming only it counts as unset. The list only selects and orders: a listed provider with no keys or models
 is still skipped, and a vision role never gets 9router. `modelsFrom` shares models, never
@@ -83,8 +83,8 @@ routes. MATCH has no `routes` (both); DEDUPE has `routes: 'openrouter'`, because
 run 8 9router authored only 7 of 624 groups. Back to the 9router chain:
 `AI_ROUTE_DEDUPE=9router,openrouter`.
 
-- With `ROUTER9_API_KEY` (+ `ROUTER9_BASE_URL`, required with it): 9router first × `ROUTER9_MODEL_<ROLE>`
-  (else `ROUTER9_MODEL_PRIMARY`, else the role default; MATCH: `oc/deepseek-v4.1-flash-free`). It is a plain
+- With `NINEROUTER_API_KEY` (+ `NINEROUTER_BASE_URL`, required with it): 9router first × `NINEROUTER_MODEL_<ROLE>`
+  (else `NINEROUTER_MODEL_PRIMARY`, else the role default; MATCH: `oc/deepseek-v4.1-flash-free`). It is a plain
   OpenAI-compatible `POST {base}/chat/completions` with `Authorization: Bearer`, no OpenRouter-only
   fields (`usage`, `reasoning`, referer headers, `/models`); reasoning goes as `reasoning_effort`. Text
   only: a vision role gets no 9router route. 9router is a separate container stack (`/opt/stacks/9router`,
@@ -115,9 +115,9 @@ Defaults live in `src/ai/config.js` (`AI_DEFAULTS`, roles); `.env.example` mirro
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `AI_ROUTE` / `AI_ROUTE_<ROLE>` | role default (MATCH: both; DEDUPE: `openrouter`) | comma list of `9router|openrouter`, order = order of attempts |
-| `ROUTER9_BASE_URL` | empty | 9router base URL incl. `/v1`; required when `ROUTER9_API_KEY` is set (startup error otherwise) |
-| `ROUTER9_API_KEY` | empty | secret, comma list; empty = no 9router route |
-| `ROUTER9_MODEL_PRIMARY` / `_<ROLE>` | role default (MATCH: `oc/deepseek-v4.1-flash-free`) | `id[:rpm[:rpd]]`, best first |
+| `NINEROUTER_BASE_URL` | empty | 9router base URL incl. `/v1`; required when `NINEROUTER_API_KEY` is set (startup error otherwise) |
+| `NINEROUTER_API_KEY` | empty | secret, comma list; empty = no 9router route |
+| `NINEROUTER_MODEL_PRIMARY` / `_<ROLE>` | role default (MATCH: `oc/deepseek-v4.1-flash-free`) | `id[:rpm[:rpd]]`, best first |
 | `OPENROUTER_API_KEY` | empty | secret, comma list; empty = no OpenRouter |
 | `OPENROUTER_MODEL_PRIMARY` / `_<ROLE>` | role default | `id[:rpm[:rpd]]`, best first |
 | `AI_TIMEOUT_MS` / `AI_TIMEOUT_MS_<ROLE>` | role default (60000, MATCH and DEDUPE 180000) | per request |

@@ -3,10 +3,10 @@ import test from 'node:test';
 import { createAi, AiConfigError, readAiConfig } from '../src/ai/index.js';
 import { roleRouteOrder, roleRoutes } from '../src/ai/config.js';
 
-const R9 = 'http://9router:20128/v1';
+const NR = 'http://9router:20128/v1';
 const OR = 'https://openrouter.ai/api/v1';
 const full = (over = {}) => ({
-  ROUTER9_BASE_URL: R9, ROUTER9_API_KEY: 'r9-key', OPENROUTER_API_KEY: 'or-key', ...over
+  NINEROUTER_BASE_URL: NR, NINEROUTER_API_KEY: 'nr-key', OPENROUTER_API_KEY: 'or-key', ...over
 });
 const cfgOf = (env) => readAiConfig(env, { warn: () => {} });
 const order = (env, role) => roleRoutes(cfgOf(env), role).map((r) => r.provider.name);
@@ -53,9 +53,9 @@ test('f) json(DEDUPE) only reaches OpenRouter', async () => {
   assert.ok(urls.length > 0 && urls.every((url) => url.startsWith(OR)), urls.join(','));
 });
 
-test('g) router9 is an alias of 9router', () => {
-  assert.deepEqual(order(full({ AI_ROUTE_DEDUPE: 'router9,openrouter' }), 'DEDUPE'), ['9router', 'openrouter']);
-  assert.deepEqual(order(full({ AI_ROUTE_DEDUPE: 'router9,9router' }), 'DEDUPE'), ['9router']);
+test('g) ninerouter and router9 are aliases of 9router', () => {
+  assert.deepEqual(order(full({ AI_ROUTE_DEDUPE: 'ninerouter,openrouter' }), 'DEDUPE'), ['9router', 'openrouter']);
+  assert.deepEqual(order(full({ AI_ROUTE_DEDUPE: 'ninerouter,9router' }), 'DEDUPE'), ['9router']);
 });
 
 test('h) a leftover `opencode` in AI_ROUTE* is ignored with one startup warning, never an error', () => {
@@ -67,4 +67,13 @@ test('h) a leftover `opencode` in AI_ROUTE* is ignored with one startup warning,
   for (const name of ['AI_ROUTE_MATCH', 'AI_ROUTE', 'AI_ROUTE_DEDUPE']) assert.equal(warnings.filter((w) => w.includes(name + ' names opencode')).length, 1, name);
   assert.deepEqual(order(full({ AI_ROUTE_MATCH: 'opencode' }), 'MATCH'), ['9router', 'openrouter']);
   assert.doesNotThrow(() => createAi({ env: full({ AI_ROUTE_MATCH: 'opencode' }), warn: () => {} }));
+});
+
+test('i) ninerouter and router9 behave as 9router in AI_ROUTE; router9 warns at startup', () => {
+  for (const name of ['9router', 'ninerouter', 'router9']) {
+    const warnings = [];
+    const cfg = readAiConfig(full({ AI_ROUTE_DEDUPE: name + ',openrouter' }), { warn: (m) => warnings.push(m) });
+    assert.deepEqual(roleRouteOrder(cfg, 'DEDUPE'), ['9router', 'openrouter'], name);
+    assert.equal(warnings.some((m) => m.includes('router9, deprecated')), name === 'router9', name);
+  }
 });

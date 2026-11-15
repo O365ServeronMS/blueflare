@@ -7,24 +7,15 @@ import { checkSchema, extractJson, isFree, parseModels } from '../src/ai/util.js
 // A role of the test's own: the module ships MATCH and DEDUPE only, both with defaults.
 registerRole('SAMPLE');
 
-const OC = 'http://opencode:4096';
+const R9 = 'http://9router:20128/v1';
 const OR = 'https://openrouter.ai/api/v1';
 const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
 
-/**
- * Fetch stand-in: `respond(call)` -> { status, body, headers }; every call is recorded. opencode
- * session creation is answered here (`ses_<n>`) and recorded in `sessions`, not `calls`, unless
- * `{ sessions: respondToo }` asks for it to go through `respond` as well.
- */
-function transport(respond, { sessions: own = false } = {}) {
+/** Fetch stand-in: `respond(call)` -> { status, body, headers }; every call is recorded. */
+function transport(respond) {
   const calls = [];
-  const sessions = [];
   const fn = async (url, init = {}) => {
     const call = { url, init, body: init.body ? JSON.parse(init.body) : null, auth: init.headers?.authorization };
-    if (!own && url.endsWith('/api/session')) {
-      sessions.push(call);
-      return { ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify({ data: { id: 'ses_' + sessions.length } }) };
-    }
     calls.push(call);
     const out = await respond(call, calls.length);
     if (out instanceof Error) throw out;
@@ -33,15 +24,15 @@ function transport(respond, { sessions: own = false } = {}) {
     return { ok: out.status < 400, status: out.status, headers: { get: (name) => headers[name.toLowerCase()] ?? null }, text: async () => text };
   };
   fn.calls = calls;
-  fn.sessions = sessions;
   return fn;
 }
 
 const answer = (content, extra = {}) => ({ status: 200, body: { choices: [{ message: { content }, finish_reason: 'stop' }], ...extra } });
 const orUsage = { usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, cost: 0.0001, completion_tokens_details: { reasoning_tokens: 2 } } };
 const env = (over = {}) => ({ OPENROUTER_API_KEY: 'or-key', ...over });
-const make = (envVars, respond, extra = {}, transportOptions = {}) => {
-  const fetch = transport(respond, transportOptions);
+const r9Env = (over = {}) => env({ ROUTER9_BASE_URL: R9 + '/', ROUTER9_API_KEY: 'r9-key', ...over });
+const make = (envVars, respond, extra = {}) => {
+  const fetch = transport(respond);
   const warnings = [];
   // Virtual clock: sleep advances it, so waits cost no real time.
   let clock = Date.UTC(2026, 9, 7, 12);
@@ -49,17 +40,10 @@ const make = (envVars, respond, extra = {}, transportOptions = {}) => {
   return { ai, fetch, warnings };
 };
 const user = (text) => [{ role: 'user', content: text }];
-const isOc = (call) => call.url.startsWith(OC);
-const ocEnv = (over = {}) => env({ OPENCODE_URL: OC + '/', OPENCODE_SERVER_PASSWORD: 'oc-pass', ...over });
-const ocAnswer = (text, tokens) => ({ status: 200, body: { data: { text, ...(tokens ? { tokens, cost: 0 } : {}) } } });
-const ocBusy = (message) => ({ status: 503, body: { _tag: 'ServiceUnavailableError', message, service: 'session generation' } });
-const ocFail = (reason, extra = {}) => ({ status: 502, body: { _tag: 'ProviderRequestError', providerID: 'opencode', reason, message: 'nope', ...extra } });
-/** The right success shape for whichever provider the call went to. */
-const reply = (call, text) => (isOc(call) ? ocAnswer(text) : answer(text));
-const modelOf = (call) => call.body.model;
+const isR9 = (call) => call.url.startsWith(R9);
 
-test('a) without OPENCODE_URL every call goes to OpenRouter with OPENROUTER_MODEL_<ROLE>', async () => {
-  const { ai, fetch } = make(env({ OPENROUTER_MODEL_SAMPLE: 'vendor/one,vendor/two', OPENCODE_MODEL_SAMPLE: 'opencode/ignored' }), () => answer('xin chào', orUsage));
+test('a) without 9router every call goes to OpenRouter with OPENROUTER_MODEL_<ROLE>', async () => {
+  const { ai, fetch } = make(env({ OPENROUTER_MODEL_SAMPLE: 'vendor/one,vendor/two' }), () => answer('xin chào', orUsage));
   const result = await ai.chat('SAMPLE', user('hello'));
   assert.equal(result.text, 'xin chào');
   assert.equal(result.provider, 'openrouter');
@@ -68,150 +52,28 @@ test('a) without OPENCODE_URL every call goes to OpenRouter with OPENROUTER_MODE
   assert.equal(fetch.calls[0].url, OR + '/chat/completions');
   assert.equal(fetch.calls[0].auth, 'Bearer or-key');
   assert.deepEqual(ai.modelsFor('SAMPLE'), [{ provider: 'openrouter', model: 'vendor/one' }, { provider: 'openrouter', model: 'vendor/two' }]);
-  // MATCH defaults: opencode/big-pickle first when the sidecar is configured, openrouter/free after.
-  assert.deepEqual(make(ocEnv(), () => answer('x')).ai.modelsFor('MATCH'), [{ provider: 'opencode', model: 'opencode/big-pickle' }, { provider: 'openrouter', model: 'openrouter/free' }]);
+  // MATCH defaults: 9router's free model first when configured, openrouter/free after.
+  assert.deepEqual(make(r9Env(), () => answer('x')).ai.modelsFor('MATCH'), [{ provider: '9router', model: 'oc/deepseek-v4.1-flash-free' }, { provider: 'openrouter', model: 'openrouter/free' }]);
   assert.deepEqual(make(env(), () => answer('x')).ai.modelsFor('MATCH'), [{ provider: 'openrouter', model: 'openrouter/free' }]);
 });
 
-test('a) opencode: one plan-agent session per model, then a generate call with basic auth and a flattened prompt', async () => {
-  const tokens = { input: 71, output: 12, reasoning: 3, cache: { read: 9216, write: 0 } };
-  const { ai, fetch } = make(ocEnv({ OPENCODE_MODEL_SAMPLE: 'opencode/big-pickle,opencode/glm-5.3-flash-free', OPENROUTER_MODEL_SAMPLE: 'or/m' }), () => ocAnswer('xin chào', tokens));
-  const result = await ai.chat('SAMPLE', [{ role: 'system', content: 'Be brief.' }, ...user('hello')], { reasoning: 'high', maxTokens: 100 });
-  assert.equal(result.text, 'xin chào');
-  assert.equal(result.provider, 'opencode');
-  assert.equal(result.model, 'opencode/big-pickle');
-  assert.deepEqual(result.usage, { promptTokens: 9287, completionTokens: 12, thoughtTokens: 3, totalTokens: 9299, cost: 0 }, 'cached prompt tokens count as prompt');
-  const auth = 'Basic ' + Buffer.from('opencode:oc-pass').toString('base64');
-  assert.equal(fetch.sessions.length, 1);
-  assert.equal(fetch.sessions[0].url, OC + '/api/session');
-  assert.equal(fetch.sessions[0].auth, auth);
-  assert.deepEqual(fetch.sessions[0].body, { title: 'blueflare-ai', agent: 'plan', model: { providerID: 'opencode', id: 'big-pickle' } }, 'the stock agent, permissions untouched');
-  const call = fetch.calls[0];
-  assert.equal(call.url, OC + '/api/session/ses_1/generate');
-  assert.equal(call.auth, auth);
-  assert.deepEqual(call.body, { prompt: 'Be brief.\n\nhello' }, 'nothing OpenRouter-only, no reasoning or max_tokens');
-  await ai.chat('SAMPLE', user('again'));
-  assert.equal(fetch.sessions.length, 1, 'the session is reused');
-  assert.equal(fetch.calls[1].url, OC + '/api/session/ses_1/generate');
-  assert.equal(call.init.headers['x-title'], undefined);
-  assert.deepEqual(ai.modelsFor('SAMPLE').map((m) => m.provider + ':' + m.model), ['opencode:opencode/big-pickle', 'opencode:opencode/glm-5.3-flash-free', 'openrouter:or/m']);
-
-  // Several turns are labelled; an id without a provider part is not an opencode model.
-  const { ai: multi, fetch: f } = make(ocEnv({ OPENCODE_MODEL_SAMPLE: 'bare,opencode/x' }), () => ocAnswer('ok'));
-  assert.deepEqual(multi.modelsFor('SAMPLE').filter((m) => m.provider === 'opencode').map((m) => m.model), ['opencode/x']);
-  await multi.chat('SAMPLE', [{ role: 'user', content: 'a' }, { role: 'assistant', content: 'b' }, { role: 'user', content: 'c' }]);
-  assert.equal(f.calls[0].body.prompt, 'USER:\na\n\nASSISTANT:\nb\n\nUSER:\nc');
-  assert.deepEqual(f.sessions[0].body.model, { providerID: 'opencode', id: 'x' });
-
-  // JSON is asked for in the prompt (no response_format), with the schema when there is one.
-  const { ai: j, fetch: fj } = make(ocEnv({ OPENCODE_MODEL_SAMPLE: 'opencode/x' }), () => ocAnswer('```json\n{"ok":true}\n```'));
-  const out = await j.json('SAMPLE', [{ role: 'system', content: 'You rank.' }, ...user('x')], { schema: { type: 'object', required: ['ok'] } });
-  assert.deepEqual(out.data, { ok: true });
-  assert.equal(out.format, 'none');
-  assert.match(fj.calls[0].body.prompt, /^You rank\.\n\nAnswer with a single valid JSON value only[\s\S]*JSON schema[\s\S]*\n\nx$/);
-  assert.equal(fj.calls[0].body.response_format, undefined);
-});
-
-test('b) a gone opencode session is made again once; a failed session creation is handled like an answer', async () => {
-  let gone = true;
-  const { ai, fetch } = make(ocEnv({ OPENCODE_MODEL_SAMPLE: 'opencode/x', OPENROUTER_MODEL_SAMPLE: 'or/m' }), (call) => {
-    if (call.url.endsWith('/ses_1/generate') && gone) { gone = false; return { status: 404, body: { _tag: 'SessionNotFoundError', sessionID: 'ses_1', message: 'Session not found: ses_1' } }; }
-    return reply(call, 'ok');
-  });
-  const r = await ai.chat('SAMPLE', user('x'));
-  assert.equal(r.provider, 'opencode');
-  assert.deepEqual(fetch.calls.map((c) => c.url.slice(OC.length)), ['/api/session/ses_1/generate', '/api/session/ses_2/generate']);
-
-  for (const [label, out, reason] of [
-    ['401', { status: 401, body: { _tag: 'UnauthorizedError', message: 'Authentication required' } }, 'http 401 (key rejected)'],
-    ['no id', { status: 200, body: { data: {} } }, 'http 502'],
-    ['down', { status: 503, body: {} }, 'http 503']
-  ]) {
-    const { ai: bad } = make(ocEnv({ OPENCODE_MODEL_SAMPLE: 'opencode/x', OPENROUTER_MODEL_SAMPLE: 'or/m', AI_RETRIES: '0' }), (call) => (call.url.endsWith('/api/session') ? out : answer('ok')), {}, { sessions: true });
-    const res = await bad.chat('SAMPLE', user('x'));
-    assert.equal(res.provider, 'openrouter', label);
-    assert.equal(res.attempts[0].reason, reason, label);
-  }
-});
-
-test('b) session generate: "Free usage limit reached" parks opencode for AI_COOLDOWN_MS, "Model unavailable" parks the model', async () => {
-  const vars = ocEnv({ OPENCODE_MODEL_SAMPLE: 'opencode/big-pickle,opencode/other', OPENROUTER_MODEL_SAMPLE: 'or/m' });
-  const { ai, fetch, warnings } = make(vars, (call) => (isOc(call) ? ocBusy('Free usage limit reached. Free models work in OpenCode (https://opencode.ai); subscribe to OpenCode Go to keep going: https://opencode.ai/go') : answer('ok')));
-  const r = await ai.chat('SAMPLE', user('x'));
-  assert.deepEqual(r.attempts.map((a) => a.reason), ['http 429 (free allowance used up)', 'ok']);
-  assert.equal(fetch.calls.filter(isOc).length, 1, 'the other opencode model is not tried');
-  assert.ok(warnings.some((w) => /opencode k1 \([0-9a-f]{6}\) free allowance used up .*parked until 2026-10-07T13:00:00\.000Z/.test(w)));
-  await ai.chat('SAMPLE', user('x'));
-  assert.equal(fetch.calls.filter(isOc).length, 1);
-
-  const { ai: gone, warnings: w2 } = make(vars, (call) => (isOc(call) && call.url.includes('/ses_1/') ? ocBusy('Model unavailable: opencode/big-pickle') : reply(call, 'ok')));
-  const r2 = await gone.chat('SAMPLE', user('x'));
-  assert.equal(r2.model, 'opencode/other');
-  assert.deepEqual(r2.attempts.map((a) => a.reason), ['http 404 (model unavailable)', 'ok']);
-  assert.ok(w2.some((w) => /opencode model opencode\/big-pickle unavailable/.test(w)));
-  // Any other ServiceUnavailableError is a 503: retried, then the next pair.
-  const { ai: busy, fetch: fb } = make(vars, (call) => (isOc(call) ? ocBusy('database is locked') : answer('ok')));
-  assert.equal((await busy.chat('SAMPLE', user('x'))).provider, 'openrouter');
-  assert.equal(fb.calls.filter((c) => c.url.includes('/ses_1/')).length, 3);
-});
-
-test('b) opencode rate limit / overload / provider error / 5xx falls back to OpenRouter and parks the pair', async () => {
-  for (const [label, out, calls] of [['rate_limit', ocFail('rate_limit', { status: 429, retryAfterMs: 2000 }), 3], ['overloaded', ocFail('overloaded'), 3], ['provider', ocFail('provider'), 3], ['503', { status: 503, body: {} }, 3]]) {
-    const { ai, fetch } = make(ocEnv({ OPENROUTER_MODEL_SAMPLE: 'or/model', OPENCODE_MODEL_SAMPLE: 'opencode/big-pickle' }), (call) => (isOc(call) ? out : answer('ok', orUsage)));
-    const result = await ai.chat('SAMPLE', user('hi'));
-    assert.equal(result.provider, 'openrouter', label);
-    assert.equal(result.model, 'or/model');
-    assert.equal(fetch.calls.filter(isOc).length, calls, 'bounded retries on the same pair for ' + label);
-    assert.equal(fetch.calls.at(-1).auth, 'Bearer or-key');
-    fetch.calls.length = 0;
-    await ai.chat('SAMPLE', user('again'));
-    assert.equal(fetch.calls.filter(isOc).length, 0, 'parked after ' + label);
-  }
-  // An unknown model is parked as unavailable; a content filter is a refusal of this input.
-  const { ai: gone, warnings } = make(ocEnv({ OPENROUTER_MODEL_SAMPLE: 'or/m', OPENCODE_MODEL_SAMPLE: 'opencode/nope' }), (call) => (isOc(call)
-    ? { status: 404, body: { _tag: 'ModelNotFoundError', providerID: 'opencode', modelID: 'nope', message: 'Model not found: opencode/nope' } } : answer('ok')));
-  assert.deepEqual((await gone.chat('SAMPLE', user('x'))).attempts.map((a) => a.reason), ['http 404 (model unavailable)', 'ok']);
-  assert.ok(warnings.some((w) => /opencode model opencode\/nope unavailable/.test(w)));
-  const { ai: filtered } = make(ocEnv({ OPENROUTER_MODEL_SAMPLE: 'or/m', OPENCODE_MODEL_SAMPLE: 'opencode/x' }), (call) => (isOc(call) ? ocFail('content_filter') : answer('ok')));
-  assert.deepEqual((await filtered.chat('SAMPLE', user('x'))).attempts.map((a) => a.reason), ['refused: http 403', 'ok']);
-});
-
-test('b) a spent opencode free allowance parks every opencode model until retryAfterMs', async () => {
-  const message = 'Free usage limit reached. Free models work in OpenCode (https://opencode.ai); subscribe to OpenCode Go to keep going: https://opencode.ai/go';
-  const vars = ocEnv({ OPENCODE_MODEL_SAMPLE: 'opencode/big-pickle,opencode/glm-5.3-flash-free', OPENROUTER_MODEL_SAMPLE: 'or/m' });
-  const { ai, fetch, warnings } = make(vars, (call) => (isOc(call) ? ocFail('rate_limit', { status: 429, message, retryAfterMs: 9 * 3600 * 1000 }) : answer('ok')));
-  const r = await ai.chat('SAMPLE', user('x'));
-  assert.equal(r.provider, 'openrouter');
-  assert.deepEqual(r.attempts.map((a) => a.reason), ['http 429 (free allowance used up)', 'ok']);
-  assert.equal(fetch.calls.filter(isOc).length, 1, 'the second opencode model is not tried');
-  assert.ok(warnings.some((w) => /opencode k1 \([0-9a-f]{6}\) free allowance used up .*parked until 2026-10-07T21:00:00\.000Z/.test(w)));
-  await ai.chat('SAMPLE', user('x'));
-  assert.equal(fetch.calls.filter(isOc).length, 1, 'no probe before the reset');
-  assert.ok(warnings.every((w) => !w.includes('oc-pass')), 'the password never reaches a log line');
-});
-
-test('b) a 401 (sidecar password or opencode login) and a network error / timeout also fall through, and a 429 retry can succeed', async () => {
-  const vars = ocEnv({ OPENCODE_MODEL_SAMPLE: 'opencode/x', OPENROUTER_MODEL_PRIMARY: 'or/model' });
-  for (const out of [{ status: 401, body: { _tag: 'UnauthorizedError', message: 'Authentication required' } }, ocFail('authentication')]) {
-    const { ai, warnings } = make(vars, (call) => (isOc(call) ? out : answer('ok')));
-    assert.equal((await ai.chat('SAMPLE', user('x'))).provider, 'openrouter');
-    assert.ok(warnings.some((w) => /opencode k1 \([0-9a-f]{6}\) disabled/.test(w)));
-    assert.ok(warnings.every((w) => !w.includes('oc-pass')), 'the password never reaches a log line');
-  }
+test('b) a 401 and a network error / timeout fall through to the next provider', async () => {
+  const vars = r9Env({ ROUTER9_MODEL_SAMPLE: 'r/x', OPENROUTER_MODEL_PRIMARY: 'or/model' });
+  const { ai, warnings } = make(vars, (call) => (isR9(call) ? { status: 401, body: {} } : answer('ok')));
+  assert.equal((await ai.chat('SAMPLE', user('x'))).provider, 'openrouter');
+  assert.ok(warnings.some((w) => /9router k1 \([0-9a-f]{6}\) disabled/.test(w)));
+  assert.ok(warnings.every((w) => !w.includes('r9-key')), 'the key never reaches a log line');
   const { ai: dead } = make(env({ OPENROUTER_API_KEY: 'bad-or-key', OPENROUTER_MODEL_SAMPLE: 'a/one,b/two' }), () => ({ status: 401, body: {} }));
   const err = await dead.chat('SAMPLE', user('x')).catch((e) => e);
   assert.ok(err instanceof AiError && err.blocked, 'every key rejected = unavailable');
   assert.ok(!JSON.stringify({ m: err.message, a: err.attempts }).includes('bad-or-key'), 'keys never reach an error');
 
   const timeout = Object.assign(new Error('t'), { name: 'TimeoutError' });
-  const { ai: flaky } = make(vars, (call) => (isOc(call) ? timeout : answer('ok')));
+  const { ai: flaky } = make(vars, (call) => (isR9(call) ? timeout : answer('ok')));
   const r = await flaky.chat('SAMPLE', user('x'));
   assert.deepEqual(r.attempts.map((a) => a.reason), ['timeout', 'ok']);
-
-  let n = 0;
-  const { ai: retry } = make(vars, (call) => (isOc(call) && ++n === 1 ? ocFail('rate_limit', { status: 429, retryAfterMs: 1000 }) : reply(call, 'ok')));
-  assert.equal((await retry.chat('SAMPLE', user('x'))).provider, 'opencode');
 });
+
 
 test('c) the OpenRouter body has usage, reasoning and its headers; usage/cost may be absent', async () => {
   const { ai, fetch } = make(env({ OPENROUTER_MODEL_PRIMARY: 'or/m' }), () => answer('ok', orUsage));
@@ -239,24 +101,24 @@ test('c) the OpenRouter body has usage, reasoning and its headers; usage/cost ma
 });
 
 test('d) bad JSON moves to the next pair; when every pair fails AiError lists every reason', async () => {
-  const vars = ocEnv({ OPENCODE_MODEL_MATCH: 'opencode/deep', OPENROUTER_MODEL_MATCH: 'or/a,or/b' });
-  const { ai } = make(vars, (call) => reply(call, call.body.model === 'or/b' ? '```json\n{"results":[1]}\n```' : 'not json at all'));
+  const vars = r9Env({ ROUTER9_MODEL_MATCH: 'r9/deep', OPENROUTER_MODEL_MATCH: 'or/a,or/b' });
+  const { ai } = make(vars, (call) => answer(call.body.model === 'or/b' ? '```json\n{"results":[1]}\n```' : 'not json at all'));
   const good = await ai.json('MATCH', user('rank'));
   assert.deepEqual(good.data, { results: [1] });
-  assert.deepEqual(good.attempts.map((a) => a.model + ':' + a.reason.split(':')[0]), ['opencode/deep:bad JSON', 'or/a:bad JSON', 'or/b:ok']);
+  assert.deepEqual(good.attempts.map((a) => a.model + ':' + a.reason.split(':')[0]), ['r9/deep:bad JSON', 'or/a:bad JSON', 'or/b:ok']);
 
-  const { ai: bad } = make(vars, (call) => (isOc(call) ? ocAnswer('{"oops"') : call.body.model === 'or/a' ? { status: 400, body: { error: { message: 'bad request' } } } : { status: 200, body: '' }));
+  const { ai: bad } = make(vars, (call) => (isR9(call) ? answer('{"oops"') : call.body.model === 'or/a' ? { status: 400, body: { error: { message: 'bad request' } } } : { status: 200, body: '' }));
   const error = await bad.json('MATCH', user('rank')).catch((e) => e);
   assert.ok(error instanceof AiError);
   assert.equal(error.kind, 'content');
   assert.equal(error.permanent, true);
-  assert.deepEqual(error.attempts.map((a) => a.provider + '/' + a.model), ['opencode/opencode/deep', 'openrouter/or/a', 'openrouter/or/a', 'openrouter/or/b']);
+  assert.deepEqual(error.attempts.map((a) => a.provider + '/' + a.model), ['9router/r9/deep', 'openrouter/or/a', 'openrouter/or/a', 'openrouter/or/b']);
   assert.match(error.message, /bad JSON/);
   assert.match(error.message, /empty or non-JSON body/);
 
   // Schema failure and a throwing accept() are refusals too; parsed value comes from accept().
   const schema = { type: 'object', required: ['n'], properties: { n: { type: 'integer' } } };
-  const { ai: s } = make(vars, (call) => reply(call, call.body.model === 'or/b' ? '{"n": 2}' : '{"n": "two"}'));
+  const { ai: s } = make(vars, (call) => answer(call.body.model === 'or/b' ? '{"n": 2}' : '{"n": "two"}'));
   const out = await s.json('MATCH', user('x'), { schema, accept: (data) => data.n * 10 });
   assert.equal(out.value, 20);
   assert.equal(out.attempts.length, 3);
@@ -271,7 +133,7 @@ test('d) bad JSON moves to the next pair; when every pair fails AiError lists ev
 
 test('e) a vision role skips models that cannot read images', async () => {
   registerRole('POSTER_TEST', { vision: true });
-  const vars = ocEnv({ OPENCODE_MODEL_POSTER_TEST: 'opencode/x', OPENROUTER_MODEL_POSTER_TEST: 'text-only,seeing,or/blind,or/eyes' });
+  const vars = r9Env({ ROUTER9_MODEL_POSTER_TEST: 'r9/x', OPENROUTER_MODEL_POSTER_TEST: 'text-only,seeing,or/blind,or/eyes' });
   const respond = (call) => {
     if (call.url.endsWith('/models')) return { status: 200, body: { data: [{ id: 'or/blind', architecture: { input_modalities: ['text'] } }, { id: 'or/eyes', architecture: { input_modalities: ['text', 'image'] } }] } };
     if (call.body.model === 'text-only') return { status: 400, body: { error: { message: 'This model does not support image input' } } };
@@ -279,7 +141,7 @@ test('e) a vision role skips models that cannot read images', async () => {
     return answer('a poster');
   };
   const { ai, fetch } = make(vars, respond);
-  assert.ok(!ai.modelsFor('POSTER_TEST').some((m) => m.provider === 'opencode'), 'opencode takes text only: no route for a vision role');
+  assert.ok(!ai.modelsFor('POSTER_TEST').some((m) => m.provider === '9router'), '9router takes text only: no route for a vision role');
   const messages = [{ role: 'user', content: [{ type: 'text', text: 'what is this?' }, imagePart(PNG)] }];
   assert.match(messages[0].content[1].image_url.url, /^data:image\/png;base64,/);
   const result = await ai.chat('POSTER_TEST', messages);
@@ -293,7 +155,7 @@ test('e) a vision role skips models that cannot read images', async () => {
   fetch.calls.length = 0;
   await ai.chat('POSTER_TEST', user('text'));
   assert.equal(fetch.calls[0].body.model, 'text-only');
-  assert.ok(!fetch.calls.some(isOc));
+  assert.ok(!fetch.calls.some(isR9));
   // A non-vision role refuses images outright.
   await assert.rejects(ai.chat('SAMPLE', messages), TypeError);
   assert.throws(() => imagePart(Buffer.from('nope')), TypeError);
@@ -341,29 +203,34 @@ test('g) a role added with one line works without touching the module', async ()
   assert.equal(ai.available('SUMMARY_TEST'), true);
   assert.equal((await ai.chat('SUMMARY_TEST', user('long text'))).text, 'short');
   assert.equal(fetch.calls[0].body.model, 'vendor/summary:free');
-  // No defaultOc and no OPENCODE_MODEL_*: no opencode route even with the sidecar configured.
-  assert.deepEqual(make(ocEnv(), () => answer('x')).ai.modelsFor('SUMMARY_TEST'), [{ provider: 'openrouter', model: 'vendor/summary:free' }]);
-  const { ai: own } = make(ocEnv({ OPENCODE_MODEL_PRIMARY: 'opencode/p1', OPENCODE_MODEL_SUMMARY_TEST: 'opencode/mine' }), () => answer('x'));
-  assert.deepEqual(own.modelsFor('SUMMARY_TEST'), [{ provider: 'opencode', model: 'opencode/mine' }, { provider: 'openrouter', model: 'vendor/summary:free' }]);
-  const { ai: shared } = make(ocEnv({ OPENCODE_MODEL_PRIMARY: 'opencode/p1,opencode/p2', OPENROUTER_MODEL_PRIMARY: 'or/shared' }), () => answer('x'));
-  assert.deepEqual(shared.modelsFor('SUMMARY_TEST').map((m) => m.model), ['opencode/p1', 'opencode/p2', 'or/shared']);
+  // No default and no ROUTER9_MODEL_*: no 9router route even with 9router configured.
+  assert.deepEqual(make(r9Env(), () => answer('x')).ai.modelsFor('SUMMARY_TEST'), [{ provider: 'openrouter', model: 'vendor/summary:free' }]);
+  const { ai: own } = make(r9Env({ ROUTER9_MODEL_PRIMARY: 'r/p1', ROUTER9_MODEL_SUMMARY_TEST: 'r/mine' }), () => answer('x'));
+  assert.deepEqual(own.modelsFor('SUMMARY_TEST'), [{ provider: '9router', model: 'r/mine' }, { provider: 'openrouter', model: 'vendor/summary:free' }]);
+  const { ai: shared } = make(r9Env({ ROUTER9_MODEL_PRIMARY: 'r/p1,r/p2', OPENROUTER_MODEL_PRIMARY: 'or/shared' }), () => answer('x'));
+  assert.deepEqual(shared.modelsFor('SUMMARY_TEST').map((m) => m.model), ['r/p1', 'r/p2', 'or/shared']);
   await assert.rejects(ai.chat('NOT_A_ROLE', user('x')), /unknown AI role/);
 });
 
-test('h) OPENCODE_URL without OPENCODE_SERVER_PASSWORD fails at startup; the removed primary-provider env only warns', () => {
-  assert.throws(() => readAiConfig({ OPENCODE_URL: OC }), (e) => e instanceof AiConfigError && /OPENCODE_SERVER_PASSWORD is required when OPENCODE_URL is set/.test(e.message));
-  assert.throws(() => createAi({ env: { OPENCODE_URL: OC, OPENCODE_SERVER_PASSWORD: ' ' } }), AiConfigError);
-  assert.throws(() => readAiConfig({ OPENCODE_URL: 'not a url', OPENCODE_SERVER_PASSWORD: 'p' }), /not a valid URL/);
-  const cfg = readAiConfig({ OPENCODE_URL: OC + '//', OPENCODE_SERVER_PASSWORD: 'p' });
-  assert.equal(cfg.opencode.baseUrl, OC);
-  assert.equal(cfg.opencode.name, 'opencode');
-  assert.equal(readAiConfig({}).opencode, null);
+test('h) removed env (primary provider, opencode sidecar) only warns; a stale OPENCODE_URL does not stop startup', () => {
   const warnings = [];
   const old = readAiConfig({ LLM_BASE_URL: 'https://llm.example/v1', LLM_API_KEY: 'secret-k', MODEL_PRIMARY: 'deep', MODEL_MATCH: 'x', OPENROUTER_API_KEY: 'or' }, { warn: (m) => warnings.push(m) });
   assert.equal(old.primary, undefined);
   for (const name of ['LLM_BASE_URL', 'LLM_API_KEY', 'MODEL_PRIMARY', 'MODEL_MATCH']) assert.ok(warnings.some((w) => w.includes(name + ' is no longer read')), name);
   assert.ok(warnings.every((w) => !w.includes('secret-k')));
+
+  // A stack .env from the opencode days: OPENCODE_URL without a password, a malformed URL, model lists.
+  const stale = [];
+  const legacy = { OPENCODE_URL: 'not a url', OPENCODE_SERVER_PASSWORD: 'oc-secret', OPENCODE_MODEL_PRIMARY: 'opencode/p', OPENCODE_MODEL_MATCH: 'opencode/big-pickle', OPENCODE_MODEL_DEDUPE: 'x/y', OPENCODE_CREDENTIALS_DIR: './opencode' };
+  const cfg = readAiConfig({ ...legacy, OPENROUTER_API_KEY: 'or' }, { warn: (m) => stale.push(m) });
+  assert.equal(cfg.opencode, undefined);
+  for (const name of Object.keys(legacy)) assert.ok(stale.some((w) => w.includes(name + ' is no longer read')), name);
+  assert.ok(stale.every((w) => !w.includes('oc-secret')));
+  const { ai } = make({ OPENCODE_URL: 'http://opencode:4096', OPENROUTER_API_KEY: 'or' }, () => answer('x'));
+  assert.deepEqual(ai.modelsFor('MATCH'), [{ provider: 'openrouter', model: 'openrouter/free' }], 'no opencode route, MATCH still has OpenRouter');
+  assert.doesNotThrow(() => createAi({ env: { OPENCODE_URL: 'http://opencode:4096' }, warn: () => {} }));
 });
+
 
 test('deprecated names still work and warn once at startup; new names win', () => {
   const warnings = [];
@@ -462,8 +329,8 @@ test('AI_FAKE=1 answers without network or keys', async () => {
 test('util: models, JSON extraction, schema subset', () => {
   assert.deepEqual(parseModels('a/b:free, c:10:500, a/b:free'), [{ id: 'a/b:free', rpm: 20 }, { id: 'c', rpm: 10, rpd: 500 }]);
   assert.deepEqual(parseModels('deep:free', { freeRpm: 0 }), [{ id: 'deep:free', rpm: 0 }]);
-  for (const id of ['a/b:free', 'opencode/glm-5.3-flash-free', 'openrouter/free', 'opencode/big-pickle']) assert.equal(isFree(id), true, id);
-  for (const id of ['opencode/claude-haiku-5-5', 'opencode/big-pickle-pro', 'a/b']) assert.equal(isFree(id), false, id);
+  for (const id of ['a/b:free', 'opencode/glm-5.3-flash-free', 'openrouter/free']) assert.equal(isFree(id), true, id);
+  for (const id of ['opencode/claude-haiku-5-5', 'opencode/big-pickle', 'a/b']) assert.equal(isFree(id), false, id);
   assert.deepEqual(extractJson('noise {"a":[1]} tail').value, { a: [1] });
   assert.deepEqual(extractJson('[1,2]').value, [1, 2]);
   assert.equal(extractJson('nothing').ok, false);
@@ -506,30 +373,30 @@ test('ported from the old rotation: key only in the header, 200 carrying an erro
   assert.ok(clock - first >= 3000);
 });
 
-test('AI_REASONING overrides the caller on OpenRouter; opencode gets no reasoning field', async () => {
-  const { createAi } = await import('../src/ai/index.js');
+test('AI_REASONING overrides the caller; OpenRouter takes a reasoning object, 9router the OpenAI-style field', async () => {
   const seen = [];
   const transport = async (url, init) => {
-    if (url.endsWith('/api/session')) return new Response(JSON.stringify({ data: { id: 'ses_1' } }), { status: 200 });
     seen.push({ url, body: JSON.parse(init.body) });
     if (seen.length === 1) return new Response('{}', { status: 500 });
     return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }], usage: {} }), { status: 200, headers: { 'content-type': 'application/json' } });
   };
-  const ai = createAi({ env: { OPENCODE_URL: OC, OPENCODE_SERVER_PASSWORD: 'p', OPENCODE_MODEL_SAMPLE: 'opencode/m', OPENROUTER_API_KEY: 'o', OPENROUTER_MODEL_SAMPLE: 'x/y', AI_REASONING: 'medium', AI_RETRIES: '0' }, transport, sleep: async () => {}, warn: () => {} });
+  const ai = createAi({ env: { ROUTER9_BASE_URL: R9, ROUTER9_API_KEY: 'k', ROUTER9_MODEL_SAMPLE: 'r/m', OPENROUTER_API_KEY: 'o', OPENROUTER_MODEL_SAMPLE: 'x/y', AI_REASONING: 'medium', AI_RETRIES: '0' }, transport, sleep: async () => {}, warn: () => {} });
   await ai.chat('SAMPLE', [{ role: 'user', content: 'hi' }], { reasoning: 'off' });
-  assert.deepEqual(Object.keys(seen[0].body), ['prompt']);
+  assert.equal(seen[0].body.reasoning_effort, 'medium');
+  assert.equal('reasoning' in seen[0].body, false);
   assert.deepEqual(seen[1].body.reasoning, { effort: 'medium' });
   assert.throws(() => createAi({ env: { AI_REASONING: 'huge' }, transport, warn: () => {} }), /AI_REASONING/);
 });
 
 test('DEDUPE borrows the MATCH models and keys unless it names its own, with its own paid cap', async () => {
   const { roleRoutes, rolePaidCap } = await import('../src/ai/config.js');
-  const borrowed = readAiConfig({ OPENCODE_URL: OC, OPENCODE_SERVER_PASSWORD: 'k', OPENCODE_MODEL_MATCH: 'opencode/deep', OPENROUTER_API_KEY: 'or', OPENROUTER_MODEL_MATCH: 'or/m' });
+  const borrowed = readAiConfig({ ROUTER9_BASE_URL: R9, ROUTER9_API_KEY: 'k', ROUTER9_MODEL_MATCH: 'r/deep', OPENROUTER_API_KEY: 'or', OPENROUTER_MODEL_MATCH: 'or/m', AI_ROUTE_DEDUPE: '9router,openrouter' });
   assert.equal(roleRoutes(borrowed, 'DEDUPE').length, 2);
   assert.equal(JSON.stringify(roleRoutes(borrowed, 'DEDUPE').map((r) => r.models)), JSON.stringify(roleRoutes(borrowed, 'MATCH').map((r) => r.models)));
-  const own = readAiConfig({ OPENCODE_URL: OC, OPENCODE_SERVER_PASSWORD: 'k', OPENCODE_MODEL_MATCH: 'opencode/deep', OPENCODE_MODEL_DEDUPE: 'opencode/wide', OPENROUTER_API_KEY: 'or' });
+  const own = readAiConfig({ ROUTER9_BASE_URL: R9, ROUTER9_API_KEY: 'k', ROUTER9_MODEL_MATCH: 'r/deep', ROUTER9_MODEL_DEDUPE: 'r/wide', OPENROUTER_API_KEY: 'or', AI_ROUTE_DEDUPE: '9router,openrouter' });
   assert.match(JSON.stringify(roleRoutes(own, 'DEDUPE')[0].models), /wide/);
   assert.doesNotMatch(JSON.stringify(roleRoutes(own, 'DEDUPE')[0].models), /deep/);
+
   const capped = readAiConfig({ OPENROUTER_API_KEY: 'or', AI_PAID_DAILY_OUTPUT_TOKENS_MATCH: '100', AI_PAID_DAILY_OUTPUT_TOKENS_DEDUPE: '7' });
   assert.equal(rolePaidCap(capped, 'DEDUPE'), 7);
   assert.equal(rolePaidCap(capped, 'MATCH'), 100);
@@ -560,33 +427,9 @@ test('openrouter/free counts as a free model', () => {
   assert.deepEqual(parseModels('openrouter/free:20:300'), [{ id: 'openrouter/free', rpm: 20, rpd: 300 }]);
 });
 
-test('opencode: one call in flight per key, across roles; OpenRouter calls are not held', async () => {
-  let inFlight = 0;
-  let peak = 0;
-  const { ai, fetch } = make(ocEnv({ OPENCODE_MODEL_DEDUPE: 'opencode/other-free' }), async (call) => {
-    if (!call.url.startsWith(OC)) return answer('or');
-    inFlight += 1;
-    peak = Math.max(peak, inFlight);
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    inFlight -= 1;
-    return ocAnswer('oc');
-  });
-  const results = await Promise.all([
-    ai.chat('MATCH', [{ role: 'user', content: 'a' }]),
-    ai.chat('MATCH', [{ role: 'user', content: 'b' }]),
-    ai.chat('DEDUPE', [{ role: 'user', content: 'c' }]),
-  ]);
-  assert.deepEqual(results.map((r) => r.text), ['oc', 'oc', 'oc']);
-  assert.equal(peak, 1);
-  assert.equal(fetch.calls.filter((c) => c.url.startsWith(OC)).length, 3);
-});
-
-const R9 = 'http://9router:20128/v1';
-const r9Env = (over = {}) => env({ ROUTER9_BASE_URL: R9 + '/', ROUTER9_API_KEY: 'r9-key', ...over });
-
-test('9router: first in line, plain OpenAI call, falls through to opencode/OpenRouter on 429', async () => {
-  const { ai, fetch } = make(r9Env({ OPENCODE_URL: OC, OPENCODE_SERVER_PASSWORD: 'p' }), (call) => (call.url.startsWith(R9) ? { status: 200, body: answer('r9').body } : reply(call, 'other')));
-  assert.deepEqual(ai.modelsFor('MATCH').map((m) => m.provider + ':' + m.model), ['9router:oc/deepseek-v4.1-flash-free', 'opencode:opencode/big-pickle', 'openrouter:openrouter/free']);
+test('9router: first in line, plain OpenAI call, falls through to OpenRouter on 429', async () => {
+  const { ai, fetch } = make(r9Env(), (call) => (call.url.startsWith(R9) ? { status: 200, body: answer('r9').body } : answer('other')));
+  assert.deepEqual(ai.modelsFor('MATCH').map((m) => m.provider + ':' + m.model), ['9router:oc/deepseek-v4.1-flash-free', 'openrouter:openrouter/free']);
   const result = await ai.chat('MATCH', user('hi'));
   assert.equal(result.provider, '9router');
   assert.equal(fetch.calls[0].url, R9 + '/chat/completions');

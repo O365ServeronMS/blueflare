@@ -1033,7 +1033,7 @@ function stop(signal) {
 process.on('SIGTERM', () => stop('SIGTERM'));
 process.on('SIGINT', () => stop('SIGINT'));
 
-// Read the AI env once at startup: a broken setting (OPENCODE_URL without OPENCODE_SERVER_PASSWORD) fails here, loudly,
+// Read the AI env once at startup: a broken setting (ROUTER9_API_KEY without ROUTER9_BASE_URL) fails here, loudly,
 // and deprecated names print their warning once instead of on the first AI call.
 getAi();
 

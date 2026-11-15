@@ -63,7 +63,6 @@ if (( ${#services[@]} == 0 )); then
     services+=(api worker)
   fi
   if grep -q '^infra/backup/' <<<"$changed"; then services+=(backup); fi
-  if grep -q '^infra/opencode/' <<<"$changed"; then services+=(opencode); fi
 fi
 compose_changed=0
 diff -q infra/compose.yml "$STACK_DIR/compose.yml" >/dev/null 2>&1 || compose_changed=1
@@ -160,7 +159,7 @@ check=(${services[@]+"${services[@]}"})
 if (( compose_changed )); then
   log "compose.yml changed: reconciling every service"
   compose up -d --no-build
-  check=(postgres valkey api worker frontend backup opencode)
+  check=(postgres valkey api worker frontend backup)
 fi
 if (( ${#services[@]} )); then recreate "${services[@]}"; fi
 

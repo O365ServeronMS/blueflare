@@ -391,6 +391,9 @@ and re-gated under the lock the sync cycle holds.
 - `node scripts/catalog-audit-undo.mjs <actionId>` reverses one applied action: season fix and
   merge through `tmdb_identity_changes`, alias/slug/hidden row/moved source from the action's
   `before`. Like the identity undo, it writes to the database only; invalidate the printed slugs.
+- Group memory (`CATALOG_AUDIT_MEMORY_MODE`, `CATALOG_AUDIT_MEMORY_DAYS`, see `CLAUDE.md`): in `dry-run` read
+  `summary->>'memoryWouldSkip'` (against `modelGroups`) and `memoryWouldSkipApplied` (against applied actions) of the
+  run row to decide on `apply`. `catalog_audit_group_memory` (041) is disposable; `delete from` it to force a full re-ask.
 - A group without enough evidence is `blocked` with a `gate` reason, never forced: the next run
   sees it again after a sync has changed its data.
 

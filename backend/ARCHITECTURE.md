@@ -55,7 +55,7 @@ Browser
 
 ### Accounts architecture
 
-User accounts, sessions and the last watched episode per title (`user_history`) live in PostgreSQL (migrations 020, 021). The TMDB identity audit/undo log `tmdb_identity_changes` (migration 030), `movie_merges` and the pin column `movies.tmdb_identity_pinned` (039) are irreplaceable state in the same dump; `ai_quota_ledger` (031) and `provider_identity_reviews` (039) are disposable.
+User accounts, sessions and the last watched episode per title (`user_history`) live in PostgreSQL (migrations 020, 021). The TMDB identity audit/undo log `tmdb_identity_changes` (migration 030), `movie_merges` and the pin column `movies.tmdb_identity_pinned` (039) are irreplaceable state in the same dump; `ai_quota_ledger` (031), `provider_identity_reviews` (039) and `catalog_audit_group_memory` (041) are disposable.
 `auth.js` handles password hashing and sessions; `meApi.js` serves `/api/auth/*`
 and `/api/me/*`, never response-cached (Valkey is used only for auth rate-limit counters). Browsers reach them only through the
 Next proxy on `phim.bluesia.net` (`bf_session` cookie, HttpOnly, SameSite=Lax);

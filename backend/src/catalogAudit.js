@@ -10,6 +10,7 @@
  * and undo scripts. Never on a request path. The model never writes: it only names actions on ids
  * of its group, and the gate decides.
  */
+import { createHash } from 'node:crypto';
 import { config } from './config.js';
 import { pool } from './db.js';
 import { getAi, AiError } from './ai/index.js';
@@ -154,6 +155,36 @@ export function packGroups(groups, { maxGroups = 8, maxTokens = 16000, charsPerT
   return packs;
 }
 
+// ---- group memory --------------------------------------------------------------------------
+
+// Bump to invalidate every remembered group (e.g. after the prompt or the gate changed meaning).
+export const AUDIT_MEMORY_VERSION = '1';
+
+/**
+ * Hash of what the model would be shown for a group, stable across runs: order-free (rows, sources,
+ * aliases, flags, detectors are sorted) and without live usage counts (favorites/history only as
+ * "has any"), which move every week without changing the question.
+ */
+export function groupHash(shaped) {
+  const byId = (a, b) => (String(a.id) < String(b.id) ? -1 : String(a.id) > String(b.id) ? 1 : 0);
+  const rows = shaped.rows.map((r) => ({
+    ...r,
+    users: { favorites: r.users.favorites > 0, history: r.users.history > 0 },
+    flags: [...r.flags].sort(),
+    aliases: [...r.aliases].sort(),
+    sources: [...r.sources].sort(byId)
+  })).sort(byId);
+  const stable = { ...shaped, detectors: [...shaped.detectors].sort(), rows };
+  return createHash('sha256').update(AUDIT_MEMORY_VERSION + '\n' + JSON.stringify(stable)).digest('hex');
+}
+
+export const MEMORY_SQL = {
+  fresh: 'SELECT group_hash FROM catalog_audit_group_memory WHERE decided_at > now() - make_interval(days => $1)',
+  upsert: 'INSERT INTO catalog_audit_group_memory (group_hash, group_key, outcome, run_id) VALUES ($1,$2,$3,$4) ' +
+    'ON CONFLICT (group_hash) DO UPDATE SET group_key=EXCLUDED.group_key, outcome=EXCLUDED.outcome, run_id=EXCLUDED.run_id, decided_at=now()',
+  prune: 'DELETE FROM catalog_audit_group_memory WHERE decided_at < now() - make_interval(days => $1)'
+};
+
 // ---- one run -------------------------------------------------------------------------------
 
 async function startRun(db, mode) {
@@ -200,7 +231,15 @@ export async function runCatalogAudit(deps = {}) {
   const warn = deps.warn ?? ((message) => console.warn(message));
   const lock = deps.lock ?? catalogLock;
   const runId = await startRun(db, mode);
-  const summary = { mode, counts: null, groups: 0, modelGroups: 0, requests: 0, statuses: {}, actions: {}, gates: {}, model: null, stopped: null, refusedPacks: 0, failedPacks: 0 };
+  const summary = { mode, counts: null, groups: 0, modelGroups: 0, requests: 0, statuses: {}, actions: {}, gates: {}, model: null, stopped: null, refusedPacks: 0, failedPacks: 0,
+    memoryMode: 'off', memorySkipped: 0, memoryWouldSkip: 0, memoryWouldSkipApplied: 0, memoryRemembered: 0 };
+  const memoryMode = ['dry-run', 'apply'].includes(settings.catalogAuditMemoryMode) ? settings.catalogAuditMemoryMode : 'off';
+  const memoryDays = Math.max(1, Math.floor(settings.catalogAuditMemoryDays ?? 28));
+  summary.memoryMode = memoryMode;
+  const hashes = new Map(); // group key -> hash, for the groups shown (or skipped) this run
+  const answered = new Set(); // group keys the model really answered
+  const wouldSkip = new Set(); // dry-run: remembered groups that were asked anyway
+  const appliedIn = new Set(); // group keys with an applied action this run
   const tally = (verdict, status, gate) => {
     summary.statuses[status] = (summary.statuses[status] || 0) + 1;
     summary.actions[verdict.action.type] = (summary.actions[verdict.action.type] || 0) + 1;
@@ -228,7 +267,17 @@ export async function runCatalogAudit(deps = {}) {
       await ai.ready();
       const tmdb = deps.tmdb ?? (settings.tmdbEnabled && settings.tmdbApiKey ? createTmdbClient({ concurrency: 2 }) : null);
       if (tmdb) facts = await fetchFacts(modelGroups, tmdb, isStopping);
-      const shaped = modelGroups.map((g) => groupForModel(g, facts));
+      let shaped = modelGroups.map((g) => groupForModel(g, facts));
+      if (memoryMode !== 'off') {
+        for (const g of shaped) hashes.set(g.key, groupHash(g));
+        let fresh = new Set();
+        try {
+          fresh = new Set((await db.query(MEMORY_SQL.fresh, [memoryDays])).rows.map((r) => r.group_hash));
+        } catch (error) { warn('[worker] catalog audit memory unreadable: ' + String(error.message).slice(0, 200)); }
+        const remembered = shaped.filter((g) => fresh.has(hashes.get(g.key)));
+        if (memoryMode === 'apply') { summary.memorySkipped = remembered.length; shaped = shaped.filter((g) => !fresh.has(hashes.get(g.key))); }
+        else { summary.memoryWouldSkip = remembered.length; for (const g of remembered) wouldSkip.add(g.key); }
+      }
       for (const pack of packGroups(shaped, { maxGroups: settings.catalogAuditBatch, maxTokens: settings.catalogAuditBatchTokens })) {
         if (isStopping()) { summary.stopped = 'stopping'; break; }
         try {
@@ -242,6 +291,8 @@ export async function runCatalogAudit(deps = {}) {
             const seen = new Set(entry.actions.map(actionKey));
             entry.actions = [...entry.actions, ...actions.filter((a) => !seen.has(actionKey(a)))];
             entry.model = model;
+            entry.modelActions = actions.length;
+            answered.add(key);
           }
         } catch (error) {
           if (error instanceof AiError && error.kind === 'content') { summary.refusedPacks += 1; failedRun = 0; continue; }
@@ -259,20 +310,37 @@ export async function runCatalogAudit(deps = {}) {
       summary.stopped = 'ai-off';
     }
 
+    // Remember a group the model answered once nothing came of it: no valid action ('none'), or only
+    // actions the pure gate refused ('blocked'). Anything applied, failed, dry-run or cut short is not a settled "nothing".
+    const remember = async (group, proposal, results) => {
+      if (memoryMode === 'off' || !answered.has(group.key) || !hashes.has(group.key)) return;
+      if (results.some((r) => r.status !== 'blocked' || r.gate === 'earlier-action-failed')) return;
+      const outcome = proposal.modelActions === 0 ? 'none' : 'blocked';
+      try {
+        await db.query(MEMORY_SQL.upsert,
+        [hashes.get(group.key), group.key, outcome, runId]);
+        summary.memoryRemembered += 1;
+      } catch (error) { warn('[worker] catalog audit memory not saved: ' + String(error.message).slice(0, 200)); }
+    };
+
     // Gate and record (apply mode writes under the lock; each group is re-read first).
     for (const group of groups) {
       if (isStopping()) { summary.stopped = 'stopping'; break; }
       const proposal = proposals.get(group.key);
-      if (!proposal.actions.length) continue;
+      if (!proposal.actions.length) { await remember(group, proposal, []); continue; }
       if (mode !== 'apply') {
         const state = createState(group.rows, { facts, holderOf, family });
+        const results = [];
         for (const verdict of gateProposal(state, proposal.actions)) {
           const status = verdict.ok ? 'dry-run' : 'blocked';
+          results.push({ status, gate: verdict.gate });
           tally(verdict, status, verdict.gate);
           await recordAction(db, runId, group, verdict, { status, gate: verdict.gate, model: proposal.model });
         }
+        await remember(group, proposal, results);
         continue;
       }
+      const results = [];
       await lock.run(async () => {
         const fresh = (await loadRows(db, group.rows.map((r) => r.id))).filter((r) => r.catalog_state === 'ready');
         const state = createState(fresh, { facts, holderOf, family });
@@ -284,23 +352,32 @@ export async function runCatalogAudit(deps = {}) {
           else if (applied >= settings.catalogAuditMaxActions) outcome = { status: 'dry-run', gate: 'over-cap' };
           else {
             outcome = await applyAuditAction(verdict, { ...deps, runId });
-            if (outcome.status === 'applied') { applied += 1; for (const slug of outcome.slugs || []) changed.add(slug); }
+            if (outcome.status === 'applied') { applied += 1; appliedIn.add(group.key); for (const slug of outcome.slugs || []) changed.add(slug); }
             // the state the next action was gated on did not happen
             if (outcome.status !== 'applied') broken = true;
           }
+          results.push({ status: outcome.status, gate: outcome.gate });
           tally(verdict, outcome.status, outcome.gate);
           await recordAction(db, runId, group, verdict, { ...outcome, model: proposal.model });
         }
       });
+      await remember(group, proposal, results);
       if (changed.size >= 50 && deps.onChanged) { await flush(deps, changed, log); }
     }
     if (deps.onChanged) await flush(deps, changed, log);
+    if (memoryMode !== 'off') {
+      summary.memoryWouldSkipApplied = [...wouldSkip].filter((key) => appliedIn.has(key)).length;
+      await db.query(MEMORY_SQL.prune, [2 * memoryDays])
+        .catch((error) => warn('[worker] catalog audit memory prune failed: ' + String(error.message).slice(0, 200)));
+    }
     // A shutdown is not a finished run: 'failed' lets runDue redo the slot after the restart (deploys stop the worker).
     const status = summary.stopped === 'stopping' ? 'failed' : summary.stopped ? 'partial' : 'done';
     await db.query('UPDATE catalog_audit_runs SET status=$2, finished_at=now(), groups=$3, summary=$4::jsonb, error=$5 WHERE id=$1',
       [runId, status, summary.groups, JSON.stringify(summary), status === 'failed' ? 'interrupted' : null]);
     log('[worker] catalog audit run=' + runId + ' ' + status + ' statuses=' + JSON.stringify(summary.statuses) +
-      ' requests=' + summary.requests + (summary.refusedPacks || summary.failedPacks ? ' refusedPacks=' + summary.refusedPacks + ' failedPacks=' + summary.failedPacks : '') + (summary.stopped ? ' stopped=' + summary.stopped : ''));
+      ' requests=' + summary.requests + (summary.refusedPacks || summary.failedPacks ? ' refusedPacks=' + summary.refusedPacks + ' failedPacks=' + summary.failedPacks : '') + (summary.stopped ? ' stopped=' + summary.stopped : '') +
+      (memoryMode !== 'off' ? ' memory=' + memoryMode + ' memorySkipped=' + summary.memorySkipped + ' memoryWouldSkip=' + summary.memoryWouldSkip +
+        ' memoryWouldSkipApplied=' + summary.memoryWouldSkipApplied + ' memoryRemembered=' + summary.memoryRemembered : ''));
     return { runId, status, summary };
   } catch (error) {
     await db.query("UPDATE catalog_audit_runs SET status='failed', finished_at=now(), summary=$2::jsonb, error=$3 WHERE id=$1",

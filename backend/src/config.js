@@ -140,6 +140,10 @@ export const config = Object.freeze({
   catalogAuditBatch: integer('CATALOG_AUDIT_BATCH', 8, 1),
   catalogAuditBatchTokens: integer('CATALOG_AUDIT_BATCH_TOKENS', 16000, 1000),
   catalogAuditMaxActions: integer('CATALOG_AUDIT_MAX_ACTIONS', 500, 1),
+  // Groups the model answered with nothing usable (no action, or every action refused by the gate) are remembered by
+  // input hash: dry-run only counts what apply would skip; apply leaves them out of the model packs for DAYS days.
+  catalogAuditMemoryMode: ['off', 'dry-run', 'apply'].includes(process.env.CATALOG_AUDIT_MEMORY_MODE) ? process.env.CATALOG_AUDIT_MEMORY_MODE : 'dry-run',
+  catalogAuditMemoryDays: integer('CATALOG_AUDIT_MEMORY_DAYS', 28, 1),
   // Cast-verified match; also needs TMDB_ENABLED + TMDB_API_KEY (worker.js), so a stack without a key stays off.
   tmdbMatchEnabled: boolean('TMDB_MATCH_ENABLED', true),
   tmdbMatchLimit: integer('TMDB_MATCH_LIMIT', 60, 1),

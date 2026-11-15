@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { analyseCatalog, detectRow, groupForModel, needsModel } from '../src/catalogAuditExtract.js';
 import { createState, deterministicActions, gateProposal } from '../src/catalogAuditGate.js';
-import { createLock, lastSlot, nextSlot, packGroups, parseAuditAnswer, runCatalogAudit, runDue } from '../src/catalogAudit.js';
+import { createLock, groupHash, lastSlot, nextSlot, packGroups, parseAuditAnswer, runCatalogAudit, runDue } from '../src/catalogAudit.js';
 import { AiError } from '../src/ai/index.js';
 import { normalizeTitle } from '../src/identity.js';
 
@@ -232,12 +232,19 @@ test('the catalog lock runs tasks one at a time and survives a failing task', as
 
 // ---- one run (dry-run, fake db and model) --------------------------------------------------
 
-function fakeDb(rows) {
+function fakeDb(rows, memory = new Map()) {
   const actions = [];
   const runs = [];
+  const memoryQueries = [];
   return {
-    actions, runs,
+    actions, runs, memory, memoryQueries,
     query: async (sql, params) => {
+      if (sql.includes('catalog_audit_group_memory')) {
+        memoryQueries.push(sql.split(' ')[0]);
+        if (sql.startsWith('SELECT')) return { rows: [...memory].filter(([, m]) => m.daysAgo < params[0]).map(([group_hash]) => ({ group_hash })) };
+        if (sql.startsWith('INSERT')) { memory.set(params[0], { key: params[1], outcome: params[2], runId: params[3], daysAgo: 0 }); return { rows: [] }; }
+        if (sql.startsWith('DELETE')) { for (const [h, m] of memory) if (m.daysAgo > params[0]) memory.delete(h); return { rows: [] }; }
+      }
       if (sql.startsWith('UPDATE catalog_audit_runs SET status=\'failed\', finished_at=now(), error=')) return { rows: [] };
       if (sql.startsWith('INSERT INTO catalog_audit_runs')) { runs.push({ mode: params[0] }); return { rows: [{ id: 7 }] }; }
       if (sql.includes('FROM movies m WHERE m.catalog_state=\'ready\'')) return { rows: params[0].startsWith('0000') ? rows : [] };
@@ -331,4 +338,94 @@ test('AI packs that fail or are refused do not fail the run; three failed in a r
   assert.equal(flood.result.status, 'partial');
   assert.equal(flood.result.summary.stopped, 'ai-failed');
   assert.equal(flood.result.summary.failedPacks, 3);
+});
+
+
+// ---- group memory --------------------------------------------------------------------------
+
+test('groupHash ignores order and usage counts, changes with a source', () => {
+  const { s3, s4 } = diplomat();
+  const shape = (rows) => groupForModel({ key: 'k', detectors: ['b', 'a'], rows, flagged: {} }, facts);
+  const base = groupHash(shape([s3, s4]));
+  assert.equal(groupHash(shape([s4, s3])), base, 'row order');
+  assert.equal(groupHash(shape([{ ...s3, sources: [...s3.sources].reverse() }, { ...s4, sources: [...s4.sources].reverse() }])), base, 'source order');
+  const used = (n) => shape([{ ...s3, favorites: n, history: n }, s4]);
+  assert.equal(groupHash(used(5)), groupHash(used(7)), 'usage counts');
+  assert.notEqual(groupHash(used(5)), groupHash(used(0)), 'whether anyone uses the row');
+  assert.notEqual(groupHash(shape([s3, { ...s4, sources: [{ ...s4.sources[0], metadata: { ...s4.sources[0].metadata, tmdb_season: 4 } }, s4.sources[1]] }])), base, 'a changed source');
+});
+
+const noneAi = (calls) => ({
+  available: () => true, ready: async () => {},
+  json: async (role, messages, options) => {
+    const sent = JSON.parse(messages[1].content.slice(messages[1].content.indexOf('\n') + 1));
+    calls.push(sent.map((g) => g.key));
+    return { value: options.accept({ groups: sent.map((g) => ({ key: g.key, actions: [] })) }), model: 'm' };
+  }
+});
+const memorySettings = (over) => ({ ...settings, catalogAuditMemoryMode: 'apply', catalogAuditMemoryDays: 28, ...over });
+
+test('memory: dry-run asks every group, apply skips a remembered one, an expired one is asked again', async () => {
+  const { s3, s4 } = diplomat();
+  const memory = new Map();
+  const first = [];
+  const r1 = await runCatalogAudit({ db: fakeDb([s3, s4], memory), ai: noneAi(first), tmdb, config: memorySettings({ catalogAuditMemoryMode: 'dry-run' }), log: () => {} });
+  assert.equal(first.length, 1);
+  assert.equal(r1.summary.memoryRemembered, 1);
+  assert.equal([...memory.values()][0].outcome, 'none');
+
+  const second = [];
+  const r2 = await runCatalogAudit({ db: fakeDb([s3, s4], memory), ai: noneAi(second), tmdb, config: memorySettings({ catalogAuditMemoryMode: 'dry-run' }), log: () => {} });
+  assert.equal(second.length, 1, 'dry-run still asks');
+  assert.equal(r2.summary.memoryWouldSkip, 1);
+  assert.equal(r2.summary.memorySkipped, 0);
+  assert.equal(r2.summary.memoryWouldSkipApplied, 0);
+
+  const third = [];
+  const r3 = await runCatalogAudit({ db: fakeDb([s3, s4], memory), ai: noneAi(third), tmdb, config: memorySettings(), log: () => {} });
+  assert.equal(third.length, 0, 'apply does not send a remembered group');
+  assert.equal(r3.summary.memorySkipped, 1);
+  assert.equal(r3.summary.requests, 0);
+
+  for (const m of memory.values()) m.daysAgo = 29;
+  const fourth = [];
+  const r4 = await runCatalogAudit({ db: fakeDb([s3, s4], memory), ai: noneAi(fourth), tmdb, config: memorySettings(), log: () => {} });
+  assert.equal(fourth.length, 1, 'past DAYS it is asked again');
+  assert.equal(r4.summary.memorySkipped, 0);
+});
+
+test('memory: mode off never touches the table; rows older than twice DAYS are pruned', async () => {
+  const { s3, s4 } = diplomat();
+  const db = fakeDb([s3, s4]);
+  const calls = [];
+  const off = await runCatalogAudit({ db, ai: noneAi(calls), tmdb, config: memorySettings({ catalogAuditMemoryMode: 'off' }), log: () => {} });
+  assert.deepEqual(db.memoryQueries, []);
+  assert.equal(off.summary.memoryRemembered, 0);
+  const undefinedMode = await runCatalogAudit({ db, ai: noneAi(calls), tmdb, config: settings, log: () => {} });
+  assert.deepEqual(db.memoryQueries, [], 'a config without the keys is off');
+  assert.equal(undefinedMode.summary.memoryMode, 'off');
+
+  const memory = new Map([['old', { key: 'x', outcome: 'none', runId: 1, daysAgo: 57 }], ['recent', { key: 'y', outcome: 'none', runId: 1, daysAgo: 40 }]]);
+  await runCatalogAudit({ db: fakeDb([s3, s4], memory), ai: noneAi([]), tmdb, config: memorySettings(), log: () => {} });
+  assert.equal(memory.has('old'), false);
+  assert.equal(memory.has('recent'), true);
+});
+
+test('memory: blocked is remembered, a group with an applied or dry-run action is not', async () => {
+  const { s3, s4, kk3 } = diplomat();
+  const answerWith = (actions) => ({
+    available: () => true, ready: async () => {},
+    json: async (role, messages, options) => {
+      const sent = JSON.parse(messages[1].content.slice(messages[1].content.indexOf('\n') + 1));
+      return { value: options.accept({ groups: [{ key: sent[0].key, actions }] }), model: 'm' };
+    }
+  });
+  // set_season 1 contradicts the row's own title (Phần 4): the gate refuses it
+  const bad = new Map();
+  await runCatalogAudit({ db: fakeDb([s3, s4], bad), ai: answerWith([{ type: 'set_season', movieId: 'a4', season: 1, reason: 'r' }]), tmdb, config: memorySettings({ catalogAuditMode: 'dry-run' }), log: () => {} });
+  assert.deepEqual([...bad.values()].map((m) => m.outcome), ['blocked']);
+
+  const good = new Map();
+  await runCatalogAudit({ db: fakeDb([s3, s4], good), ai: answerWith([{ type: 'set_season', movieId: 'a4', season: 4, reason: 'r' }, { type: 'move_source', sourceId: kk3.id, reason: 'r' }]), tmdb, config: memorySettings({ catalogAuditMode: 'dry-run' }), log: () => {} });
+  assert.equal(good.size, 0, 'a group the model got an action out of is not remembered');
 });

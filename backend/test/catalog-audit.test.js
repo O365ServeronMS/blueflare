@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { analyseCatalog, detectRow, groupForModel, needsModel } from '../src/catalogAuditExtract.js';
 import { createState, deterministicActions, gateProposal } from '../src/catalogAuditGate.js';
-import { createLock, groupHash, lastSlot, nextSlot, packGroups, parseAuditAnswer, runCatalogAudit, runDue } from '../src/catalogAudit.js';
+import { auditMaxTokens, createLock, groupHash, lastSlot, nextSlot, packGroups, parseAuditAnswer, runCatalogAudit, runDue } from '../src/catalogAudit.js';
 import { AiError } from '../src/ai/index.js';
 import { normalizeTitle } from '../src/identity.js';
 
@@ -428,4 +428,10 @@ test('memory: blocked is remembered, a group with an applied or dry-run action i
   const good = new Map();
   await runCatalogAudit({ db: fakeDb([s3, s4], good), ai: answerWith([{ type: 'set_season', movieId: 'a4', season: 4, reason: 'r' }, { type: 'move_source', sourceId: kk3.id, reason: 'r' }]), tmdb, config: memorySettings({ catalogAuditMode: 'dry-run' }), log: () => {} });
   assert.equal(good.size, 0, 'a group the model got an action out of is not remembered');
+});
+
+test('auditMaxTokens scales with the pack and stops at 32768', () => {
+  assert.equal(auditMaxTokens(1), 8992);
+  assert.equal(auditMaxTokens(8), 14592);
+  assert.equal(auditMaxTokens(40), 32768);
 });

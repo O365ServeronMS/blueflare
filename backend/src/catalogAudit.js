@@ -127,6 +127,11 @@ export function parseAuditAnswer(data, groups) {
   return out;
 }
 
+/** Completion ceiling for one DEDUPE request. 2000 + 600/group truncated every 8-group pack (reasoning models spend it thinking). */
+export function auditMaxTokens(groupCount) {
+  return Math.min(32768, 8192 + 800 * groupCount);
+}
+
 /** One DEDUPE request for a batch of model-shaped groups. Returns Map key -> actions and the model name. */
 export async function proposeBatch(ai, groups, { signal, estTokens } = {}) {
   const messages = [
@@ -134,7 +139,7 @@ export async function proposeBatch(ai, groups, { signal, estTokens } = {}) {
     { role: 'user', content: 'Catalog groups (JSON):\n' + JSON.stringify(groups) }
   ];
   const result = await ai.json('DEDUPE', messages, {
-    temperature: 0, maxTokens: Math.min(32768, 2000 + 600 * groups.length), estTokens, signal,
+    temperature: 0, maxTokens: auditMaxTokens(groups.length), estTokens, signal,
     accept: (data) => parseAuditAnswer(data, groups)
   });
   return { proposals: result.value, model: result.model };

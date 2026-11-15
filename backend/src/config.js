@@ -164,6 +164,10 @@ export const config = Object.freeze({
   tmdbMatchAiMode: process.env.TMDB_MATCH_AI_ENABLED !== undefined && !boolean('TMDB_MATCH_AI_ENABLED')
     ? 'off'
     : ['off', 'dry-run', 'apply'].includes(process.env.TMDB_MATCH_AI_MODE) ? process.env.TMDB_MATCH_AI_MODE : 'off',
+  // Rows whose candidates the gate would reject whatever the model picks skip the model (provider reviews excepted).
+  tmdbMatchAiPregate: boolean('TMDB_MATCH_AI_PREGATE', true),
+  // Shadow of the deterministic one-passer rule: off | dry-run (records evidence.det). `apply` is not built yet and counts as dry-run.
+  tmdbMatchDeterministicMode: ['off', 'dry-run', 'apply'].includes(process.env.TMDB_MATCH_DETERMINISTIC_MODE) ? process.env.TMDB_MATCH_DETERMINISTIC_MODE : 'dry-run',
   tmdbMatchAiLimit: integer('TMDB_MATCH_AI_LIMIT', 100, 1),
   tmdbMatchAiRetryMs: integer('TMDB_MATCH_AI_RETRY_MS', 14 * 24 * 60 * 60 * 1000, 60 * 1000),
   tmdbMatchAiErrorRetryMs: integer('TMDB_MATCH_AI_ERROR_RETRY_MS', 6 * 60 * 60 * 1000, 60 * 1000),

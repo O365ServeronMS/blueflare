@@ -6,7 +6,7 @@ import { getAi } from './ai/index.js';
 import { AI_REVIEW_REASONS } from './providerIdentity.js';
 import {
   RANK_PROMPT_OVERHEAD_CHARS, calibrateTokens, catalogFacts, collectAiCandidates, createTmdbClient, createTokenCalibration,
-  decideAiMatch, DEFAULT_AI_POLICY, estimateTokens, matchInput, promptEntry, rankBatch
+  decideAiMatch, DEFAULT_AI_POLICY, estimateTokens, gatePassers, matchInput, promptEntry, rankBatch
 } from './tmdbMatchAi.js';
 
 /**
@@ -27,6 +27,8 @@ const MAX_CONSECUTIVE_BATCH_FAILURES = 3;
 const MAX_REFUSED_PER_PASS = 5; // model-refused rows in one pass before the pass pauses (a refusing model refuses everything)
 const DEFAULT_BATCH_TOKENS = 40000;
 const DEFAULT_BATCH_MAX = 40;
+
+let warnedDeterministicApply = false;
 
 const shared = { blockedUntil: 0, calibration: createTokenCalibration(), state: {} };
 
@@ -248,6 +250,16 @@ export async function runAiMatchPass(deps = {}, options = {}) {
       outcome: status === 'error' && decision.status === 'verified' ? 'error' : decision.status, model
     }).catch((error) => warn('[worker] tmdb ai match could not record run for ' + row.canonical_slug + ': ' + error.message));
   };
+  const pregate = settings.tmdbMatchAiPregate !== false;
+  let detMode = settings.tmdbMatchDeterministicMode ?? 'dry-run';
+  if (detMode === 'apply') {
+    if (!warnedDeterministicApply) {
+      warnedDeterministicApply = true;
+      warn('[worker] tmdb ai match: TMDB_MATCH_DETERMINISTIC_MODE=apply is not supported yet, running as dry-run');
+    }
+    detMode = 'dry-run';
+  }
+  const withDet = (decision, det) => (det ? { ...decision, evidence: { ...decision.evidence, det } } : decision);
   const failure = (reason) => ({ status: 'error', pick: null, reason, evidence: {} });
 
   // ---- packing ---------------------------------------------------------------------------
@@ -273,6 +285,16 @@ export async function runAiMatchPass(deps = {}, options = {}) {
       if (item.failed) await finish(item.row, [], failure('tmdb: ' + item.failed), null);
       else if (!item.candidates.length) await finish(item.row, [], decideAiMatch({ input: item.input, candidates: [], choice: undefined }), null);
       else {
+        const passers = gatePassers({ input: item.input, candidates: item.candidates });
+        const isReview = reviewIds.has(item.row.id) || Boolean(item.row.review_reason);
+        if (pregate && !isReview && passers.length === 0) {
+          // The gate verifies a pick from this list for no choice at all, so ranking cannot change the verdict.
+          await finish(item.row, item.candidates, { status: 'unverifiable', tier: null, pick: null, reason: 'no-gate-candidate', evidence: { det: { passers: 0 } } }, null);
+          continue;
+        }
+        if (detMode !== 'off') {
+          item.det = { passers: passers.length, key: passers.length === 1 ? passers[0].key : null, tier: passers.length === 1 ? passers[0].tier : null };
+        }
         item.tier = tierOf(item.input);
         // Rich prompts while they fit comfortably; a single huge film falls back to the compact one.
         item.level = tokensFor(sizeOf(item, 'rich')) <= batchTokens / 2 ? 'rich' : 'compact';
@@ -357,7 +379,7 @@ export async function runAiMatchPass(deps = {}, options = {}) {
     const { choices, meta } = result;
     if (meta.model) models.set(meta.model + '@' + meta.key, (models.get(meta.model + '@' + meta.key) ?? 0) + 1);
     for (const [index, item] of group.entries()) {
-      await finish(item.row, item.candidates, decideAiMatch({ input: item.input, candidates: item.candidates, choice: choices.get('m' + index) }), meta.model ?? null);
+      await finish(item.row, item.candidates, withDet(decideAiMatch({ input: item.input, candidates: item.candidates, choice: choices.get('m' + index) }), item.det), meta.model ?? null);
     }
   };
 

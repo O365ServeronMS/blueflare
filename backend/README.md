@@ -320,10 +320,27 @@ route (AI keys + models), and `TMDB_ENABLED` plus a TMDB key.
   the AI module, one entry per provider+model): `scripts/tmdb-ai-backtest.mjs` (precision against provider-supplied
   ids), `tmdb-ai-classify.mjs` (breakdown of rows still without identity),
   `tmdb-ai-dryrun.mjs` (dry run of the pass on real rows).
+- `scripts/tmdb-match-det-backtest.mjs [--limit 1000] [--status applied|none]`
+  replays the deterministic gate (`gatePassers`) on past runs: no model, no DB
+  write, TMDB only. Run it like the other scripts (copy `scripts/` into the worker,
+  `docker exec -w /app blueflare-worker node scripts/tmdb-match-det-backtest.mjs
+  --limit 1000 --status applied > /tmp/det.csv`, `docker cp` it out, remove the copy).
+  CSV `movie_id,slug,ai_key,passers,det_key,same`; totals on stderr: share with
+  exactly one passer and, for `applied`, how often it equals the model's key.
+- Pre-gate and shadow: `gatePassers` lists every candidate the gate would verify were it
+  chosen (the gate depends on the pick and the candidate list only, never on the
+  model's confidence). With `TMDB_MATCH_AI_PREGATE=true` (default) a non-review row with
+  candidates and no passer is recorded `unverifiable` / `no-gate-candidate`
+  (`evidence.det.passers=0`) without a model call; it still counts as one try.
+  `TMDB_MATCH_DETERMINISTIC_MODE=dry-run` (default; `off`; `apply` is not built and runs
+  as dry-run with one warning) adds `evidence.det {passers,key,tier}` to every ranked row.
+  Rollback: both keys off, or `scripts/rollback.sh worker`.
 
 | Variable | Meaning |
 | --- | --- |
 | `TMDB_MATCH_AI_MODE` | `off` (default) / `dry-run` / `apply`. The old `TMDB_MATCH_AI_ENABLED=false` still forces `off`. |
+| `TMDB_MATCH_AI_PREGATE` | `true` (default): rows the gate would reject for every candidate skip the model. |
+| `TMDB_MATCH_DETERMINISTIC_MODE` | `dry-run` (default) / `off`; records `evidence.det`, never decides. |
 | `TMDB_MATCH_AI_LOOP` | Own worker loop; `false` folds the pass into the sync cycle. |
 | `TMDB_MATCH_AI_LOOP_MS` | Loop wake interval (minimum 5000). |
 | `TMDB_MATCH_AI_WORKED_MS` | Pause between batches while a backlog remains (loop only). |

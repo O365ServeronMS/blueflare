@@ -261,3 +261,36 @@ test('token calibration follows the reported prompt tokens and ignores nonsense'
   calibrateTokens(cal, 1e9, 1);
   assert.ok(cal.charsPerToken <= 8, 'clamped');
 });
+
+// ---- gatePassers ----------------------------------------------------------------
+import { gatePassers } from '../src/tmdbMatchAi.js';
+
+test('gatePassers: 0, 1 and 2 passers; T2 with a rival passes for nobody', () => {
+  assert.deepEqual(gatePassers({ input: row(), candidates: [cand()] }), [{ key: 'tv:1', tier: 'T2' }]);
+  assert.deepEqual(gatePassers({ input: row({ year: 2010 }), candidates: [cand()] }), []);
+  assert.deepEqual(gatePassers({ input: row(), candidates: [] }), []);
+  // two candidates that both pass name+year+size: each is the other's rival
+  assert.deepEqual(gatePassers({ input: row(), candidates: [cand(), cand({ key: 'tv:2', id: 2 })] }), []);
+  // a rival that fails the year does not block the first one
+  assert.deepEqual(gatePassers({ input: row(), candidates: [cand(), cand({ key: 'movie:2', id: 2, type: 'movie', year: 1990 })] }).map((p) => p.key), ['tv:1']);
+  // cast overlap (T1) is not blocked by a rival: two cast-verified candidates both pass
+  const r = row({ actors: ['Park Bo-gum', 'Kim Yoo-jung'] });
+  assert.deepEqual(gatePassers({ input: r, candidates: [cand(), cand({ key: 'tv:2', id: 2 })] }).map((p) => [p.key, p.tier]), [['tv:1', 'T1'], ['tv:2', 'T1']]);
+});
+
+test('gatePassers: a row with no passer is never verified, whatever the model chooses or says', () => {
+  const rows = [row({ year: 2010 }), row({ episode_total: '40' }), row({ year: null }), row({ actors: ['Nobody One', 'Nobody Two'], year: 2000 })];
+  const lists = [[cand()], [cand(), cand({ key: 'tv:2', id: 2 })], [cand({ key: 'movie:9', id: 9, type: 'movie' })]];
+  let checked = 0;
+  for (const r of rows) for (const candidates of lists) {
+    if (gatePassers({ input: r, candidates }).length) continue;
+    for (const c of candidates) for (const confidence of [0, 0.5, 1]) {
+      checked += 1;
+      assert.notEqual(decideAiMatch({ input: r, candidates, choice: { chosenId: c.key, confidence, reasons: ['x'] } }).status, 'verified');
+    }
+  }
+  assert.ok(checked >= 10);
+  // and conversely a passer is verified for exactly the key it names
+  const passer = gatePassers({ input: row(), candidates: [cand()] })[0];
+  assert.equal(decideAiMatch({ input: row(), candidates: [cand()], choice: { chosenId: passer.key, confidence: 0.01, reasons: [] } }).status, 'verified');
+});

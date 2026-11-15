@@ -572,6 +572,24 @@ export function decideAiMatch({ input, candidates, choice, policy = DEFAULT_AI_P
   return done('verified', hasCast ? 'T2x' : 'T2', pick, null, base);
 }
 
+/**
+ * Every candidate the gate would verify if the model chose it: `[{key, tier}]`. Pure.
+ * decideAiMatch reads the choice only to find the pick (confidence is just echoed into the
+ * evidence), and its rival check looks at the whole list, never at who was chosen, so the
+ * result is a function of (pick, candidates, row, policy) alone. A row with no passer
+ * therefore cannot be verified whatever the model answers.
+ */
+export function gatePassers({ input, candidates, policy = DEFAULT_AI_POLICY }) {
+  const facts = input?.nameKeys ? input : catalogFacts(input ?? {});
+  const list = Array.isArray(candidates) ? candidates : [];
+  const out = [];
+  for (const candidate of list) {
+    const verdict = decideAiMatch({ input: facts, candidates: list, choice: { chosenId: candidate.key, confidence: 1, reasons: [] }, policy });
+    if (verdict.status === 'verified') out.push({ key: candidate.key, tier: verdict.tier });
+  }
+  return out;
+}
+
 /** Wilson lower bound helper for reports. */
 export function wilsonLower(successes, total, z = 1.96) {
   if (!total) return 0;

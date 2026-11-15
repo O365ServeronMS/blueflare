@@ -154,7 +154,7 @@ test('a content refusal of a batch is isolated per title and does not stop the r
     if (req.text.includes('Poison') || req.text.match(/"movieKey"/g).length > 1) throw refused('refused');
     return pickAll();
   };
-  const h = harness([movie(1), movie(2, { original_title: 'Poison', title: 'Poison' })], { rotation, client: { } });
+  const h = harness([movie(1), movie(2, { overview: 'Poison' })], { rotation, client: { } });
   // both titles share candidate detail, but the prompt of #2 contains its own title
   await refreshTmdbAiMatches(h.deps);
   assert.deepEqual(h.runs.map((r) => [r.movieId, r.outcome]), [['id1', 'verified'], ['id2', 'error']]);
@@ -272,7 +272,7 @@ test('calibration: the prompt token count a response reports corrects the next p
 
 test('bisection: a refused batch is halved until the offending film is alone (about 2*log2(N) requests, not N)', async () => {
   const requests = [];
-  const rows = Array.from({ length: 8 }, (_, i) => movie(i + 1, i === 5 ? { original_title: 'Poison', title: 'Poison' } : {}));
+  const rows = Array.from({ length: 8 }, (_, i) => movie(i + 1, i === 5 ? { overview: 'Poison' } : {}));
   const h = harness(rows, {
     config: { tmdbMatchAiBatchMax: 40 },
     rotation: async (req) => { requests.push(countKeys(req)); if (req.text.includes('Poison')) throw refused('refused'); return manyChoices(); }
@@ -285,7 +285,7 @@ test('bisection: a refused batch is halved until the offending film is alone (ab
 
 test('bisection: a provider outage in the middle stops the pass without recording the unranked films', async () => {
   let calls = 0;
-  const rows = Array.from({ length: 4 }, (_, i) => movie(i + 1, i === 3 ? { original_title: 'Poison', title: 'Poison' } : {}));
+  const rows = Array.from({ length: 4 }, (_, i) => movie(i + 1, i === 3 ? { overview: 'Poison' } : {}));
   const h = harness(rows, {
     config: { tmdbMatchAiBatchMax: 40 },
     rotation: async (req) => {
@@ -391,4 +391,57 @@ test('refusal flood: 5 model-refused rows in one pass pause the loop for 15 minu
   assert.equal(h.logs.filter((l) => l.includes('5 model-refused in one pass, pausing 15 min')).length, 1);
   assert.equal(h.deps.state.blockedUntil, 1000 + 900000);
   assert.ok(Array.isArray(out));
+});
+
+// ---- pre-gate and deterministic shadow -------------------------------------------------
+test('pre-gate: a row whose only candidate fails the gate skips the model and is recorded unverifiable', async () => {
+  let ranked = 0;
+  const h = harness([movie(1, { year: 2010 })], { rotation: async () => { ranked += 1; return pickAll(); } });
+  const out = await refreshTmdbAiMatches(h.deps);
+  assert.deepEqual(out, []);
+  assert.equal(ranked, 0);
+  assert.equal(h.runs.length, 1);
+  const [run] = h.runs;
+  assert.deepEqual([run.status, run.outcome, run.chosenTmdbId ?? null, run.evidence.reason, run.evidence.tier], ['rejected', 'unverifiable', null, 'no-gate-candidate', null]);
+  assert.deepEqual(run.evidence.det, { passers: 0 });
+  assert.ok(run.candidates.length >= 1);
+});
+
+test('pre-gate: a provider review row still goes to the model', async () => {
+  let ranked = 0;
+  const h = harness([], {
+    config: { providerTmdbMode: 'apply' },
+    rotation: async () => { ranked += 1; return pickAll(); },
+    deps: { listReviews: async () => [movie(1, { year: 2010, review_reason: 'providers-disagree', review_candidates: [] })], resolveReview: async () => {} }
+  });
+  await refreshTmdbAiMatches(h.deps);
+  assert.equal(ranked, 1);
+  assert.equal(h.runs[0].evidence.reason, 'year-incompatible');
+});
+
+test('pre-gate off: the old path ranks the row anyway', async () => {
+  let ranked = 0;
+  const h = harness([movie(1, { year: 2010 })], { config: { tmdbMatchAiPregate: false }, rotation: async () => { ranked += 1; return pickAll(); } });
+  await refreshTmdbAiMatches(h.deps);
+  assert.equal(ranked, 1);
+  assert.equal(h.runs[0].evidence.reason, 'year-incompatible');
+});
+
+test('deterministic shadow: evidence.det is added, decisions are the same as with mode off', async () => {
+  const rows = () => [movie(1), movie(2, { original_title: 'Moonlight Drawn By Clouds', title: 'Khac', year: 2016 }), movie(3, { year: 2010 })];
+  const run = async (config) => {
+    const h = harness(rows(), { config: { tmdbMatchAiPregate: false, ...config } });
+    await refreshTmdbAiMatches(h.deps);
+    return h.runs;
+  };
+  const off = await run({ tmdbMatchDeterministicMode: 'off' });
+  const on = await run({ tmdbMatchDeterministicMode: 'dry-run' });
+  const strip = (r) => ({ ...r, runId: undefined, evidence: Object.fromEntries(Object.entries(r.evidence).filter(([k]) => k !== 'det')) });
+  assert.deepEqual(on.map(strip), off.map(strip));
+  assert.ok(off.every((r) => r.evidence.det === undefined));
+  assert.deepEqual(on[0].evidence.det, { passers: 1, key: 'tv:1', tier: 'T2' });
+  assert.deepEqual(on[2].evidence.det, { passers: 0, key: null, tier: null });
+  // `apply` is not built: it behaves as dry-run
+  const applyMode = await run({ tmdbMatchDeterministicMode: 'apply' });
+  assert.deepEqual(applyMode.map(strip), on.map(strip));
 });

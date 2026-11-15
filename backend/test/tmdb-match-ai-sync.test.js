@@ -381,3 +381,14 @@ test('provider reviews are ignored until the provider pass applies, and take at 
     assert.equal(asked, expected, providerTmdbMode);
   }
 });
+
+test('refusal flood: 5 model-refused rows in one pass pause the loop for 15 minutes', async () => {
+  const rows = Array.from({ length: 40 }, (_, i) => movie(i + 1));
+  const h = harness(rows, { config: { tmdbMatchAiBatchMax: 40 }, rotation: async () => { throw refused('refused'); } });
+  const out = await refreshTmdbAiMatches(h.deps);
+  assert.equal(h.runs.filter((r) => r.evidence.error === 'model-refused').length, 5);
+  assert.equal(h.runs.length, 5, 'nothing else is written');
+  assert.equal(h.logs.filter((l) => l.includes('5 model-refused in one pass, pausing 15 min')).length, 1);
+  assert.equal(h.deps.state.blockedUntil, 1000 + 900000);
+  assert.ok(Array.isArray(out));
+});

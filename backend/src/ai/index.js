@@ -11,6 +11,14 @@ import { createPgQuotaStore } from '../aiQuotaStore.js';
 
 export { createAi, AiError, AiConfigError, AI_DEFAULTS, imagePart, fakeTransport, readAiConfig, registerRole, roleNames };
 
+/** One log line for a failed attempt (never the key value or the prompt); null for a success. */
+export function attemptLine(record) {
+  if (record?.ok !== false) return null;
+  const error = String(record.error ?? '').replace(/\s+/g, ' ').replace(/"/g, "'").slice(0, 120);
+  return '[ai] attempt role=' + record.role + ' provider=' + record.provider + ' model=' + record.model + ' key=' + record.key +
+    ' error="' + error + '" status=' + (record.status ?? '-') + ' ms=' + record.latencyMs + ' out=' + (record.completionTokens ?? '-');
+}
+
 let instance = null;
 let pendingTransport;
 
@@ -18,6 +26,7 @@ let pendingTransport;
 export function getAi() {
   if (!instance) {
     instance = createAi({ ledger: createQuotaLedger({ store: createPgQuotaStore() }) });
+    instance.onCall((record) => { const line = attemptLine(record); if (line) console.warn(line); });
     if (pendingTransport !== undefined) instance.setTransport(pendingTransport);
   }
   return instance;

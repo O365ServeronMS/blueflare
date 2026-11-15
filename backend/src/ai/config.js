@@ -28,7 +28,8 @@ export const AI_DEFAULTS = Object.freeze({
   retries: 2, // AI_RETRIES: extra tries of the same provider+model on 429/5xx before moving on
   cooldownMs: 60 * 60 * 1000, // AI_COOLDOWN_MS: longest park (rejected key, model out of credit or gone)
   transientParkMs: 45000, // a pair that keeps failing (5xx, timeout) sits out 45s, doubling...
-  transientParkMaxMs: 5 * 60 * 1000 // ...up to 5 min
+  transientParkMaxMs: 5 * 60 * 1000, // ...up to 5 min
+  timeoutParkMaxMs: 30 * 60 * 1000 // a timeout or network error parks longer: max(2 x timeout, transientParkMs), doubling, up to 30 min
 });
 
 export const ROUTE_NAMES = Object.freeze(['9router', 'openrouter']);

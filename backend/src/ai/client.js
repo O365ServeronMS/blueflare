@@ -1,4 +1,4 @@
-import { readAiConfig, getRole, roleRoutes, roleTimeoutMs, rolePaidCap, roleReasoning } from './config.js';
+import { AI_DEFAULTS, readAiConfig, getRole, roleRoutes, roleTimeoutMs, rolePaidCap, roleReasoning } from './config.js';
 import {
   checkSchema, classifyRateLimit, contentText, extractJson, isFree, keyFingerprint, nextUtcMidnight, scopedFingerprint,
   sniffImageType, usageOf
@@ -314,7 +314,7 @@ export function createAi(options = {}) {
           throw fail('unavailable', 1000);
         }
         reason = networkReason;
-        announce(pair, now() + Math.min(cfg.transientParkMs * 2 ** pair.transientFails++, cfg.transientParkMaxMs, cfg.cooldownMs), provider.name + ' ' + key.name + ' model ' + model.id + ' ' + reason);
+        announce(pair, now() + Math.min(Math.max(2 * timeoutMs, cfg.transientParkMs) * 2 ** pair.transientFails++, AI_DEFAULTS.timeoutParkMaxMs, cfg.cooldownMs), provider.name + ' ' + key.name + ' model ' + model.id + ' ' + reason);
       } else if (status < 400) {
         const choice = json?.choices?.[0];
         const text = choice ? contentText(choice.message?.content) : '';

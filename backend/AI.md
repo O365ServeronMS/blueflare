@@ -45,6 +45,14 @@ Errors: only `AiError`, with `attempts` and `kind`:
 promptTokens, completionTokens, thoughtTokens, cost`). Tests use `createAi({ env, transport })`
 or `setTransport(fn)`; `AI_FAKE=1` answers without network or keys.
 
+The default instance (`getAi()`) logs every failed attempt as one line, never a success, never a
+key or prompt: `[ai] attempt role=MATCH provider=openrouter model=a/b key=k1 error="timeout"
+status=- ms=180001 out=-` (`error` cut at 120 characters, `status`/`out` are `-` when unknown).
+
+A model that refuses an input is skipped for the rest of that call. If the other models are then
+parked or exhausted, the caller gets `content` (not `unavailable`): the input was refused, the
+provider is not down.
+
 ## Adding a role
 
 One line in `src/ai/config.js`:
@@ -87,6 +95,10 @@ run 8 9router authored only 7 of 624 groups. Back to the 9router chain:
   `AI_RETRIES` tries), network error, timeout, empty answer, bad JSON, schema or `accept`
   failure, no vision. A daily 429 on an OpenRouter `:free` model parks all `:free` models of
   that key until 00:00 UTC.
+- Park ladder of a pair (provider+model+key) that keeps failing, reset to 0 when it succeeds:
+  timeout or network error parks `min(max(2 x timeout, 45 s) x 2^fails, 30 min, AI_COOLDOWN_MS)`
+  (180 s timeout: 6, 12, 24, 30, 30 min); 408/5xx after `AI_RETRIES` tries keeps the short ladder
+  45 s doubling up to 5 min.
 - JSON: `response_format` goes `json_schema → json_object → none` (prompt instruction) and the
   level that worked is remembered per provider+model.
 - OpenRouter only: `usage: {include: true}`, `reasoning`, `HTTP-Referer`/`X-Title`, `/models`.

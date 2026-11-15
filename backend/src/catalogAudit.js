@@ -197,9 +197,10 @@ export async function runCatalogAudit(deps = {}) {
   const mode = settings.catalogAuditMode;
   const isStopping = deps.isStopping ?? (() => false);
   const log = deps.log ?? ((message) => console.log(message));
+  const warn = deps.warn ?? ((message) => console.warn(message));
   const lock = deps.lock ?? catalogLock;
   const runId = await startRun(db, mode);
-  const summary = { mode, counts: null, groups: 0, modelGroups: 0, requests: 0, statuses: {}, actions: {}, gates: {}, model: null, stopped: null };
+  const summary = { mode, counts: null, groups: 0, modelGroups: 0, requests: 0, statuses: {}, actions: {}, gates: {}, model: null, stopped: null, refusedPacks: 0, failedPacks: 0 };
   const tally = (verdict, status, gate) => {
     summary.statuses[status] = (summary.statuses[status] || 0) + 1;
     summary.actions[verdict.action.type] = (summary.actions[verdict.action.type] || 0) + 1;
@@ -222,6 +223,7 @@ export async function runCatalogAudit(deps = {}) {
     summary.modelGroups = modelGroups.length;
     const ai = deps.ai ?? getAi();
     let facts = new Map();
+    let failedRun = 0; // consecutive packs the AI module gave up on
     if (modelGroups.length && ai.available('DEDUPE')) {
       await ai.ready();
       const tmdb = deps.tmdb ?? (settings.tmdbEnabled && settings.tmdbApiKey ? createTmdbClient({ concurrency: 2 }) : null);
@@ -233,6 +235,7 @@ export async function runCatalogAudit(deps = {}) {
           const { proposals: answer, model } = await proposeBatch(ai, pack, { signal: deps.signal });
           summary.requests += 1;
           summary.model = model;
+          failedRun = 0;
           for (const [key, actions] of answer) {
             const entry = proposals.get(key);
             // Deterministic fixes first (a refused model action then cannot hold them back), the model's after, minus duplicates.
@@ -241,8 +244,14 @@ export async function runCatalogAudit(deps = {}) {
             entry.model = model;
           }
         } catch (error) {
-          if (error instanceof AiError && error.kind === 'content') continue;
+          if (error instanceof AiError && error.kind === 'content') { summary.refusedPacks += 1; failedRun = 0; continue; }
           if (error instanceof AiError && error.kind === 'unavailable') { summary.stopped = 'ai-unavailable'; break; }
+          if (error instanceof AiError && error.kind === 'failed') {
+            summary.failedPacks += 1;
+            warn('[worker] catalog audit run=' + runId + ' pack failed: ' + String(error.message).slice(0, 200));
+            if (++failedRun >= 3) { summary.stopped = 'ai-failed'; break; }
+            continue;
+          }
           throw error;
         }
       }
@@ -291,7 +300,7 @@ export async function runCatalogAudit(deps = {}) {
     await db.query('UPDATE catalog_audit_runs SET status=$2, finished_at=now(), groups=$3, summary=$4::jsonb, error=$5 WHERE id=$1',
       [runId, status, summary.groups, JSON.stringify(summary), status === 'failed' ? 'interrupted' : null]);
     log('[worker] catalog audit run=' + runId + ' ' + status + ' statuses=' + JSON.stringify(summary.statuses) +
-      ' requests=' + summary.requests + (summary.stopped ? ' stopped=' + summary.stopped : ''));
+      ' requests=' + summary.requests + (summary.refusedPacks || summary.failedPacks ? ' refusedPacks=' + summary.refusedPacks + ' failedPacks=' + summary.failedPacks : '') + (summary.stopped ? ' stopped=' + summary.stopped : ''));
     return { runId, status, summary };
   } catch (error) {
     await db.query("UPDATE catalog_audit_runs SET status='failed', finished_at=now(), summary=$2::jsonb, error=$3 WHERE id=$1",

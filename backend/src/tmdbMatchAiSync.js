@@ -24,6 +24,7 @@ import {
 
 const RUN_STATUS = { verified: 'chosen', unverifiable: 'rejected', none: 'rejected', error: 'error' };
 const MAX_CONSECUTIVE_BATCH_FAILURES = 3;
+const MAX_REFUSED_PER_PASS = 5; // model-refused rows in one pass before the pass pauses (a refusing model refuses everything)
 const DEFAULT_BATCH_TOKENS = 40000;
 const DEFAULT_BATCH_MAX = 40;
 
@@ -304,6 +305,7 @@ export async function runAiMatchPass(deps = {}, options = {}) {
   const isBlocked = (error) => error?.blocked === true;
   let blocked = null;
   let consecutiveFailures = 0;
+  let refused = 0;
 
   const rankGroup = async (group) => {
     const entries = group.map((item, index) => promptEntry('m' + index, item.input, item.candidates, item.level));
@@ -340,6 +342,10 @@ export async function runAiMatchPass(deps = {}, options = {}) {
           return;
         }
         await finish(group[0].row, group[0].candidates, failure('model-refused'), null);
+        if (++refused >= MAX_REFUSED_PER_PASS) {
+          warn('[worker] tmdb ai match: ' + MAX_REFUSED_PER_PASS + ' model-refused in one pass, pausing 15 min');
+          blocked = Object.assign(new Error('refusal flood'), { blocked: true, retryAfterMs: 15 * 60 * 1000 });
+        }
         return;
       }
       for (const item of group) await finish(item.row, item.candidates, failure('rank-failed'), null);

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createAi, AiError, AiConfigError, imagePart, readAiConfig, registerRole, fakeTransport } from '../src/ai/index.js';
+import { attemptLine, createAi, AiError, AiConfigError, imagePart, readAiConfig, registerRole, fakeTransport } from '../src/ai/index.js';
 import { createQuotaLedger } from '../src/aiQuotaLedger.js';
 import { checkSchema, extractJson, isFree, parseModels } from '../src/ai/util.js';
 
@@ -450,4 +450,40 @@ test('9router: model env, no key = no route, key without URL is a config error',
   assert.equal(make(r9Env({ ROUTER9_API_KEY: '' }), () => answer('x')).ai.modelsFor('MATCH').some((m) => m.provider === '9router'), false);
   assert.throws(() => readAiConfig({ ROUTER9_API_KEY: 'k' }, { warn() {} }), AiConfigError);
   assert.throws(() => readAiConfig({ ROUTER9_BASE_URL: 'ftp://x', ROUTER9_API_KEY: 'k' }, { warn() {} }), AiConfigError);
+});
+test('park ladder: timeouts park 2 x timeout doubling up to 30 min and reset on success; a 503 still parks 45 s', async () => {
+  let clock = Date.UTC(2026, 9, 7, 12);
+  let mode = 'timeout';
+  const timeout = Object.assign(new Error('t'), { name: 'TimeoutError' });
+  const fetch = transport(() => (mode === 'timeout' ? timeout : mode === '503' ? { status: 503, body: {} } : answer('ok')));
+  const ai = createAi({ env: env({ OPENROUTER_MODEL_SAMPLE: 'a/one' }), transport: fetch, now: () => clock, sleep: async (ms) => { clock += ms; }, retryBaseMs: 1, warn: () => {} });
+  const parked = async () => { const e = await ai.chat('SAMPLE', user('x'), { timeoutMs: 180000 }).catch((x) => x); assert.equal(e.kind, 'unavailable'); return e.retryAfterMs / 1000; };
+  const seen = [];
+  for (let i = 0; i < 5; i++) { seen.push(await parked()); clock += 1800000; }
+  assert.deepEqual(seen, [360, 720, 1440, 1800, 1800]);
+  mode = 'ok';
+  assert.equal((await ai.chat('SAMPLE', user('x'), { timeoutMs: 180000 })).text, 'ok');
+  mode = 'timeout';
+  assert.equal(await parked(), 360, 'a success resets the ladder');
+  clock += 1800000;
+  mode = 'ok';
+  await ai.chat('SAMPLE', user('x'), { timeoutMs: 180000 });
+  mode = '503';
+  const wait = await parked();
+  assert.ok(wait <= 45 && wait > 44, '503 keeps the short ladder: ' + wait);
+});
+
+test('attemptLine: one line for a failed attempt, nothing for a success, no key material', () => {
+  const failed = { role: 'MATCH', provider: 'openrouter', model: 'a/one', key: 'k1', ok: false, error: 'timeout sk-secret'.replace('sk-secret', '') + 'x'.repeat(200), status: null, latencyMs: 180001, completionTokens: null };
+  const line = attemptLine(failed);
+  assert.match(line, /^\[ai\] attempt role=MATCH provider=openrouter model=a\/one key=k1 error="timeout x+" status=- ms=180001 out=-$/);
+  assert.ok(!line.includes('\n') && line.length < 260 && !line.includes('sk-secret'));
+  assert.equal(attemptLine({ ...failed, ok: true }), null);
+  assert.match(attemptLine({ ...failed, status: 503, completionTokens: 7 }), /status=503 ms=180001 out=7$/);
+  // end to end: the real record of a failed call carries no key value
+  const records = [];
+  const { ai } = make(env({ OPENROUTER_API_KEY: 'sk-secret', OPENROUTER_MODEL_SAMPLE: 'a/one' }), () => ({ status: 500, body: {} }), { onCall: (r) => records.push(attemptLine(r)) });
+  return ai.chat('SAMPLE', user('x')).catch(() => {
+    assert.ok(records.length > 0 && records.every((l) => l.startsWith('[ai] attempt ') && !l.includes('sk-secret')));
+  });
 });

@@ -291,3 +291,44 @@ test('a run stopped by shutdown is failed, so the slot runs again', async () => 
   assert.equal(result.status, 'failed');
   assert.equal(db.runs[0].summary.stopped, 'stopping');
 });
+
+test('AI packs that fail or are refused do not fail the run; three failed in a row stop it as partial', async () => {
+  const series = (n) => {
+    const t = 'Phim ' + n;
+    const s3 = row({ id: 'p' + n + 'a', canonical_slug: 'phim-' + n + '-phan-3', title: t + ' (Phần 3)', original_title: 'Show ' + n + ' (Season 3)', year: 2025,
+      sources: [source('nguonc', { title: t + ' (Phần 3)', original: 'Show ' + n + ' (Season 3)', slug: 'phim-' + n + '-phan-3', year: 2025 })] });
+    const kk = source('kkphim', { title: t + ' (Phần 3)', original: 'Show ' + n + ' (Season 3)', slug: 'phim-' + n + '-phan-3', season: 3, tmdbId: 9000 + n, year: 2025 });
+    const s4 = row({ id: 'p' + n + 'b', canonical_slug: 'phim-' + n + '-phan-4', title: t + ' (Phần 4)', original_title: 'Show ' + n + ' (Season 4)',
+      tmdb_id: 9000 + n, tmdb_media_type: 'tv', tmdb_season_number: 3, tmdb_id_source: 'provider',
+      sources: [kk, source('nguonc', { title: t + ' (Phần 4)', original: 'Show ' + n + ' (Season 4)', slug: 'phim-' + n + '-phan-4' })] });
+    return [s3, s4];
+  };
+  const catalog = [1, 2, 3, 4, 5].flatMap(series);
+  const answerFor = (options, messages) => {
+    const sent = JSON.parse(messages[1].content.slice(messages[1].content.indexOf('\n') + 1));
+    return { value: options.accept({ groups: [{ key: sent[0].key, actions: [] }] }), model: 'm' };
+  };
+  const run = async (script, over = {}) => {
+    const db = fakeDb(catalog);
+    let n = 0;
+    const ai = { available: () => true, ready: async () => {}, json: async (role, messages, options) => { const step = script[Math.min(n++, script.length - 1)]; if (step) throw step; return answerFor(options, messages); } };
+    const warnings = [];
+    const logs = [];
+    const result = await runCatalogAudit({ db, ai, tmdb, config: { ...settings, catalogAuditBatch: 1, ...over }, log: (m) => logs.push(m), warn: (m) => warnings.push(m) });
+    return { result, db, warnings, logs };
+  };
+  const failed = () => new AiError('boom', { kind: 'failed' });
+  const refusedErr = () => new AiError('no', { kind: 'content' });
+  const one = await run([refusedErr()]);
+  assert.equal(one.result.status, 'done');
+  assert.ok(one.result.summary.refusedPacks >= 1 && one.result.summary.failedPacks === 0);
+  const some = await run([failed(), null]);
+  assert.equal(some.result.status, 'done');
+  assert.equal(some.result.summary.failedPacks, 1);
+  assert.equal(some.warnings.length, 1);
+  assert.match(some.logs.at(-1), /failedPacks=1/);
+  const flood = await run([failed()]);
+  assert.equal(flood.result.status, 'partial');
+  assert.equal(flood.result.summary.stopped, 'ai-failed');
+  assert.equal(flood.result.summary.failedPacks, 3);
+});
